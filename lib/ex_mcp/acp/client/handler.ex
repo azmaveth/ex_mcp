@@ -7,6 +7,16 @@ defmodule ExMCP.ACP.Client.Handler do
   from ACP agents.
 
   See `ExMCP.ACP.Client.DefaultHandler` for a reference implementation.
+
+  Session updates and permission requests each have a legacy callback and a
+  context-aware variant that also receives the decoded JSON-RPC message
+  (`c:handle_session_update/3` or `c:handle_session_update/4`, and
+  `c:handle_permission_request/4` or `c:handle_permission_request/5`). Both
+  arities are optional so a handler can implement only the variant it needs,
+  but it must implement at least one of each pair: the client refuses to start
+  a handler that implements neither, with
+  `{:handler_init_failed, {:missing_callback, name}}`. When both are present
+  the context-aware variant is called.
   """
 
   @type state :: any()
@@ -19,6 +29,8 @@ defmodule ExMCP.ACP.Client.Handler do
 
   The `update` map contains a `"sessionUpdate"` discriminator field indicating
   the update type (e.g., `"agent_message_chunk"`, `"tool_call"`, `"plan"`, etc.).
+
+  Optional when `c:handle_session_update/4` is implemented.
   """
   @callback handle_session_update(session_id :: String.t(), update :: map(), state()) ::
               {:ok, state()}
@@ -131,7 +143,9 @@ defmodule ExMCP.ACP.Client.Handler do
   @callback terminate(reason :: any(), state()) :: :ok
 
   @optional_callbacks [
+    handle_session_update: 3,
     handle_session_update: 4,
+    handle_permission_request: 4,
     handle_permission_request: 5,
     handle_file_read: 4,
     handle_file_write: 4,

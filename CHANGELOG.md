@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `handle_session_update/3` and `handle_permission_request/4` on
+  `ExMCP.ACP.Client.Handler` are now optional, so a handler can implement only the
+  context-aware arities. A handler must still export at least one arity of each pair;
+  the client refuses to start one that does not, with
+  `{:handler_init_failed, {:missing_callback, name}}`. Existing handlers are unaffected.
 - **BREAKING:** Adapter extension data now lives under nested `_meta.ex_mcp.<adapter>`
   maps everywhere. The Claude SDK adapter previously used a flat `"ex_mcp.claude_sdk"`
   key, and the Codex, Pi, and ZCode capability advertisements used flat `"ex_mcp.codex"`,

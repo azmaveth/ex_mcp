@@ -416,8 +416,9 @@ Handlers can also implement `handle_session_update/4` and
 `handle_permission_request/5`. These optional variants receive the decoded
 JSON-RPC message that reached the ACP client, immediately before the handler
 state argument. When a variant is present, ExMCP calls it instead of the
-corresponding legacy callback. Keep the legacy callbacks to support older
-ExMCP versions.
+corresponding legacy callback. Both arities are optional, but a handler must
+implement at least one of each pair or the client refuses to start it. Keep the
+legacy callbacks as well if the handler must run on older ExMCP versions.
 
 The message retains unknown top-level and parameter fields and the permission
 request ID from the received ACP message. It is a decoded map, not the original

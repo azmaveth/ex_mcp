@@ -98,10 +98,23 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
     GenServer.cast(pid, {:elicitation_complete, elicitation_id})
   end
 
+  # Each of these has a legacy arity and a context-aware arity that also takes
+  # the decoded JSON-RPC message. Both are optional on the behaviour so a
+  # handler can implement just one, but it must export at least one of each
+  # or updates and permission requests would fail at first dispatch.
+  @callback_pairs [handle_session_update: [3, 4], handle_permission_request: [4, 5]]
+
   @impl true
   def init({handler_mod, handler_opts, owner}) do
     Process.flag(:trap_exit, true)
 
+    case missing_callback(handler_mod) do
+      nil -> init_handler(handler_mod, handler_opts, owner)
+      callback -> {:stop, {:handler_init_failed, {:missing_callback, callback}}}
+    end
+  end
+
+  defp init_handler(handler_mod, handler_opts, owner) do
     case safe_call(fn -> handler_mod.init(handler_opts) end) do
       {:ok, {:ok, handler_state}} ->
         {:ok, %__MODULE__{handler_mod: handler_mod, handler_state: handler_state, owner: owner}}
@@ -115,6 +128,14 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
       {:error, reason} ->
         {:stop, {:handler_init_failed, reason}}
     end
+  end
+
+  defp missing_callback(handler_mod) do
+    Code.ensure_loaded(handler_mod)
+
+    Enum.find_value(@callback_pairs, fn {callback, arities} ->
+      if not Enum.any?(arities, &function_exported?(handler_mod, callback, &1)), do: callback
+    end)
   end
 
   @impl true
