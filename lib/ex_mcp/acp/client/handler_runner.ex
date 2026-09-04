@@ -33,6 +33,9 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
     session_update(pid, session_id, update, max_queue, max_queue_bytes, nil)
   end
 
+  # `message` is the decoded JSON-RPC envelope, passed only when the handler
+  # exports the context-aware callback (the Client checks that). It embeds the
+  # update, so its size is the retained size when present.
   def session_update(pid, session_id, update, max_queue, max_queue_bytes, message) do
     incoming_bytes = update_size(update, message)
 
@@ -63,20 +66,13 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
     end)
   end
 
-  defp queued_update_size({:"$gen_cast", {:session_update, _session_id, update}}),
-    do: :erlang.external_size(update)
-
   defp queued_update_size({:"$gen_cast", {:session_update, _session_id, update, message}}),
     do: update_size(update, message)
 
   defp queued_update_size(_message), do: 0
 
   defp update_size(update, nil), do: :erlang.external_size(update)
-  defp update_size(update, message), do: :erlang.external_size({update, message})
-
-  def permission_request(pid, ref, session_id, tool_call, options) do
-    permission_request(pid, ref, session_id, tool_call, options, nil)
-  end
+  defp update_size(_update, message), do: :erlang.external_size(message)
 
   def permission_request(pid, ref, session_id, tool_call, options, message) do
     GenServer.cast(pid, {:permission_request, ref, session_id, tool_call, options, message})
@@ -122,10 +118,6 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
   end
 
   @impl true
-  def handle_cast({:session_update, session_id, update}, state) do
-    handle_cast({:session_update, session_id, update, nil}, state)
-  end
-
   def handle_cast({:session_update, session_id, update, message}, state) do
     case safe_call(fn ->
            call_with_context(state, :handle_session_update, [session_id, update], message)
@@ -144,10 +136,6 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
         Logger.warning("ACP handler session update failed", error_class: error_class(reason))
         {:noreply, state}
     end
-  end
-
-  def handle_cast({:permission_request, ref, session_id, tool_call, options}, state) do
-    handle_cast({:permission_request, ref, session_id, tool_call, options, nil}, state)
   end
 
   def handle_cast({:permission_request, ref, session_id, tool_call, options, message}, state) do
@@ -286,14 +274,13 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
     :ok
   end
 
-  defp call_with_context(state, callback, args, message) do
-    args =
-      if is_map(message) and function_exported?(state.handler_mod, callback, length(args) + 2),
-        do: args ++ [message, state.handler_state],
-        else: args ++ [state.handler_state]
+  # The Client passes `message` only when the handler exports the context
+  # variant, so its presence selects the arity.
+  defp call_with_context(state, callback, args, nil),
+    do: apply(state.handler_mod, callback, args ++ [state.handler_state])
 
-    apply(state.handler_mod, callback, args)
-  end
+  defp call_with_context(state, callback, args, message),
+    do: apply(state.handler_mod, callback, args ++ [message, state.handler_state])
 
   defp safe_call(fun) do
     {:ok, fun.()}
