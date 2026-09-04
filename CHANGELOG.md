@@ -17,8 +17,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handler deadlines are unchanged. For adapted agents the message is the ACP envelope
   the adapter constructed, not the native provider event (#31, #32).
 
+- `_meta.ex_mcp.native` on every ACP message an adapter derives from a native agent
+  line: the adapter `name` and a per-connection `sequence`, plus the decoded native
+  `event` when `AdapterTransport`/`AdapterBridge` is started with `native_events: :raw`
+  (`:summary` is the default, `:off` disables the block). Adapters can implement the new
+  optional `ExMCP.ACP.Adapter.name/0` callback; the bridge derives a name from the module
+  otherwise.
+
 ### Changed
 
+- `handle_session_update/3` and `handle_permission_request/4` on
+  `ExMCP.ACP.Client.Handler` are now optional, so a handler can implement only the
+  context-aware arities. A handler must still export at least one arity of each pair;
+  the client refuses to start one that does not, with
+  `{:handler_init_failed, {:missing_callback, name}}`. Existing handlers are unaffected.
+- **BREAKING:** Adapter extension data now lives under nested `_meta.ex_mcp.<adapter>`
+  maps everywhere. The Claude SDK adapter previously used a flat `"ex_mcp.claude_sdk"`
+  key, and the Codex, Pi, and ZCode capability advertisements used flat `"ex_mcp.codex"`,
+  `"ex_mcp.pi"`, and `"ex_mcp.zcode"` keys. Consumers reading those keys must read
+  `_meta["ex_mcp"]["claude_sdk"]` (and so on) instead; the documented dotted paths such
+  as `_meta.ex_mcp.claude_sdk.sessionId` are unchanged and now match the wire shape.
 - `ExMCP.ACP.Protocol.parse_message/1` rejects a JSON string that contains encoded JSON
   instead of decoding it a second time (#32).
 

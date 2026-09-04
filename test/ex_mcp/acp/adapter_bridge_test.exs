@@ -505,6 +505,76 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     end
   end
 
+  describe "native event metadata" do
+    test "summary mode tags adapter name and sequence on every derived message" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
+      _init = send_initialize(bridge)
+
+      assert prompt_and_native(bridge, "one") == %{"adapter" => "mockadapter", "sequence" => 1}
+      assert prompt_and_native(bridge, "two") == %{"adapter" => "mockadapter", "sequence" => 2}
+
+      AdapterBridge.close(bridge)
+    end
+
+    test "raw mode also embeds the decoded native event" do
+      {:ok, bridge} =
+        AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [], native_events: :raw)
+
+      _init = send_initialize(bridge)
+
+      assert prompt_and_native(bridge, "raw") == %{
+               "adapter" => "mockadapter",
+               "sequence" => 1,
+               "event" => %{"type" => "echo", "text" => "raw"}
+             }
+
+      AdapterBridge.close(bridge)
+    end
+
+    test "off mode leaves adapter messages untouched" do
+      {:ok, bridge} =
+        AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [], native_events: :off)
+
+      _init = send_initialize(bridge)
+
+      assert prompt_and_native(bridge, "off") == nil
+
+      AdapterBridge.close(bridge)
+    end
+
+    test "rejects an unknown native_events mode" do
+      Process.flag(:trap_exit, true)
+
+      assert {:error, {%ArgumentError{}, _stack}} =
+               AdapterBridge.start_link(
+                 adapter: MockAdapter,
+                 adapter_opts: [],
+                 native_events: :verbose
+               )
+    end
+  end
+
+  defp prompt_and_native(bridge, text) do
+    prompt = %{
+      "jsonrpc" => "2.0",
+      "id" => System.unique_integer([:positive]),
+      "method" => "session/prompt",
+      "params" => %{
+        "sessionId" => "test_session",
+        "prompt" => [%{"type" => "text", "text" => text}]
+      }
+    }
+
+    assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(prompt))
+    assert {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+    msg = Jason.decode!(raw)
+
+    assert msg["method"] == "session/update"
+    assert msg["params"]["update"]["content"] == %{"type" => "text", "text" => text}
+
+    get_in(msg, ["params", "update", "_meta", "ex_mcp", "native"])
+  end
+
   describe "one-shot adapter" do
     test "produces results without persistent Port" do
       {:ok, bridge} = AdapterBridge.start_link(adapter: OneShotMockAdapter, adapter_opts: [])

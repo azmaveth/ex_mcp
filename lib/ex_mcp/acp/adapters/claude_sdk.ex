@@ -9,6 +9,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
 
   @behaviour ExMCP.ACP.Adapter
 
+  @impl true
+  def name, do: "claude_sdk"
+
   require Logger
 
   alias ExMCP.ACP.Adapters.ClaudeSDK.Mapper
@@ -116,9 +119,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
         "additionalDirectories" => %{}
       },
       "_meta" => %{
-        "ex_mcp.claude_sdk" => %{
-          "streaming" => true,
-          "controlProtocol" => true
+        "ex_mcp" => %{
+          "claude_sdk" => %{
+            "streaming" => true,
+            "controlProtocol" => true
+          }
         }
       }
     }

@@ -62,9 +62,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionStoreTest do
       assert session["cwd"] == cwd
       assert session["title"] == "Summary Title"
       assert session["updatedAt"] =~ "T"
-      assert get_in(session, ["_meta", "ex_mcp.claude_sdk", "fileSize"]) > 0
-      assert get_in(session, ["_meta", "ex_mcp.claude_sdk", "firstPrompt"]) == "first prompt"
-      assert get_in(session, ["_meta", "ex_mcp.claude_sdk", "gitBranch"]) == "feature/acp"
+      assert get_in(session, ["_meta", "ex_mcp", "claude_sdk", "fileSize"]) > 0
+      assert get_in(session, ["_meta", "ex_mcp", "claude_sdk", "firstPrompt"]) == "first prompt"
+      assert get_in(session, ["_meta", "ex_mcp", "claude_sdk", "gitBranch"]) == "feature/acp"
     end
 
     test "filters sidechains, invalid names, empty files, and untitled sessions", %{

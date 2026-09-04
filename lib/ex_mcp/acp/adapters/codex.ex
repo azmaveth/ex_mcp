@@ -17,6 +17,9 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   @behaviour ExMCP.ACP.Adapter
 
+  @impl true
+  def name, do: "codex"
+
   require Logger
 
   alias ExMCP.ACP.Adapters.Codex.{Config, Events, FileChanges, Protocol, Sessions, SlashCommands}
@@ -65,7 +68,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
         "acp" => false,
         "http" => true,
         "sse" => false,
-        "_meta" => %{"ex_mcp.codex" => %{"stdioMcpServers" => true}}
+        "_meta" => %{"ex_mcp" => %{"codex" => %{"stdioMcpServers" => true}}}
       },
       "loadSession" => true,
       "auth" => %{"logout" => %{}},

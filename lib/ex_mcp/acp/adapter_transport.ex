@@ -13,6 +13,22 @@ defmodule ExMCP.ACP.AdapterTransport do
 
   The transport starts an `AdapterBridge` on connect, which in turn launches
   the agent subprocess and handles protocol translation.
+
+  ## Native event metadata
+
+  Every ACP message the adapter derives from a native agent line carries
+  `_meta.ex_mcp.native` with the adapter `name` and a per-connection
+  `sequence` number. The `:native_events` option controls how much is kept:
+
+    * `:summary` (default) - adapter name and sequence only
+    * `:raw` - also embeds the decoded native event under `event` (or the
+      unparsed line under `raw`); this can make updates much larger and the
+      retained data counts toward the client's `:max_update_queue_bytes`
+    * `:off` - no native block
+
+  For `session/update` the block sits on the update's `_meta`; for other
+  agent-to-client requests it sits on `params._meta`; for responses on
+  `result._meta`.
   """
 
   @behaviour ExMCP.Transport
@@ -34,7 +50,8 @@ defmodule ExMCP.ACP.AdapterTransport do
           :max_outbox_messages,
           :max_outbox_bytes,
           :max_waiters,
-          :max_one_shot_tasks
+          :max_one_shot_tasks,
+          :native_events
         ])
 
     case AdapterBridge.start_link(bridge_opts) do

@@ -494,7 +494,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
                "params",
                "update",
                "_meta",
-               "ex_mcp.claude_sdk",
+               "ex_mcp",
+               "claude_sdk",
                "sessionId"
              ]) == cli_uuid
 
@@ -533,7 +534,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert_update_session_ids(result_messages, acp_id)
       response = Enum.find(result_messages, &(&1["id"] == 8))
 
-      assert get_in(response, ["result", "_meta", "ex_mcp.claude_sdk", "sessionId"]) ==
+      assert get_in(response, ["result", "_meta", "ex_mcp", "claude_sdk", "sessionId"]) ==
                cli_uuid
 
       assert state.session_id == acp_id
@@ -826,7 +827,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
 
       assert response["result"]["stopReason"] == "max_tokens"
       assert response["result"]["usage"]["inputTokens"] == 1
-      assert get_in(response, ["result", "_meta", "ex_mcp.claude_sdk", "text"]) == "hello world"
+
+      assert get_in(response, ["result", "_meta", "ex_mcp", "claude_sdk", "text"]) ==
+               "hello world"
 
       refute Enum.any?(
                messages,
@@ -864,7 +867,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert get_in(chunk, ["params", "update", "content", "text"]) == "final only answer"
       assert response["result"]["stopReason"] == "end_turn"
 
-      assert get_in(response, ["result", "_meta", "ex_mcp.claude_sdk", "text"]) ==
+      assert get_in(response, ["result", "_meta", "ex_mcp", "claude_sdk", "text"]) ==
                "final only answer"
 
       assert state.pending_prompt_id == nil
@@ -1153,7 +1156,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       response = Enum.find(messages, &(&1["id"] == 321))
       assert response["result"]["stopReason"] == "end_turn"
 
-      assert get_in(response, ["result", "_meta", "ex_mcp.claude_sdk", "sessionId"]) ==
+      assert get_in(response, ["result", "_meta", "ex_mcp", "claude_sdk", "sessionId"]) ==
                cli_uuid
 
       assert_update_session_ids(messages, acp_id)

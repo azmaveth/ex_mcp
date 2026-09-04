@@ -40,6 +40,54 @@ defmodule ExMCP.ACP.ClientMessageContextTest do
     end
   end
 
+  defmodule ContextOnlyHandler do
+    @behaviour ExMCP.ACP.Client.Handler
+
+    @impl true
+    def init(opts), do: {:ok, %{parent: Keyword.fetch!(opts, :parent)}}
+
+    @impl true
+    def handle_session_update(session_id, update, message, state) do
+      send(state.parent, {:context_only_update, session_id, update, message})
+      {:ok, state}
+    end
+
+    @impl true
+    def handle_permission_request(_session_id, _tool_call, _options, message, state) do
+      send(state.parent, {:context_only_permission, message})
+      {:ok, %{"outcome" => "selected", "optionId" => "allow"}, state}
+    end
+  end
+
+  defmodule NoCallbacksHandler do
+    @behaviour ExMCP.ACP.Client.Handler
+
+    @impl true
+    def init(_opts), do: {:ok, %{}}
+  end
+
+  test "handlers may implement only the context-aware callbacks" do
+    {client, transport} = start_client(handler: ContextOnlyHandler)
+    update = update_message("context only")
+
+    send(client, {:transport_message, update})
+    assert_receive {:context_only_update, "context-session", _, ^update}
+
+    request = permission_message("context-only")
+    send_raw(transport, request)
+    assert_receive {:context_only_permission, ^request}
+
+    assert %{"id" => "context-only", "result" => %{"outcome" => %{"outcome" => "selected"}}} =
+             receive_raw(transport)
+  end
+
+  test "a handler missing both arities of a callback pair does not start" do
+    Process.flag(:trap_exit, true)
+
+    assert {:error, {:handler_init_failed, {:missing_callback, :handle_session_update}}} =
+             ExMCP.ACP.Client.HandlerRunner.start_link(NoCallbacksHandler, [], self())
+  end
+
   test "preserves complete decoded messages and callback ordering without changing event listeners" do
     {client, _transport} = start_client(event_listener: self())
     first = update_message("first")
