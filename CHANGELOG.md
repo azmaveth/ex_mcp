@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Optional `handle_session_update/4` and `handle_permission_request/5` callbacks on
+  `ExMCP.ACP.Client.Handler` that receive the decoded JSON-RPC message the ACP client
+  received, so consumers can retain extension fields and the permission request ID.
+  ExMCP calls the context variant when the handler exports it and the legacy callback
+  otherwise; validation, session authority, request correlation, cancellation, and
+  handler deadlines are unchanged. For adapted agents the message is the ACP envelope
+  the adapter constructed, not the native provider event (#31, #32).
+
+### Changed
+
+- `ExMCP.ACP.Protocol.parse_message/1` rejects a JSON string that contains encoded JSON
+  instead of decoding it a second time (#32).
+
+### Fixed
+
+- Bump `mint` to 1.10.0, which fixes EEF-CVE-2026-82728 and EEF-CVE-2026-82729, and
+  `castore` to 1.0.21. `mix hex.audit` reports only the three accepted Cowlib 2.19.0
+  exceptions again.
+
 ## [1.2.0] - 2026-09-02
 
 ### Added
