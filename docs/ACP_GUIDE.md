@@ -409,6 +409,24 @@ outside those roots, including escapes through existing symlinks. Nonexistent
 children below a trusted root are permitted so write/create handlers can work;
 custom handlers remain responsible for rechecking policy at the point of use.
 
+### Original message context
+
+Handlers can also implement `handle_session_update/4` and
+`handle_permission_request/5`. These optional variants receive the original
+decoded JSON-RPC message immediately before the handler state argument. When a
+variant is present, ExMCP calls it instead of the corresponding legacy callback.
+Keep the legacy callbacks to support older ExMCP versions.
+
+The message retains unknown top-level and parameter fields and the original
+permission request ID. It is a decoded map, not the original JSON bytes.
+ExMCP performs validation and session authorization before dispatch. It still
+owns request correlation, cancellation, and handler deadlines. Return the same
+permission outcome as before; ExMCP builds the response.
+
+Both variants run through the existing handler runner. Retained update message
+data counts toward `:max_update_queue_bytes`, including fields outside the
+update. Legacy handlers and the event-listener message format are unchanged.
+
 ### Event Listener
 
 For simple use cases, receive session updates as process messages instead of implementing a full handler:
