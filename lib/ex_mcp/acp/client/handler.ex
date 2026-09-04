@@ -24,6 +24,30 @@ defmodule ExMCP.ACP.Client.Handler do
               {:ok, state()}
 
   @doc """
+  Handles a session update with the decoded JSON-RPC message received by the
+  ACP client.
+
+  When implemented, this optional callback is called instead of
+  `c:handle_session_update/3`. The message retains unknown top-level and
+  parameter fields from the ACP message. It is the decoded map, not the
+  original JSON bytes.
+
+  This is an ACP-boundary value. A native ACP agent supplies the message. When
+  the client uses `ExMCP.ACP.AdapterTransport`, `ExMCP.ACP.AdapterBridge` and
+  the selected adapter construct the ACP message from the agent's native
+  protocol. Native fields that the adapter does not map are not present.
+
+  ExMCP validates the update and session before dispatch. Message data counts
+  toward the existing handler update queue byte limit.
+  """
+  @callback handle_session_update(
+              session_id :: String.t(),
+              update :: map(),
+              message :: map(),
+              state()
+            ) :: {:ok, state()}
+
+  @doc """
   Called when the agent requests permission to use a tool.
 
   Must return an outcome map with an `"optionId"` matching one of the
@@ -33,6 +57,26 @@ defmodule ExMCP.ACP.Client.Handler do
               session_id :: String.t(),
               tool_call :: map(),
               options :: [map()],
+              state()
+            ) :: {:ok, outcome :: map(), state()}
+
+  @doc """
+  Handles a permission request with the decoded JSON-RPC message received by
+  the ACP client.
+
+  When implemented, this optional callback is called instead of
+  `c:handle_permission_request/4`. The message includes the original request
+  ID and all received fields. ExMCP retains request correlation, validation,
+  cancellation, and timeout ownership. Return the same outcome as the legacy
+  callback; do not send a JSON-RPC response from the handler. This callback
+  has the same ACP-boundary limit as `c:handle_session_update/4`: an adapted
+  agent can supply only the fields that its adapter placed in the ACP request.
+  """
+  @callback handle_permission_request(
+              session_id :: String.t(),
+              tool_call :: map(),
+              options :: [map()],
+              message :: map(),
               state()
             ) :: {:ok, outcome :: map(), state()}
 
@@ -87,6 +131,8 @@ defmodule ExMCP.ACP.Client.Handler do
   @callback terminate(reason :: any(), state()) :: :ok
 
   @optional_callbacks [
+    handle_session_update: 4,
+    handle_permission_request: 5,
     handle_file_read: 4,
     handle_file_write: 4,
     handle_terminal_request: 4,

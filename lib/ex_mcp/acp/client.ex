@@ -590,7 +590,12 @@ defmodule ExMCP.ACP.Client do
   end
 
   def handle_info({:transport_message, raw_message}, state) do
-    state = raw_message |> Protocol.parse_message() |> handle_parsed_message(state)
+    state =
+      case Protocol.parse_message_with_context(raw_message) do
+        {:ok, parsed, message} -> handle_parsed_message(parsed, state, message)
+        error -> handle_parsed_message(error, state)
+      end
+
     {:noreply, state}
   end
 
@@ -699,17 +704,11 @@ defmodule ExMCP.ACP.Client do
 
   def handle_info(_msg, state), do: {:noreply, state}
 
-  defp handle_parsed_message({:result, result, id}, state),
-    do: resolve_pending(id, {:ok, result}, state)
-
-  defp handle_parsed_message({:error, error, id}, state),
-    do: resolve_pending(id, {:error, error}, state)
-
-  defp handle_parsed_message({:notification, "session/update", params}, state) do
+  defp handle_parsed_message({:notification, "session/update", params}, state, message) do
     case RequestValidation.validate_session_update(params) do
       :ok ->
         if authorized_session_id?(params["sessionId"], state) do
-          handle_session_update(params, state)
+          handle_session_update(params, state, message)
         else
           Logger.warning("ACP client ignored an update for an unknown session")
           state
@@ -720,6 +719,17 @@ defmodule ExMCP.ACP.Client do
         state
     end
   end
+
+  defp handle_parsed_message({:request, method, params, id}, state, message),
+    do: validate_and_handle_agent_request(method, params, id, state, message)
+
+  defp handle_parsed_message(parsed, state, _message), do: handle_parsed_message(parsed, state)
+
+  defp handle_parsed_message({:result, result, id}, state),
+    do: resolve_pending(id, {:ok, result}, state)
+
+  defp handle_parsed_message({:error, error, id}, state),
+    do: resolve_pending(id, {:error, error}, state)
 
   defp handle_parsed_message({:notification, "$/cancel_request", params}, state),
     do: handle_cancel_request_notification(params, state)
@@ -737,9 +747,6 @@ defmodule ExMCP.ACP.Client do
 
     state
   end
-
-  defp handle_parsed_message({:request, method, params, id}, state),
-    do: validate_and_handle_agent_request(method, params, id, state)
 
   defp handle_parsed_message(other, state) do
     Logger.debug("ACP client received unexpected message",
@@ -1263,7 +1270,7 @@ defmodule ExMCP.ACP.Client do
     }
   end
 
-  defp handle_session_update(params, state) do
+  defp handle_session_update(params, state, message) do
     session_id = params["sessionId"]
     update = params["update"]
     update_bytes = :erlang.external_size(update)
@@ -1290,7 +1297,8 @@ defmodule ExMCP.ACP.Client do
         session_id,
         update,
         state.max_update_queue,
-        state.max_update_queue_bytes
+        state.max_update_queue_bytes,
+        handler_message(state, :handle_session_update, 4, message)
       )
     end
 
@@ -1348,13 +1356,13 @@ defmodule ExMCP.ACP.Client do
 
   defp clear_abandoned_prompt_text(_pending, state), do: state
 
-  defp validate_and_handle_agent_request(method, params, id, state) do
+  defp validate_and_handle_agent_request(method, params, id, state, message) do
     with :ok <- ensure_agent_request_id_available(id, state),
          :ok <- ensure_advertised_client_capability(method, params, state),
          :ok <- RequestValidation.validate_agent_request(method, params),
          :ok <- ensure_agent_session_authority(method, params, state),
          :ok <- ensure_agent_request_capacity(state) do
-      handle_agent_request(method, params, id, state)
+      handle_agent_request(method, params, id, state, message)
     else
       {:error, :duplicate_request_id} ->
         send_agent_request_error(state, id, -32_600, "Request id is already in use")
@@ -1514,20 +1522,36 @@ defmodule ExMCP.ACP.Client do
     state
   end
 
-  defp handle_agent_request("session/request_permission", params, id, state) do
+  defp handle_agent_request("session/request_permission", params, id, state, message) do
     session_id = params["sessionId"]
     tool_call = params["toolCall"]
     options = params["options"] || []
 
     if state.handler_pid do
       ref = make_ref()
-      HandlerRunner.permission_request(state.handler_pid, ref, session_id, tool_call, options)
+
+      HandlerRunner.permission_request(
+        state.handler_pid,
+        ref,
+        session_id,
+        tool_call,
+        options,
+        handler_message(state, :handle_permission_request, 5, message)
+      )
+
       track_agent_request(state, ref, :permission, id, session_id)
     else
       response = Protocol.encode_error(-32603, "Handler unavailable", nil, id)
       send_to_transport(response, state)
       state
     end
+  end
+
+  defp handle_agent_request(method, params, id, state, _message),
+    do: handle_agent_request(method, params, id, state)
+
+  defp handler_message(state, callback, arity, message) do
+    if function_exported?(state.handler_mod, callback, arity), do: message
   end
 
   defp handle_agent_request("elicitation/create", params, id, state) do

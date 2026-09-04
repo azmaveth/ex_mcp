@@ -409,6 +409,32 @@ outside those roots, including escapes through existing symlinks. Nonexistent
 children below a trusted root are permitted so write/create handlers can work;
 custom handlers remain responsible for rechecking policy at the point of use.
 
+### ACP message context
+
+Handlers can also implement `handle_session_update/4` and
+`handle_permission_request/5`. These optional variants receive the decoded
+JSON-RPC message that reached the ACP client, immediately before the handler
+state argument. When a variant is present, ExMCP calls it instead of the
+corresponding legacy callback. Keep the legacy callbacks to support older
+ExMCP versions.
+
+The message retains unknown top-level and parameter fields and the permission
+request ID from the received ACP message. It is a decoded map, not the original
+JSON bytes. This callback does not provide an unmodified native-provider event.
+For a native ACP agent, the value is the message that the agent wrote. For an
+agent used through `ExMCP.ACP.AdapterTransport`, `AdapterBridge` and the adapter
+construct the ACP message from the agent's native protocol. Native fields that
+the adapter does not map are already absent. An adapter can include selected
+native data in ACP extension fields when its contract supports that data.
+
+ExMCP performs validation and session authorization before dispatch. It still
+owns request correlation, cancellation, and handler deadlines. Return the same
+permission outcome as before; ExMCP builds the response.
+
+Both variants run through the existing handler runner. Retained update message
+data counts toward `:max_update_queue_bytes`, including fields outside the
+update. Legacy handlers and the event-listener message format are unchanged.
+
 ### Event Listener
 
 For simple use cases, receive session updates as process messages instead of implementing a full handler:

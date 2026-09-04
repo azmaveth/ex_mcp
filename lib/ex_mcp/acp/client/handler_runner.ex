@@ -30,10 +30,14 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
   end
 
   def session_update(pid, session_id, update, max_queue, max_queue_bytes) do
-    incoming_bytes = :erlang.external_size(update)
+    session_update(pid, session_id, update, max_queue, max_queue_bytes, nil)
+  end
+
+  def session_update(pid, session_id, update, max_queue, max_queue_bytes, message) do
+    incoming_bytes = update_size(update, message)
 
     if update_mailbox_below_limits?(pid, max_queue, max_queue_bytes, incoming_bytes) do
-      GenServer.cast(pid, {:session_update, session_id, update})
+      GenServer.cast(pid, {:session_update, session_id, update, message})
       :ok
     else
       :dropped
@@ -62,10 +66,20 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
   defp queued_update_size({:"$gen_cast", {:session_update, _session_id, update}}),
     do: :erlang.external_size(update)
 
+  defp queued_update_size({:"$gen_cast", {:session_update, _session_id, update, message}}),
+    do: update_size(update, message)
+
   defp queued_update_size(_message), do: 0
 
+  defp update_size(update, nil), do: :erlang.external_size(update)
+  defp update_size(update, message), do: :erlang.external_size({update, message})
+
   def permission_request(pid, ref, session_id, tool_call, options) do
-    GenServer.cast(pid, {:permission_request, ref, session_id, tool_call, options})
+    permission_request(pid, ref, session_id, tool_call, options, nil)
+  end
+
+  def permission_request(pid, ref, session_id, tool_call, options, message) do
+    GenServer.cast(pid, {:permission_request, ref, session_id, tool_call, options, message})
   end
 
   def file_read(pid, ref, session_id, path, opts) do
@@ -109,8 +123,12 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
 
   @impl true
   def handle_cast({:session_update, session_id, update}, state) do
+    handle_cast({:session_update, session_id, update, nil}, state)
+  end
+
+  def handle_cast({:session_update, session_id, update, message}, state) do
     case safe_call(fn ->
-           state.handler_mod.handle_session_update(session_id, update, state.handler_state)
+           call_with_context(state, :handle_session_update, [session_id, update], message)
          end) do
       {:ok, {:ok, handler_state}} ->
         {:noreply, %{state | handler_state: handler_state}}
@@ -129,13 +147,17 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
   end
 
   def handle_cast({:permission_request, ref, session_id, tool_call, options}, state) do
+    handle_cast({:permission_request, ref, session_id, tool_call, options, nil}, state)
+  end
+
+  def handle_cast({:permission_request, ref, session_id, tool_call, options, message}, state) do
     {result, state} =
       case safe_call(fn ->
-             state.handler_mod.handle_permission_request(
-               session_id,
-               tool_call,
-               options,
-               state.handler_state
+             call_with_context(
+               state,
+               :handle_permission_request,
+               [session_id, tool_call, options],
+               message
              )
            end) do
         {:ok, {:ok, outcome, handler_state}} ->
@@ -262,6 +284,15 @@ defmodule ExMCP.ACP.Client.HandlerRunner do
     end
 
     :ok
+  end
+
+  defp call_with_context(state, callback, args, message) do
+    args =
+      if is_map(message) and function_exported?(state.handler_mod, callback, length(args) + 2),
+        do: args ++ [message, state.handler_state],
+        else: args ++ [state.handler_state]
+
+    apply(state.handler_mod, callback, args)
   end
 
   defp safe_call(fun) do
