@@ -828,6 +828,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
     session
     |> Map.put(:active_prompt_acp_id, acp_id)
     |> Map.put(:accumulated_text, [])
+    |> Map.put(:streamed_items, %{})
     |> Map.put(:accumulated_thinking, [])
     |> Map.put(:accumulated_usage, nil)
     |> Map.put(:rate_limits, %{})
@@ -1060,11 +1061,15 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp handle_notification("item/agentMessage/delta", params, state) do
     session_id = Sessions.id_from_params(params, state)
     delta = params["delta"] || ""
+    item_key = params["itemId"] || :current
 
     state =
       Sessions.update(state, session_id, fn session ->
         session
         |> Map.update(:accumulated_text, [delta], &[delta | &1])
+        |> Map.update(:streamed_items, %{item_key => [delta]}, fn items ->
+          Map.update(items, item_key, [delta], &[delta | &1])
+        end)
         |> Map.put(:prompt_activity, true)
       end)
 
@@ -1348,6 +1353,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
       Sessions.update(state, session_id, fn session ->
         session
         |> Map.put(:accumulated_text, [])
+        |> Map.put(:streamed_items, %{})
         |> Map.put(:accumulated_thinking, [])
         |> Map.put(:accumulated_usage, nil)
         |> Map.put(:turn_id, nil)
@@ -2219,10 +2225,14 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp handle_item_completed(session_id, %{"type" => "agent_message"} = item, state) do
     text = item["text"] || item["message"] || ""
     session = Map.get(state.sessions, session_id, %{})
+    streamed_items = Map.get(session, :streamed_items, %{})
 
+    # Deltas are tracked per item: a turn can carry several agent messages,
+    # and comparing against the whole turn's accumulated text would swallow
+    # every message after the first. Deltas without an itemId fall back to
+    # the :current slot.
     streamed =
-      session
-      |> Map.get(:accumulated_text, [])
+      (streamed_items[item["id"]] || streamed_items[:current] || [])
       |> Enum.reverse()
       |> IO.iodata_to_binary()
 
@@ -2234,13 +2244,15 @@ defmodule ExMCP.ACP.Adapters.Codex do
     remainder = unstreamed_text(text, streamed)
 
     state =
-      if remainder == "" do
-        state
-      else
-        Sessions.update(state, session_id, fn session ->
-          Map.update(session, :accumulated_text, [remainder], &[remainder | &1])
+      Sessions.update(state, session_id, fn session ->
+        session
+        |> Map.put(:streamed_items, Map.drop(streamed_items, [item["id"], :current]))
+        |> then(fn session ->
+          if remainder == "",
+            do: session,
+            else: Map.update(session, :accumulated_text, [remainder], &[remainder | &1])
         end)
-      end
+      end)
 
     notification =
       AdapterEvents.agent_message_chunk(session_id, remainder,

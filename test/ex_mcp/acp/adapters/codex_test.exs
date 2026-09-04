@@ -926,15 +926,70 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert state.sessions["thread-1"].accumulated_text == ["PONG"]
     end
 
+    test "later agent messages in the same turn are not swallowed by earlier ones", %{
+      state: state
+    } do
+      state = put_test_session(state, "thread-1", %{turn_id: "turn-1", active_prompt_acp_id: 30})
+
+      inbound = fn state, method, params ->
+        Codex.translate_inbound(
+          Jason.encode!(%{"method" => method, "params" => Map.put(params, "threadId", "thread-1")}),
+          state
+        )
+      end
+
+      # First message: fully streamed, then completed with the same text.
+      assert {:messages, [_], state} =
+               inbound.(state, "item/agentMessage/delta", %{
+                 "itemId" => "item-1",
+                 "delta" => "Hello"
+               })
+
+      assert {:messages, [first], state} =
+               inbound.(state, "item/completed", %{
+                 "item" => %{"type" => "agentMessage", "id" => "item-1", "text" => "Hello"}
+               })
+
+      assert first["params"]["update"]["content"]["text"] == ""
+
+      # Second message in the same turn arrives without deltas: it must be
+      # emitted in full, not compared against the first message's text.
+      assert {:messages, [second], state} =
+               inbound.(state, "item/completed", %{
+                 "item" => %{"type" => "agentMessage", "id" => "item-2", "text" => "World"}
+               })
+
+      assert second["params"]["update"]["content"]["text"] == "World"
+
+      # Third message streams part of its text, then completes with the rest.
+      assert {:messages, [_], state} =
+               inbound.(state, "item/agentMessage/delta", %{
+                 "itemId" => "item-3",
+                 "delta" => "Aga"
+               })
+
+      assert {:messages, [third], state} =
+               inbound.(state, "item/completed", %{
+                 "item" => %{"type" => "agentMessage", "id" => "item-3", "text" => "Again"}
+               })
+
+      assert third["params"]["update"]["content"]["text"] == "in"
+      assert state.sessions["thread-1"].accumulated_text == ["in", "Aga", "World", "Hello"]
+      assert state.sessions["thread-1"].streamed_items == %{}
+    end
+
     test "a completed agent message that extends the stream emits only the remainder", %{
       state: state
     } do
-      state =
-        put_test_session(state, "thread-1", %{
-          turn_id: "turn-1",
-          active_prompt_acp_id: 30,
-          accumulated_text: ["Hel"]
+      state = put_test_session(state, "thread-1", %{turn_id: "turn-1", active_prompt_acp_id: 30})
+
+      delta =
+        Jason.encode!(%{
+          "method" => "item/agentMessage/delta",
+          "params" => %{"threadId" => "thread-1", "itemId" => "item-1", "delta" => "Hel"}
         })
+
+      assert {:messages, [_chunk], state} = Codex.translate_inbound(delta, state)
 
       completed =
         Jason.encode!(%{
