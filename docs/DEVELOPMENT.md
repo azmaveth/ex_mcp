@@ -251,6 +251,33 @@ test/
 - Edge case discovery
 - Uses PropCheck library
 
+#### Golden Transcript Tests (ACP Codex adapter)
+- Pin the current native wire behavior of `ExMCP.ACP.Adapters.Codex` so its
+  internals can be restructured without changing what reaches the app-server
+  or the ACP client
+- Live under `test/ex_mcp/acp/adapters/codex/characterization/`, one file per
+  area (lifecycle, prompt content, permissions, session updates, MCP
+  configuration, faults, catalog), with fixtures under
+  `test/fixtures/acp/codex/<area>/<scenario>.term`
+- Driven by `ExMCP.Test.CodexGolden` (`test/support/acp/codex_golden.ex`):
+  a scenario is a list of steps (`{:init, opts}`, `:post_connect`,
+  `{:outbound, msg}`, `{:inbound, msg}`, `{:inbound_raw, line}`,
+  `{:note, text}`) fed through the adapter's public translation callbacks;
+  `assert_golden/4` compares the recorded transcript with the fixture
+- Adapter-generated ids are normalized to placeholders such as
+  `"codex-permission-<1>"`; every precondition is reached through real flows
+  and no test seeds adapter state or calls private functions
+- Regenerate fixtures only for the scenarios you changed, then run the file
+  normally and review the fixture diff by eye:
+
+```bash
+CODEX_GOLDEN=update mix test test/ex_mcp/acp/adapters/codex/characterization/catalog_golden_test.exs:42
+mix test test/ex_mcp/acp/adapters/codex/characterization/catalog_golden_test.exs
+```
+
+  A fixture diff in a pull request is a wire change and must be explained as
+  one; the update run always fails so it cannot be mistaken for a passing run.
+
 ### Writing Tests
 
 Follow these patterns when writing tests:

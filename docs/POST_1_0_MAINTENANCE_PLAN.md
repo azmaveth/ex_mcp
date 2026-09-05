@@ -1,8 +1,8 @@
 # Post-1.0 Maintenance Plan
 
 - **Status:** Stable 1.0 packaging and the focused contract cleanup are
-  complete; adapter modularization and functional-core extraction remain
-  proposed and tracked
+  complete; the Codex characterization gate is met; adapter modularization
+  and functional-core extraction remain proposed and tracked
 - **Baseline:** ExMCP `1.0.0`
 - **Scope:** behavior-preserving modularization, functional-core extraction,
   dependency cleanup, and Hex source-package cleanup
@@ -58,6 +58,36 @@ Before moving production code, add golden tests for:
 - MCP stdio/HTTP/SSE conversion and authorization failures;
 - cancellation, timeout, late-response, and subprocess-exit behavior; and
 - model and mode catalog normalization across supported Codex CLI versions.
+
+### Status as of 2026-09-05 (characterization gate)
+
+The Codex characterization gate above is met on `master` by a golden-transcript
+suite under `test/ex_mcp/acp/adapters/codex/characterization/` driven by
+`ExMCP.Test.CodexGolden` (`test/support/acp/codex_golden.ex`), with one fixture
+per scenario under `test/fixtures/acp/codex/<area>/`:
+
+| Gate bullet | File | Scenarios |
+|---|---|---|
+| initialize and session lifecycle requests | `lifecycle_golden_test.exs` | 114 |
+| prompt content conversion | `prompt_content_golden_test.exs` | 96 |
+| permission options and response shapes | `permissions_golden_test.exs` | 83 |
+| session update ordering | `session_updates_golden_test.exs` | 92 |
+| MCP conversion and authorization failures | `mcp_config_golden_test.exs` | 110 |
+| cancellation, late responses, fenced sessions | `faults_golden_test.exs` | 46 |
+| model and mode catalog normalization | `catalog_golden_test.exs` | 83 |
+
+Each scenario reaches its preconditions through the adapter's public
+callbacks only (`init/1`, `post_connect/1`, `translate_outbound/2`,
+`translate_inbound/2`), so the fixtures pin wire behavior rather than state
+layout and must stay byte-identical across the boundary extractions below.
+Every area was mutation-tested by an independent reviewer (a single-edit
+behavior change to `codex.ex`, `config.ex`, `events.ex`, or `sessions.ex` must
+fail at least one scenario); the misses that remained are wire-equivalent
+resets (`accumulated_text`, `accumulated_thinking`) and are recorded in the
+area moduledocs. Client-side timeouts and subprocess exit are owned by
+`ExMCP.ACP.Client` and `AdapterBridge`, not by the adapter, and are covered by
+their own tests rather than by this gate. See `docs/DEVELOPMENT.md` for the
+regeneration workflow.
 
 ### Proposed boundaries
 
