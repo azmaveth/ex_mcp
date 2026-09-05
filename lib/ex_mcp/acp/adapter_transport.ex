@@ -16,15 +16,15 @@ defmodule ExMCP.ACP.AdapterTransport do
 
   ## Native event metadata
 
-  Every ACP message the adapter derives from a native agent line carries
-  `_meta.ex_mcp.native` with the adapter `name` and a per-connection
-  `sequence` number. The `:native_events` option controls how much is kept:
+  With the `:native_events` option, every ACP message the adapter derives from
+  a native agent line carries `_meta.ex_mcp.native` with the adapter `name`
+  and a per-connection `sequence` number:
 
-    * `:summary` (default) - adapter name and sequence only
+    * `:off` (default) - no native block; the wire shape is unchanged
+    * `:summary` - adapter name and sequence only
     * `:raw` - also embeds the decoded native event under `event` (or the
       unparsed line under `raw`); this can make updates much larger and the
       retained data counts toward the client's `:max_update_queue_bytes`
-    * `:off` - no native block
 
   For `session/update` the block sits on the update's `_meta`; for other
   agent-to-client requests it sits on `params._meta`; for responses on

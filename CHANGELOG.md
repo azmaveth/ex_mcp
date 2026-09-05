@@ -17,12 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handler deadlines are unchanged. For adapted agents the message is the ACP envelope
   the adapter constructed, not the native provider event (#31, #32).
 
-- `_meta.ex_mcp.native` on every ACP message an adapter derives from a native agent
-  line: the adapter `name` and a per-connection `sequence`, plus the decoded native
-  `event` when `AdapterTransport`/`AdapterBridge` is started with `native_events: :raw`
-  (`:summary` is the default, `:off` disables the block). Adapters can implement the new
-  optional `ExMCP.ACP.Adapter.name/0` callback; the bridge derives a name from the module
-  otherwise.
+- Opt-in `_meta.ex_mcp.native` provenance on every ACP message an adapter derives from
+  a native agent line. Start `AdapterTransport`/`AdapterBridge` with
+  `native_events: :summary` for the adapter `name` and a per-connection `sequence`, or
+  `native_events: :raw` to also embed the decoded native `event`. The default is `:off`,
+  so existing consumers see no wire change. Adapters can implement the new optional
+  `ExMCP.ACP.Adapter.name/0` callback; the bridge derives a name from the module
+  otherwise, and Claude SDK's `agentInfo.name` is now `claude_sdk` instead of
+  `claudesdk`.
 
 ### Changed
 

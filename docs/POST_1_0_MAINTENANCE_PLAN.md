@@ -6,7 +6,7 @@
 - **Baseline:** ExMCP `1.0.0`
 - **Scope:** behavior-preserving modularization, functional-core extraction,
   dependency cleanup, and Hex source-package cleanup
-- **Last updated:** 2026-09-02
+- **Last updated:** 2026-09-05
 
 This is a repository-maintenance document, not user-facing package
 documentation. It records cleanup that is valuable but too invasive to mix
@@ -232,11 +232,51 @@ noted:
 - **Ambient inputs:** open. The clock injection above is the first instance;
   remaining reads are handled case by case under the same 1.x rule.
 
+### Status as of 2026-09-05
+
+The 1.3.0 line adds ACP client and adapter work that was driven by a
+downstream consumer (Jido Harness) and is classified in
+[`V2_ROADMAP.md` section 8.2](./V2_ROADMAP.md#82-current-classifications):
+
+- **Handler message context:** `ExMCP.ACP.Client.Handler` gained optional
+  `handle_session_update/4` and `handle_permission_request/5` variants that
+  receive the decoded JSON-RPC message the client received. Both arities of
+  each pair are optional; `HandlerRunner` refuses to start a handler that
+  exports neither. Retained message data counts toward the handler update
+  queue byte limit.
+- **Adapter metadata namespace:** all adapter extension data lives under nested
+  `_meta.ex_mcp.<adapter>`, matching the documented shape. `AdapterBridge`
+  can tag adapter-derived messages with `_meta.ex_mcp.native` (adapter name,
+  per-connection sequence, optional decoded native event) behind the
+  `:native_events` option, which defaults to `:off` under the 1.x backport
+  rule. Adapters implement the optional `name/0` callback.
+- **Codex adapter correctness:** failed turns now fail the active prompt with
+  a classified error, and streamed agent text is tracked per item so neither
+  duplicate nor dropped messages reach chunk consumers. The second fix was
+  found by review on the first; the per-turn accumulator had silently become
+  ambiguous in a module that has grown to about 4,519 lines.
+- **Dependency security:** mint 1.10.0. The three Cowlib 2.19.0 exceptions in
+  `mix.exs` remain; no patched Cowlib had been published as of 2026-09-05 and
+  the 2026-09-12 review date stands.
+
+Related maintenance figures at this baseline: `ExMCP.ACP.Adapters.Codex` is
+about 4,519 lines and `ExMCP.ACP.Adapters.Pi` about 2,553, up from the rc.7
+figures quoted above, so the modularization sections below are more pressing,
+not less. The existing `Codex.Sessions` helper covers session lookup and
+update only; the lifecycle-transition boundary in the Codex plan remains.
+Dialyzer reports 27 unnecessary entries in `.dialyzer_ignore.exs` on the CI
+dialyzer version; prune them once verified against the full OTP/Elixir matrix.
+
 ## Dependency-direction cleanup
 
-At commit `4591af6`, `mix xref graph --format stats` reports eight dependency
-cycles. Break them through narrow dependency inversion rather than moving code
-between large modules:
+At commit `4591af6`, `mix xref graph --format stats` reported eight dependency
+cycles. Under Elixir 1.17.3 / OTP 27 the same command reports 22 cycles at both
+the `v1.2.0` tag and the 1.3.0 baseline, none of them touching `lib/ex_mcp/acp`;
+they sit in the transport, client, internal, and content modules. Treat 22 as
+the current baseline and record the toolchain with any future count, since the
+difference from the earlier figure is a measurement change rather than a
+regression. Break the cycles through narrow dependency inversion rather than
+moving code between large modules:
 
 - move concrete `get_transport/1` selection out of the `ExMCP.Transport`
   behaviour and into a registry or factory;
@@ -449,7 +489,12 @@ existing, disabled-by-default Codex legacy compatibility option.
 5. Extract the shared HTTP reducer and the smallest high-value functional cores
    behind characterization tests.
 6. Modularize Codex one characterized boundary at a time. `Codex.Protocol` is
-   extracted; `Sessions`, `Permissions`, `Content`, and `MCP` remain.
+   extracted and `Codex.Sessions` holds lookup/update helpers; the lifecycle
+   `Sessions` boundary, `Permissions`, `Content`, and `MCP` remain. The 1.3.0
+   failed-turn and per-item streamed-text logic is a natural seed for the
+   event-folding and prompt-flow cores. This is behavior-preserving internal
+   work: it lands on `master` behind golden tests and ships with the next
+   user-visible release rather than forcing a release of its own.
 7. Modularize Pi one characterized boundary at a time. `Pi.RPC` is extracted;
    `Sessions`, `Events`, `PromptFlow`, and `Config` remain.
 8. Reduce dependency cycles without changing public or lifecycle semantics.
