@@ -55,7 +55,7 @@ defmodule ExMCP.ACP.AdapterBridge do
     one_shot_tasks: %{},
     one_shot_monitors: %{},
     buffer: "",
-    native_events: :summary,
+    native_events: :off,
     native_sequence: 0,
     adapter_name: nil,
     status: :connecting
@@ -1122,12 +1122,13 @@ defmodule ExMCP.ACP.AdapterBridge do
     end
   end
 
-  # Every ACP message an adapter derives from one native line is tagged under
-  # `_meta.ex_mcp.native` with the adapter name and a per-bridge sequence
-  # number, plus the decoded native event when `native_events: :raw` is set.
-  # Messages the adapter produces outside `translate_inbound/2` (post_connect,
-  # adapter-managed processes, synthesized responses) are not derived from a
-  # native line and are left untouched.
+  # With `native_events: :summary` or `:raw`, every ACP message an adapter
+  # derives from one native line is tagged under `_meta.ex_mcp.native` with the
+  # adapter name and a per-bridge sequence number, plus the decoded native
+  # event for `:raw`. The default is `:off` so the 1.x wire shape is unchanged
+  # unless a consumer opts in. Messages the adapter produces outside
+  # `translate_inbound/2` (post_connect, adapter-managed processes, synthesized
+  # responses) are not derived from a native line and are left untouched.
   defp push_native_messages(state, [], _line), do: state
 
   defp push_native_messages(%{native_events: :off} = state, messages, _line),
@@ -1172,7 +1173,7 @@ defmodule ExMCP.ACP.AdapterBridge do
   defp put_native_meta(message, _native), do: message
 
   defp native_events_option(opts) do
-    case Keyword.get(opts, :native_events, :summary) do
+    case Keyword.get(opts, :native_events, :off) do
       mode when mode in [:off, :summary, :raw] ->
         mode
 

@@ -2,7 +2,7 @@
 
 - **Status:** Living roadmap — Phase 0 complete; Phase 1 contract design is next
 - **Target:** ExMCP `2.0.0`, after stable `1.0.0` and the supported 1.x line
-- **Last updated:** 2026-09-02
+- **Last updated:** 2026-09-05
 - **Related release work:** [`RELEASE_1_0_0.md`](./RELEASE_1_0_0.md),
   [`API_DIFF_RC5_TO_1_0.md`](./API_DIFF_RC5_TO_1_0.md),
   [`POST_1_0_MAINTENANCE_PLAN.md`](./POST_1_0_MAINTENANCE_PLAN.md),
@@ -416,6 +416,11 @@ another 1.x RC or document a patch-level correctness/security exception.
 | Circuit breaker monotonic clock injection | Released in `1.2.0` | Characterized correctness fix; timeout and telemetry behavior preserved. |
 | Explicit client protocol-version query replacing `$initial_call` | Released in `1.2.0` | Identical results for every supported client entry point. |
 | `HttpPlug` body fallback, mount-independent routing, and terminal halt | Released in `1.2.0` | Documented bug fixes with regression tests; no wire change. |
+| ACP client handler message-context callbacks | Released in `1.3.0` | Additive optional `handle_session_update/4` and `handle_permission_request/5`; validation, session authority, correlation, cancellation, and deadlines unchanged. The legacy arities became optional with an init-time guard so no existing handler changes behavior. |
+| `_meta.ex_mcp.<adapter>` namespace consolidation | Released in `1.3.0` | Wire-visible, accepted as a documented-shape fix: the guide described the nested form since 1.0 while the Claude SDK adapter and the Codex, Pi, and ZCode capability advertisements emitted flat `"ex_mcp.<adapter>"` keys. Called out as BREAKING for flat-key readers. |
+| `_meta.ex_mcp.native` provenance and `Adapter.name/0` | Released in `1.3.0` | Default `:off` per §8.1; `native_events: :summary` and `:raw` are opt-in. The one default wire change is Claude SDK `agentInfo.name` becoming `claude_sdk`. |
+| Codex failed-turn errors and per-item streamed text | Released in `1.3.0` | Documented bug fixes with regression tests. A failed `turn/completed` now answers the prompt with a classified JSON-RPC error instead of an empty success. |
+| mint 1.10.0 | Released in `1.3.0` | Dependency security fix for EEF-CVE-2026-82728 and EEF-CVE-2026-82729. |
 | Internal dispatch deduplication | Case by case | Backport only when golden tests prove identical wire, errors, ordering, and lifecycle. |
 | Richer DSL constraints | Hold for 2.0 | Additive, but expands the stable public language before its design is settled. |
 | Result facade and client lifecycle helpers | Hold for 2.0 | Technically additive, but would create parallel APIs and long-term support obligations. |

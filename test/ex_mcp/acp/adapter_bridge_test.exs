@@ -507,7 +507,9 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
 
   describe "native event metadata" do
     test "summary mode tags adapter name and sequence on every derived message" do
-      {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
+      {:ok, bridge} =
+        AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [], native_events: :summary)
+
       _init = send_initialize(bridge)
 
       assert prompt_and_native(bridge, "one") == %{"adapter" => "mockadapter", "sequence" => 1}
@@ -527,6 +529,15 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
                "sequence" => 1,
                "event" => %{"type" => "echo", "text" => "raw"}
              }
+
+      AdapterBridge.close(bridge)
+    end
+
+    test "the default leaves adapter messages untouched" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: MockAdapter, adapter_opts: [])
+      _init = send_initialize(bridge)
+
+      assert prompt_and_native(bridge, "default") == nil
 
       AdapterBridge.close(bridge)
     end
