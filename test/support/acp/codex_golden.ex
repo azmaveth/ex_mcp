@@ -28,8 +28,7 @@ defmodule ExMCP.Test.CodexGolden do
   Each entry is an `ExMCP.Test.CodexGolden.Entry` struct (a map with `:step`
   and `:result`), so fixtures render the cause (`step`) before its effect
   (`result`). `:result` holds only the keys that apply: `tag` (the adapter's
-  return tag), `writes`, `messages`, `reply`, `error`, `skipped`, `partial`,
-  `pending`, `one_shot`.
+  return tag), `writes`, `messages`, `reply`, `error`, `skipped`.
 
   ## Wire framing
 
@@ -41,10 +40,15 @@ defmodule ExMCP.Test.CodexGolden do
   raises rather than silently producing the same transcript, because the
   app-server would not see such a message until the next line arrived.
 
-  `{:one_shot, fun, state}` is recorded as `%{tag: :one_shot, one_shot: true}`
-  without invoking `fun`: it owns a subprocess lifecycle and runs in a task
-  under `ExMCP.ACP.AdapterBridge`. The Codex adapter does not return it today;
-  extend the harness to observe the fun if that changes.
+  The `ExMCP.ACP.Adapter` behaviour also allows `{:ok, :pending, state}`,
+  `{:one_shot, fun, state}`, and `{:partial, state}` results. The Codex
+  adapter never returns any of them: it is not adapter-managed, and
+  `ExMCP.ACP.AdapterBridge` buffers and splits the subprocess output so
+  `translate_inbound/2` always receives one complete line. `normalize_result/1`
+  deliberately has no clauses for them (Dialyzer rejects unreachable ones); a
+  step that produced one would raise a `FunctionClauseError` here, which is
+  the right signal to extend the harness (a `one_shot` fun owns a subprocess
+  lifecycle and would have to be observed rather than invoked).
 
   ## Normalization
 
@@ -274,7 +278,6 @@ defmodule ExMCP.Test.CodexGolden do
   # -- result normalization -------------------------------------------------
 
   defp normalize_result({:ok, :skip, state}), do: {%{tag: :ok, skipped: true}, state}
-  defp normalize_result({:ok, :pending, state}), do: {%{tag: :ok, pending: true}, state}
   defp normalize_result({:ok, data, state}), do: {%{tag: :ok, writes: decode_writes(data)}, state}
   defp normalize_result({:reply, result, state}), do: {%{tag: :reply, reply: result}, state}
 
@@ -295,10 +298,6 @@ defmodule ExMCP.Test.CodexGolden do
 
   defp normalize_result({:error, reason, state}), do: {%{tag: :error, error: reason}, state}
 
-  defp normalize_result({:one_shot, fun, state}) when is_function(fun),
-    do: {%{tag: :one_shot, one_shot: true}, state}
-
-  defp normalize_result({:partial, state}), do: {%{tag: :partial, partial: true}, state}
   defp normalize_result({:skip, state}), do: {%{tag: :skip, skipped: true}, state}
 
   # Decodes an NDJSON batch while enforcing its framing: every object,
