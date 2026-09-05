@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-05
+
+- ACP client handlers can receive the decoded JSON-RPC message for session updates and
+  permission requests, adapter extension data lives under one nested `_meta.ex_mcp`
+  namespace with opt-in native-event provenance, the Codex adapter reports failed turns
+  and streams agent text once, and mint moves to 1.10.0 for two security advisories.
+  The `_meta` key change is wire-visible for consumers that read the old flat keys; see
+  Changed. The pending Claude and Codex parity decisions recorded in
+  `docs/POST_1_0_MAINTENANCE_PLAN.md` remain open and the reference pins are unchanged.
+
 ### Added
 
 - Optional `handle_session_update/4` and `handle_permission_request/5` callbacks on
