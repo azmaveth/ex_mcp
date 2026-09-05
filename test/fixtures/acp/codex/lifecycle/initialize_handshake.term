@@ -1,0 +1,75 @@
+[
+  %ExMCP.Test.CodexGolden.Entry{
+    step: %{
+      opts: [
+        workspace_roots: ["/tmp"],
+        authorize_mcp_server: :__fun__,
+        trust_authorized_workspaces: true
+      ],
+      kind: :init
+    },
+    result: %{tag: :ok}
+  },
+  %ExMCP.Test.CodexGolden.Entry{
+    step: %{kind: :post_connect},
+    result: %{
+      tag: :ok,
+      writes: [
+        %{
+          "id" => 1,
+          "method" => "initialize",
+          "params" => %{"clientInfo" => %{"name" => "ex_mcp", "version" => "1.0.0"}}
+        }
+      ]
+    }
+  },
+  %ExMCP.Test.CodexGolden.Entry{
+    step: %{message: %{"id" => 1, "result" => %{"capabilities" => %{}}}, kind: :inbound},
+    result: %{
+      tag: :skip_and_write,
+      skipped: true,
+      writes: [
+        %{"method" => "initialized"},
+        %{"id" => 2, "method" => "model/list", "params" => %{"includeHidden" => false}}
+      ]
+    }
+  },
+  %ExMCP.Test.CodexGolden.Entry{
+    step: %{
+      message: %{
+        "id" => 2,
+        "result" => %{
+          "data" => [
+            %{
+              "defaultReasoningEffort" => "medium",
+              "description" => "Fast coding model",
+              "displayName" => "Codex Mini",
+              "hidden" => false,
+              "id" => "codex-mini",
+              "model" => "gpt-5-codex",
+              "supportedReasoningEfforts" => [
+                %{"description" => "Balanced", "reasoningEffort" => "medium"},
+                %{"description" => "Deep", "reasoningEffort" => "high"}
+              ]
+            },
+            %{
+              "defaultReasoningEffort" => "high",
+              "description" => "General purpose model",
+              "displayName" => "GPT-5",
+              "hidden" => false,
+              "id" => "gpt-5",
+              "model" => "gpt-5",
+              "supportedReasoningEfforts" => [
+                %{"description" => "Quick", "reasoningEffort" => "low"},
+                %{"description" => "Deep", "reasoningEffort" => "high"}
+              ]
+            }
+          ],
+          "nextCursor" => nil
+        }
+      },
+      kind: :inbound
+    },
+    result: %{tag: :skip, skipped: true}
+  }
+]
