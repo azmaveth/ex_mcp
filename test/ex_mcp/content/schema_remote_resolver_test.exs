@@ -364,12 +364,16 @@ defmodule ExMCP.Content.SchemaRemoteResolverTest do
     policy_overrides = Keyword.get(overrides, :policy, [])
     network_overrides = Keyword.drop(overrides, [:dns, :policy])
 
-    {:ok, agent} =
-      Agent.start_link(fn -> %{routes: routes, dns: dns, fetches: [], lookups: []} end)
-
-    on_exit(fn ->
-      if Process.alive?(agent), do: Agent.stop(agent)
-    end)
+    # Supervised by ExUnit so teardown is deterministic. A linked agent plus an
+    # on_exit stop raced: the agent could die with the test process between the
+    # alive check and Agent.stop/1, failing the test in teardown (seen in CI).
+    agent =
+      start_supervised!(
+        Supervisor.child_spec(
+          {Agent, fn -> %{routes: routes, dns: dns, fetches: [], lookups: []} end},
+          id: {:resolver_agent, make_ref()}
+        )
+      )
 
     dns_resolver = fn host, _timeout ->
       Agent.get_and_update(agent, fn state ->
