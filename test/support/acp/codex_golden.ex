@@ -414,8 +414,15 @@ defmodule ExMCP.Test.CodexGolden do
 
   # -- fixture rendering ----------------------------------------------------
 
+  # sort_maps: atom-keyed maps otherwise render in atom-creation order, which
+  # differs between VM runs and would make regenerated fixtures churn.
   defp render(transcript) do
-    inspect(transcript, pretty: true, limit: :infinity, printable_limit: :infinity, width: 98) <>
-      "\n"
+    inspect(transcript,
+      pretty: true,
+      limit: :infinity,
+      printable_limit: :infinity,
+      width: 98,
+      custom_options: [sort_maps: true]
+    ) <> "\n"
   end
 end

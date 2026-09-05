@@ -1,12 +1,12 @@
 [
   %ExMCP.Test.CodexGolden.Entry{
     step: %{
+      kind: :init,
       opts: [
         workspace_roots: ["/tmp"],
         authorize_mcp_server: :__fun__,
         trust_authorized_workspaces: true
-      ],
-      kind: :init
+      ]
     },
     result: %{tag: :ok}
   },
@@ -24,10 +24,10 @@
     }
   },
   %ExMCP.Test.CodexGolden.Entry{
-    step: %{message: %{"id" => 1, "result" => %{"capabilities" => %{}}}, kind: :inbound},
+    step: %{kind: :inbound, message: %{"id" => 1, "result" => %{"capabilities" => %{}}}},
     result: %{
-      tag: :skip_and_write,
       skipped: true,
+      tag: :skip_and_write,
       writes: [
         %{"method" => "initialized"},
         %{"id" => 2, "method" => "model/list", "params" => %{"includeHidden" => false}}
@@ -36,6 +36,7 @@
   },
   %ExMCP.Test.CodexGolden.Entry{
     step: %{
+      kind: :inbound,
       message: %{
         "id" => 2,
         "result" => %{
@@ -67,9 +68,8 @@
           ],
           "nextCursor" => nil
         }
-      },
-      kind: :inbound
+      }
     },
-    result: %{tag: :skip, skipped: true}
+    result: %{skipped: true, tag: :skip}
   }
 ]
