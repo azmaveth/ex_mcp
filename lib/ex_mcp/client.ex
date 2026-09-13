@@ -628,6 +628,34 @@ defmodule ExMCP.Client do
   end
 
   @doc """
+  Gets the client status with a caller-supplied deadline.
+
+  `timeout` accepts a non-negative millisecond value or `:infinity`. A delayed
+  client returns `{:error, :timeout}`. Invalid options return
+  `{:error, :invalid_timeout}`. `get_status/1` keeps its existing behavior.
+  """
+  @spec get_status(t(), keyword()) :: {:ok, map()} | {:error, :timeout | :invalid_timeout}
+  def get_status(client, opts) when is_list(opts) do
+    if Keyword.keyword?(opts) do
+      case Keyword.get(opts, :timeout, 5_000) do
+        timeout when (is_integer(timeout) and timeout >= 0) or timeout == :infinity ->
+          try do
+            GenServer.call(client, :get_status, timeout)
+          catch
+            :exit, {:timeout, _details} -> {:error, :timeout}
+          end
+
+        _invalid ->
+          {:error, :invalid_timeout}
+      end
+    else
+      {:error, :invalid_timeout}
+    end
+  end
+
+  def get_status(_client, _opts), do: {:error, :invalid_timeout}
+
+  @doc """
   Gets the list of pending request IDs.
 
   Returns a list of request IDs for requests that are currently in progress.

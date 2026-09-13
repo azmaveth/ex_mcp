@@ -933,7 +933,10 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
 
       inbound = fn state, method, params ->
         Codex.translate_inbound(
-          Jason.encode!(%{"method" => method, "params" => Map.put(params, "threadId", "thread-1")}),
+          Jason.encode!(%{
+            "method" => method,
+            "params" => Map.put(params, "threadId", "thread-1")
+          }),
           state
         )
       end
