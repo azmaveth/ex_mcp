@@ -2832,7 +2832,11 @@ defmodule ExMCP.ACP.Adapters.Codex.SessionUpdatesGoldenTest do
              "result" => %{"turn" => %{"id" => "turn-1", "status" => "inProgress", "items" => []}}
            }},
           agent_delta("msg-1", " and late"),
-          item_completed(%{"type" => "agentMessage", "id" => "msg-1", "text" => "Early and late"}),
+          item_completed(%{
+            "type" => "agentMessage",
+            "id" => "msg-1",
+            "text" => "Early and late"
+          }),
           turn_completed("completed")
         ]
 
