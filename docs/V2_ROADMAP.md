@@ -2,7 +2,7 @@
 
 - **Status:** Living roadmap — Phase 0 complete; Phase 1 contract design is next
 - **Target:** ExMCP `2.0.0`, after stable `1.0.0` and the supported 1.x line
-- **Last updated:** 2026-09-05
+- **Last updated:** 2026-09-16
 - **Related release work:** [`RELEASE_1_0_0.md`](./RELEASE_1_0_0.md),
   [`API_DIFF_RC5_TO_1_0.md`](./API_DIFF_RC5_TO_1_0.md),
   [`POST_1_0_MAINTENANCE_PLAN.md`](./POST_1_0_MAINTENANCE_PLAN.md),
@@ -164,6 +164,7 @@ size of the compatibility surface.
 | Central additive telemetry | Grok review | Adopt | 1.x-compatible subset, complete in 2.0 | Instrument the shared dispatch boundary; payload capture stays opt-in and bounded. |
 | Public middleware/pipeline API | Grok review | Defer | Reconsider after internal pipeline lands | First prove stable phases and use cases internally; a premature public pipeline becomes another compatibility surface. |
 | General protocol-dialect framework | Grok review | Defer | Only with two concrete consumers | Keep existing era/version modules unless a second protocol family demonstrates that a general dialect abstraction removes real duplication. |
+| Optional HTTP server dependency (Cowboy optional, Bandit supported) | Cowlib advisory tracking (#18); PR #21 | Adopt | 2.0; candidate for pulling 2.0 forward | `EEF-CVE-2026-43966` and `EEF-CVE-2026-43969` are "won't fix" upstream, so every consumer carries audit exceptions for encoders ExMCP never calls. Standalone `transport: :http` would require the host to add Bandit or Cowboy, which breaks 1.x consumers; Phoenix mounts of `ExMCP.HttpPlug` are unaffected. Listener lifecycle goes behind per-adapter modules; `:ranch_ref`, the named listener, and shutdown semantics are preserved where Cowboy is chosen. |
 | Separate MCP and ACP Hex packages | Package-footprint review | Investigate | Phase 1 decision | ACP is substantial and lightly coupled, but package/release topology and migration cost need a focused design. |
 | Third shared runtime package | Package-footprint review | Defer pending split design | 2.0 only if justified | Centralize security-sensitive JSON-RPC/framing/process code only if both packages need a stable neutral contract; do not publish a grab-bag of tiny helpers. |
 | Built-in distributed database/event sourcing | External review extrapolation | Reject for core | External adapters | ExMCP should define contracts, not require a database or event-source all runtime state. |
@@ -580,6 +581,11 @@ These need focused design records during Phase 1:
 7. **Package topology:** whether measured compile/dependency/release benefits
    justify separate MCP and ACP packages and, if so, the shared-runtime and
    namespace strategy described above.
+8. **2.0 timing:** whether the optional HTTP server dependency ships as an
+   early, narrow 2.0 ahead of the runtime and dispatch phases, with the rest
+   of this roadmap landing in later 2.x minors, or waits for the full scope.
+   The pressure is external: the remaining Cowlib advisories will not be
+   fixed upstream, and a 1.x release cannot drop the Cowboy requirement.
 
 An open decision is not permission to let an implementation choose the public
 contract accidentally.

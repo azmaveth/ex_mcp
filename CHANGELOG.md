@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Cowlib moves to 2.20.0 and Cowboy to 2.19.0. Cowlib 2.20.0 fixes
+  `EEF-CVE-2026-43971` (`cow_link:link/1`), the advisory now records 2.20.0 as
+  the fixed version, and its `mix hex.audit` exception is removed. The
+  `EEF-CVE-2026-43966` and `EEF-CVE-2026-43969` exceptions remain: the Cowlib
+  maintainer has declined to change `cow_http_struct_hd:escape_string/2` and
+  `cow_cookie:cookie/1` (ninenines/cowlib #152, #166, #169), so no Cowlib
+  release will clear them while ExMCP requires Cowboy. The mitigation
+  assumptions are unchanged and remain covered by
+  `dependency_advisory_mitigation_test.exs`. Making the HTTP server dependency
+  optional is now an accepted 2.0 change; see `docs/V2_ROADMAP.md` (#18).
+
 ## [1.3.0] - 2026-09-05
 
 - ACP client handlers can receive the decoded JSON-RPC message for session updates and

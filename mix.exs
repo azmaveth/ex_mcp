@@ -26,19 +26,26 @@ defmodule ExMCP.MixProject do
         plt_local_path: "priv/plts",
         plt_core_path: "priv/plts"
       ],
-      # Cowlib 2.19.0 is the newest compatible release. These remaining
-      # advisories are mitigated by Plug/Cowboy response-header validation;
-      # ExMCP does not call cow_cookie:cookie/1; and the ExMCP/Plug/Cowboy
-      # server stack does not call cow_link:link/1. Those assumptions are
-      # locked by dependency_advisory_mitigation_test.exs. Security owner:
-      # project maintainers; review/remove these exceptions by 2026-09-12 or
-      # immediately when a patched Cowlib is published. Keep the exceptions
-      # exact so `mix hex.audit` still fails on every new advisory.
+      # Cowlib advisory state as of 2026-09-16. EEF-CVE-2026-43971 (cow_link)
+      # is fixed in Cowlib 2.20.0 and the advisory now records that, so its
+      # exception is gone. The two below have NO upstream fix: the Cowlib
+      # maintainer closed every PR that validated cow_cookie:cookie/1 and
+      # cow_http_struct_hd:escape_string/2 as "won't fix" (ninenines/cowlib
+      # #152, #166, #169), on the position that those encoders expect
+      # RFC-valid input and Cowboy/Gun reject CR/LF at their own layer. The
+      # advisory metadata is therefore correct and no Cowlib release will
+      # clear it. These exceptions stay for as long as ExMCP requires Cowboy,
+      # backed by: Plug/Cowboy response-header validation; ExMCP does not
+      # call cow_cookie:cookie/1; and the ExMCP/Plug/Cowboy server stack does
+      # not call cow_link:link/1. Those assumptions are locked by
+      # dependency_advisory_mitigation_test.exs. The exit is to make the HTTP
+      # server dependency optional (Cowboy optional, Bandit supported), which
+      # is a breaking change recorded in the 2.0 roadmap. Keep the
+      # exceptions exact so `mix hex.audit` still fails on every new advisory.
       hex: [
         ignore_advisories: [
           "EEF-CVE-2026-43966",
-          "EEF-CVE-2026-43969",
-          "EEF-CVE-2026-43971"
+          "EEF-CVE-2026-43969"
         ]
       ],
       aliases: aliases()
