@@ -40,7 +40,7 @@ defmodule ExMCP.MixProject do
       # not call cow_link:link/1. Those assumptions are locked by
       # dependency_advisory_mitigation_test.exs. The exit is to make the HTTP
       # server dependency optional (Cowboy optional, Bandit supported), which
-      # is a breaking change tracked in docs/V2_ROADMAP.md. Keep the
+      # is a breaking change recorded in the 2.0 roadmap. Keep the
       # exceptions exact so `mix hex.audit` still fails on every new advisory.
       hex: [
         ignore_advisories: [
