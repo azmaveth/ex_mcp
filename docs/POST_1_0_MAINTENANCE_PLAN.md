@@ -286,13 +286,32 @@ downstream consumer (Jido Harness) and is classified in
   found by review on the first; the per-turn accumulator had silently become
   ambiguous in a module that has grown to about 4,519 lines.
 - **Dependency security:** mint 1.10.0. Cowlib 2.20.0 and Cowboy 2.19.0 were
-  published on 2026-09-08 and locked here on 2026-09-16; the 2.20.0 tag
-  contains the `cow_link` fix commit (`89da27ee`) and rewrites `cow_cookie` and
-  `cow_http_struct_hd`. The three Cowlib exceptions in `mix.exs` remain only
-  because the EEF advisory records still list no fixed version, so
-  `mix hex.audit` flags 2.20.0 exactly as it flagged 2.19.0. Remove each
-  exception when its advisory is updated; next review 2026-10-16. GitHub #18
-  stays open until a fresh downstream audit passes without the exceptions.
+  published on 2026-09-08 and locked here on 2026-09-16. State of the three
+  Cowlib advisories, verified against the `2.20.0` tag and `master`:
+  - `EEF-CVE-2026-43971` (`cow_link:link/1`): fixed. Commit `89da27ee` is an
+    ancestor of the `2.20.0` tag, and EEF updated the advisory with
+    `fixed: 2.20.0` on 2026-09-16, so `mix hex.audit` no longer reports it.
+    The exception is removed.
+  - `EEF-CVE-2026-43966` (`cow_http_struct_hd:escape_string/2`) and
+    `EEF-CVE-2026-43969` (`cow_cookie:cookie/1`): not fixed, and not going to
+    be. Both functions are byte-for-byte unchanged on Cowlib `master`. The
+    maintainer closed every validating PR (ninenines/cowlib #154, #163, #164,
+    #166, #169) and stated in #152 that the CVE "will likely remain as won't
+    fix": Cowlib encoders expect RFC-valid input, and Cowboy 2.16+ and Gun
+    2.4+ reject CR/LF at their own layer. The advisory metadata is accurate,
+    so there is nothing to report to EEF. The exceptions have no review date;
+    they stay for as long as ExMCP requires Cowboy, and
+    `dependency_advisory_mitigation_test.exs` keeps locking the assumptions
+    behind them.
+  - Consequence: the only way to stop carrying audit exceptions for code
+    ExMCP never calls is to stop requiring Cowboy. Bandit depends on
+    `thousand_island`, `hpax`, `plug`, `websock`, and `telemetry` only, with
+    no Cowlib in its tree. Making the HTTP server dependency optional (Cowboy
+    optional, Bandit supported) was reserved for 2.0 because it is a breaking
+    change for `transport: :http` consumers; it is now an accepted 2.0 item
+    in `V2_ROADMAP.md` and a reason to bring 2.0 forward rather than wait for
+    the rest of the 2.0 scope. PR #21 is the existing draft. GitHub #18 stays
+    open until a downstream `mix hex.audit` passes without exceptions.
 
 Related maintenance figures at this baseline: `ExMCP.ACP.Adapters.Codex` is
 about 4,519 lines and `ExMCP.ACP.Adapters.Pi` about 2,553, up from the rc.7
