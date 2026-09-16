@@ -11,17 +11,11 @@ defmodule ExMCP.Server.Subscriptions do
 
   alias ExMCP.Server.SubscriptionListener
   alias ExMCP.Server.Subscriptions.{Entry, ETS}
+  alias ExMCP.SubscriptionFilter
   alias ExMCP.Tasks
   alias ExMCP.Tasks.Extension, as: TasksExtension
 
-  @filter_keys [
-    "toolsListChanged",
-    "promptsListChanged",
-    "resourcesListChanged",
-    "resourceSubscriptions",
-    "taskIds"
-  ]
-  @default_supported Map.new(@filter_keys, &{&1, true})
+  @default_supported Map.new(SubscriptionFilter.keys(), &{&1, true})
 
   defstruct [
     :adapter,
@@ -445,7 +439,7 @@ defmodule ExMCP.Server.Subscriptions do
 
     with {:ok, authorised} <- normalize_authorization_result(result),
          {:ok, authorised} <- normalize_filter(authorised, state),
-         true <- filter_subset?(authorised, requested) do
+         true <- SubscriptionFilter.subset?(authorised, requested) do
       {:ok, authorised}
     else
       false -> {:error, :authorizer_broadened_filter}
@@ -519,46 +513,11 @@ defmodule ExMCP.Server.Subscriptions do
   defp normalize_authorization_result({:error, reason}), do: {:error, reason}
   defp normalize_authorization_result(_other), do: {:error, :invalid_filter_authorizer_result}
 
-  defp normalize_filter(filter, state) when is_map(filter) do
-    string_filter = Map.new(filter, fn {key, value} -> {to_string(key), value} end)
-
-    with true <- Enum.all?(Map.keys(string_filter), &(&1 in @filter_keys)),
-         {:ok, normalized} <- normalize_filter_fields(string_filter),
+  defp normalize_filter(filter, state) do
+    with {:ok, normalized} <- SubscriptionFilter.normalize(filter),
          :ok <- validate_filter_size(normalized, state) do
       {:ok, normalized}
-    else
-      false -> {:error, :unknown_subscription_filter}
-      {:error, reason} -> {:error, reason}
     end
-  end
-
-  defp normalize_filter(_filter, _state), do: {:error, :subscription_filter_required}
-
-  defp normalize_filter_fields(filter) do
-    Enum.reduce_while(filter, {:ok, %{}}, fn
-      {key, true}, {:ok, acc} when key not in ["resourceSubscriptions", "taskIds"] ->
-        {:cont, {:ok, Map.put(acc, key, true)}}
-
-      {key, false}, {:ok, acc} when key not in ["resourceSubscriptions", "taskIds"] ->
-        {:cont, {:ok, acc}}
-
-      {"resourceSubscriptions", uris}, {:ok, acc} when is_list(uris) ->
-        if Enum.all?(uris, &(is_binary(&1) and byte_size(&1) > 0)) do
-          {:cont, {:ok, Map.put(acc, "resourceSubscriptions", Enum.uniq(uris))}}
-        else
-          {:halt, {:error, :invalid_resource_subscription}}
-        end
-
-      {"taskIds", task_ids}, {:ok, acc} when is_list(task_ids) ->
-        if Enum.all?(task_ids, &(is_binary(&1) and byte_size(&1) > 0)) do
-          {:cont, {:ok, Map.put(acc, "taskIds", Enum.uniq(task_ids))}}
-        else
-          {:halt, {:error, :invalid_task_subscription}}
-        end
-
-      {_key, _value}, _acc ->
-        {:halt, {:error, :invalid_subscription_filter}}
-    end)
   end
 
   defp validate_filter_size(filter, state) do
@@ -594,21 +553,6 @@ defmodule ExMCP.Server.Subscriptions do
   end
 
   defp supported?(_supported, _key), do: false
-
-  defp filter_subset?(authorised, requested) do
-    Enum.all?(authorised, fn
-      {"resourceSubscriptions", uris} ->
-        requested_uris = Map.get(requested, "resourceSubscriptions", [])
-        Enum.all?(uris, &(&1 in requested_uris))
-
-      {"taskIds", task_ids} ->
-        requested_task_ids = Map.get(requested, "taskIds", [])
-        Enum.all?(task_ids, &(&1 in requested_task_ids))
-
-      {key, true} ->
-        Map.get(requested, key) == true
-    end)
-  end
 
   defp filter_matches?(filter, "notifications/tools/list_changed", _params),
     do: Map.get(filter, "toolsListChanged") == true

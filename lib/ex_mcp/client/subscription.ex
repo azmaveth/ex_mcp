@@ -14,6 +14,8 @@ defmodule ExMCP.Client.Subscription do
 
   use GenServer
 
+  alias ExMCP.SubscriptionFilter
+
   @subscription_id_key "io.modelcontextprotocol/subscriptionId"
 
   defmodule Ref do
@@ -157,16 +159,20 @@ defmodule ExMCP.Client.Subscription do
   def handle_info({:client_subscription_acknowledged, request_id, params}, state)
       when request_id == state.request_id do
     with ^request_id <- get_in(params, ["_meta", @subscription_id_key]),
-         filter when is_map(filter) <- Map.get(params, "notifications") do
+         filter when is_map(filter) <- Map.get(params, "notifications"),
+         {:ok, requested} <- SubscriptionFilter.normalize(state.requested_filter),
+         {:ok, acknowledged} <- SubscriptionFilter.normalize(filter),
+         true <- SubscriptionFilter.subset?(acknowledged, requested) do
       if state.resync? do
         send(self(), :resync)
 
-        {:noreply, %{state | status: :resyncing, acknowledged_filter: filter, open_error: nil}}
+        {:noreply,
+         %{state | status: :resyncing, acknowledged_filter: acknowledged, open_error: nil}}
       else
         state = %{
           state
           | status: :active,
-            acknowledged_filter: filter,
+            acknowledged_filter: acknowledged,
             open_error: nil,
             reconnect_attempts: 0
         }
@@ -326,8 +332,12 @@ defmodule ExMCP.Client.Subscription do
   end
 
   defp fail_open(state, reason) do
+    close_on_client(state, "subscription opening failed")
     reply_waiters(state.waiters, {:error, reason})
-    {:noreply, %{state | status: :failed, open_error: reason, waiters: []}}
+    maybe_notify_resync_failure(state, reason)
+    state = %{state | status: :failed, open_error: reason, waiters: []}
+
+    if state.resync?, do: {:stop, :normal, state}, else: {:noreply, state}
   end
 
   defp reply_waiters(waiters, reply), do: Enum.each(waiters, &GenServer.reply(&1, reply))
@@ -401,8 +411,20 @@ defmodule ExMCP.Client.Subscription do
     task_id in Map.get(filter || %{}, "taskIds", [])
   end
 
-  defp event_allowed?("notifications/tasks", _params, _filter), do: false
-  defp event_allowed?(_method, _params, _filter), do: true
+  defp event_allowed?("notifications/resources/updated", %{"uri" => uri}, filter) do
+    uri in Map.get(filter || %{}, "resourceSubscriptions", [])
+  end
+
+  defp event_allowed?("notifications/tools/list_changed", _params, filter),
+    do: Map.get(filter || %{}, "toolsListChanged") == true
+
+  defp event_allowed?("notifications/prompts/list_changed", _params, filter),
+    do: Map.get(filter || %{}, "promptsListChanged") == true
+
+  defp event_allowed?("notifications/resources/list_changed", _params, filter),
+    do: Map.get(filter || %{}, "resourcesListChanged") == true
+
+  defp event_allowed?(_method, _params, _filter), do: false
 
   defp safe_resync(operation) do
     case operation.() do
