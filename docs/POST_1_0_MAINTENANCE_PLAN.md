@@ -285,9 +285,14 @@ downstream consumer (Jido Harness) and is classified in
   duplicate nor dropped messages reach chunk consumers. The second fix was
   found by review on the first; the per-turn accumulator had silently become
   ambiguous in a module that has grown to about 4,519 lines.
-- **Dependency security:** mint 1.10.0. The three Cowlib 2.19.0 exceptions in
-  `mix.exs` remain; no patched Cowlib had been published as of 2026-09-05 and
-  the 2026-09-12 review date stands.
+- **Dependency security:** mint 1.10.0. Cowlib 2.20.0 and Cowboy 2.19.0 were
+  published on 2026-09-08 and locked here on 2026-09-16; the 2.20.0 tag
+  contains the `cow_link` fix commit (`89da27ee`) and rewrites `cow_cookie` and
+  `cow_http_struct_hd`. The three Cowlib exceptions in `mix.exs` remain only
+  because the EEF advisory records still list no fixed version, so
+  `mix hex.audit` flags 2.20.0 exactly as it flagged 2.19.0. Remove each
+  exception when its advisory is updated; next review 2026-10-16. GitHub #18
+  stays open until a fresh downstream audit passes without the exceptions.
 
 Related maintenance figures at this baseline: `ExMCP.ACP.Adapters.Codex` is
 about 4,519 lines and `ExMCP.ACP.Adapters.Pi` about 2,553, up from the rc.7

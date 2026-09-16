@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Cowlib moves to 2.20.0 and Cowboy to 2.19.0. Cowlib 2.20.0 contains the
+  upstream fixes for `EEF-CVE-2026-43966`, `EEF-CVE-2026-43969`, and
+  `EEF-CVE-2026-43971`. The three named `mix hex.audit` exceptions stay until
+  the EEF advisory records name a fixed version, since the audit still flags
+  2.20.0; the mitigation assumptions they rest on are unchanged and remain
+  covered by `dependency_advisory_mitigation_test.exs` (#18).
+
 ## [1.3.0] - 2026-09-05
 
 - ACP client handlers can receive the decoded JSON-RPC message for session updates and
