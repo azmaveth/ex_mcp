@@ -11,6 +11,8 @@ defmodule ExMCP.Client do
   - Automatic transport fallback via TransportManager
   - Automatic reconnection with exponential backoff after unexpected
     transport closure (see `start_link/1`)
+  - Server notification delivery in both protocol eras: `listen/3` on MCP
+    2026-07-28 peers and `subscribe_notifications/3` on legacy peers
   - Consistent return values with optional normalization
   - Convenience methods for common operations
   - Clean separation of concerns
@@ -37,7 +39,15 @@ defmodule ExMCP.Client do
   use GenServer
   require Logger
 
-  alias ExMCP.Client.{ConnectionManager, EraCache, MRTR, RequestHandler, Subscription}
+  alias ExMCP.Client.{
+    ConnectionManager,
+    EraCache,
+    MRTR,
+    NotificationListener,
+    RequestHandler,
+    Subscription
+  }
+
   alias ExMCP.Client.Operations.{Prompts, Resources, Tasks, Tools}
   alias ExMCP.Internal.{Headers, Protocol, RequestParams, VersionInfo, VersionRegistry}
   alias ExMCP.Reliability.Retry
@@ -106,7 +116,12 @@ defmodule ExMCP.Client do
     resource_subscriptions: %{desired: %{}, active: nil, generation: 0},
     # Monitor ref => compatibility subscriber. Dead callers are removed from
     # the desired resource set so their references cannot retain a stream.
-    resource_subscriber_monitors: %{}
+    resource_subscriber_monitors: %{},
+    # Legacy-era notification listeners: listener id => %{ref, monitor}.
+    # See ExMCP.Client.NotificationListener.
+    notification_listeners: %{},
+    # Monitor ref => listener id, so a dead subscriber releases its listener.
+    notification_listener_monitors: %{}
   ]
 
   @type t :: GenServer.server()
@@ -543,6 +558,92 @@ defmodule ExMCP.Client do
   @spec listen(t(), map(), keyword()) :: {:ok, Subscription.Ref.t()} | {:error, term()}
   def listen(client, notification_filter, opts \\ []) do
     Subscription.open(client, notification_filter, opts)
+  end
+
+  @doc """
+  Registers a listener for legacy-era server notifications.
+
+  MCP peers before 2026-07-28 deliver `notifications/tools/list_changed`,
+  `notifications/prompts/list_changed`, `notifications/resources/list_changed`,
+  and `notifications/resources/updated` on the connection with no correlating
+  request. This function registers a local filter for those notifications and
+  delivers each matching one to the subscriber process as
+  `{:ex_mcp_notification, listener, method, params}`.
+
+  This is the legacy counterpart of `listen/3`. On a modern peer it returns
+  `{:error, :use_listen}`. `ExMCP.Client.NotificationListener` documents the
+  filter, the lifecycle, and every message a subscriber can receive.
+
+  ## Filter
+
+  The same keys as `listen/3`, minus `"taskIds"`:
+
+      %{
+        "toolsListChanged" => true,
+        "promptsListChanged" => true,
+        "resourcesListChanged" => true,
+        "resourceSubscriptions" => ["file:///config.json"]
+      }
+
+  Every URI in `"resourceSubscriptions"` is subscribed on the server with
+  `resources/subscribe` once, shared across listeners, and unsubscribed when
+  the last listener naming it is removed. The requested filter is
+  authoritative: notifications outside it are never delivered.
+
+  ## Options
+
+  - `:subscriber` - process that receives the messages (default: the caller).
+    The client monitors it and removes the listener when it exits.
+  - `:timeout` - timeout for each `resources/subscribe` request (default: 5000)
+
+  ## Returns
+
+  - `{:ok, listener}` - an `ExMCP.Client.NotificationListener.Ref`
+  - `{:error, :use_listen}` - the peer is a modern (MCP 2026-07-28) server
+  - `{:error, :not_connected}` - the client is not ready
+  - `{:error, {:subscribe_failed, uri, reason}}` - a `resources/subscribe`
+    request failed; the registration and any earlier subscription of this
+    call are rolled back
+  - `{:error, reason}` - the filter is invalid, empty, or names `"taskIds"`
+
+  ## Examples
+
+      {:ok, listener} =
+        ExMCP.Client.subscribe_notifications(client, %{
+          "toolsListChanged" => true,
+          "resourceSubscriptions" => ["file:///config.json"]
+        })
+
+      receive do
+        {:ex_mcp_notification, ^listener, "notifications/tools/list_changed", _params} ->
+          {:ok, tools} = ExMCP.Client.list_tools(client)
+
+        {:ex_mcp_notification, ^listener, "notifications/resources/updated", %{"uri" => uri}} ->
+          {:ok, content} = ExMCP.Client.read_resource(client, uri)
+      end
+
+      :ok = ExMCP.Client.unsubscribe_notifications(listener)
+  """
+  @spec subscribe_notifications(t(), map(), keyword()) ::
+          {:ok, NotificationListener.Ref.t()} | {:error, term()}
+  def subscribe_notifications(client, notification_filter, opts \\ []) do
+    NotificationListener.subscribe(client, notification_filter, opts)
+  end
+
+  @doc """
+  Removes a listener registered with `subscribe_notifications/3`.
+
+  Any resource URI no longer named by another listener is unsubscribed on the
+  server. Returns `{:error, :not_found}` when the listener is already gone.
+
+  ## Options
+
+  - `:timeout` - timeout for each `resources/unsubscribe` request (default: 5000)
+  """
+  @spec unsubscribe_notifications(NotificationListener.Ref.t(), keyword()) ::
+          :ok | {:error, :not_found}
+  def unsubscribe_notifications(%NotificationListener.Ref{} = listener, opts \\ []) do
+    NotificationListener.unsubscribe(listener, opts)
   end
 
   @doc "Reads the current full state of a task."
@@ -1106,6 +1207,50 @@ defmodule ExMCP.Client do
     end
   end
 
+  def handle_call({:register_notification_listener, filter, subscriber}, _from, state) do
+    cond do
+      state.connection_status != :ready ->
+        {:reply, {:error, :not_connected}, state}
+
+      VersionRegistry.modern?(state.protocol_version) ->
+        {:reply, {:error, :use_listen}, state}
+
+      true ->
+        id = make_ref()
+
+        ref = %NotificationListener.Ref{
+          id: id,
+          client: self(),
+          subscriber: subscriber,
+          filter: filter
+        }
+
+        monitor = Process.monitor(subscriber)
+
+        {listeners, new_uris} =
+          NotificationListener.register(state.notification_listeners, ref, monitor)
+
+        monitors = Map.put(state.notification_listener_monitors, monitor, id)
+
+        {:reply, {:ok, ref, new_uris},
+         %{state | notification_listeners: listeners, notification_listener_monitors: monitors}}
+    end
+  end
+
+  def handle_call({:deregister_notification_listener, id}, _from, state) do
+    case NotificationListener.deregister(state.notification_listeners, id) do
+      {:ok, entry, listeners, released_uris} ->
+        Process.demonitor(entry.monitor, [:flush])
+        monitors = Map.delete(state.notification_listener_monitors, entry.monitor)
+
+        {:reply, {:ok, released_uris},
+         %{state | notification_listeners: listeners, notification_listener_monitors: monitors}}
+
+      :not_found ->
+        {:reply, {:error, :not_found}, state}
+    end
+  end
+
   def handle_call(:get_default_retry_policy, _from, state) do
     {:reply, {:ok, state.default_retry_policy}, state}
   end
@@ -1194,6 +1339,8 @@ defmodule ExMCP.Client do
       end
     end
 
+    NotificationListener.close_all(state.notification_listeners, :disconnected)
+
     # Update state to disconnected. The manual_disconnect flag ensures a
     # late {:transport_closed, _} message does not trigger auto-reconnection.
     new_state = %{
@@ -1211,7 +1358,9 @@ defmodule ExMCP.Client do
         subscriptions: %{},
         subscription_monitors: %{},
         resource_subscriptions: %{desired: %{}, active: nil, generation: 0},
-        resource_subscriber_monitors: %{}
+        resource_subscriber_monitors: %{},
+        notification_listeners: %{},
+        notification_listener_monitors: %{}
     }
 
     {:reply, :ok, new_state}
@@ -1301,6 +1450,11 @@ defmodule ExMCP.Client do
   end
 
   @impl GenServer
+  def handle_cast({:notification_listeners_resubscribed, results}, state) when is_map(results) do
+    NotificationListener.notify_reconnected(state.notification_listeners, results)
+    {:noreply, state}
+  end
+
   def handle_cast({:cancel_mrtr_scope, scope_ref}, state) when is_reference(scope_ref) do
     RequestHandler.cancel_mrtr_scope(scope_ref, state)
   end
@@ -1447,6 +1601,24 @@ defmodule ExMCP.Client do
   def handle_info({:async_post_task, ref, request_id}, state) when is_reference(ref) do
     tasks = Map.put(state.async_post_tasks || %{}, ref, request_id)
     {:noreply, %{state | async_post_tasks: tasks}}
+  end
+
+  def handle_info(
+        {:DOWN, ref, :process, _subscriber, _reason},
+        %{notification_listener_monitors: monitors} = state
+      )
+      when is_map(monitors) and is_map_key(monitors, ref) do
+    {id, monitors} = Map.pop(monitors, ref)
+    state = %{state | notification_listener_monitors: monitors}
+
+    case NotificationListener.deregister(state.notification_listeners, id) do
+      {:ok, _entry, listeners, released_uris} ->
+        release_notification_listener_uris(state, released_uris)
+        {:noreply, %{state | notification_listeners: listeners}}
+
+      :not_found ->
+        {:noreply, state}
+    end
   end
 
   def handle_info(
@@ -1742,7 +1914,7 @@ defmodule ExMCP.Client do
     if reconnect_allowed?(cleared_state, previous_status) do
       schedule_reconnect(cleared_state)
     else
-      cleared_state
+      close_notification_listeners(cleared_state, {:transport_closed, reason})
     end
   end
 
@@ -1939,6 +2111,60 @@ defmodule ExMCP.Client do
 
   defp active_subscription?(_active, _candidate), do: false
 
+  @impl true
+  def terminate(reason, state) do
+    state
+    |> Map.get(:notification_listeners, %{})
+    |> NotificationListener.close_all({:shutdown, reason})
+
+    :ok
+  end
+
+  defp close_notification_listeners(state, reason) do
+    NotificationListener.close_all(state.notification_listeners, reason)
+    %{state | notification_listeners: %{}, notification_listener_monitors: %{}}
+  end
+
+  # Listeners survive a reconnect. Once the connection is ready again, the
+  # server has forgotten every legacy resource subscription, so re-issue them
+  # off the client loop and report the outcome to each subscriber. A peer that
+  # came back modern cannot serve legacy listeners at all.
+  defp resubscribe_notification_listeners(%{notification_listeners: listeners} = state)
+       when map_size(listeners) == 0,
+       do: state
+
+  defp resubscribe_notification_listeners(state) do
+    if VersionRegistry.modern?(state.protocol_version) do
+      close_notification_listeners(state, {:era_changed, :modern})
+    else
+      client = self()
+      uris = NotificationListener.uris(state.notification_listeners)
+      timeout = state.default_timeout || 5_000
+
+      {:ok, _pid} =
+        Task.start(fn ->
+          results = NotificationListener.resubscribe(client, uris, timeout)
+          GenServer.cast(client, {:notification_listeners_resubscribed, results})
+        end)
+
+      state
+    end
+  end
+
+  defp release_notification_listener_uris(_state, []), do: :ok
+
+  defp release_notification_listener_uris(%{connection_status: :ready} = state, uris) do
+    client = self()
+    timeout = state.default_timeout || 5_000
+
+    {:ok, _pid} =
+      Task.start(fn -> NotificationListener.unsubscribe_uris(client, uris, timeout) end)
+
+    :ok
+  end
+
+  defp release_notification_listener_uris(_state, _uris), do: :ok
+
   defp reconnect_allowed?(state, previous_status) do
     state.reconnect_enabled == true and
       state.manual_disconnect != true and
@@ -1994,7 +2220,7 @@ defmodule ExMCP.Client do
           })
 
         notify_subscription_processes(reconnected_state, :client_subscription_reconnect)
-        reconnected_state
+        resubscribe_notification_listeners(reconnected_state)
 
       {:error, reason} ->
         :telemetry.execute(
@@ -2027,7 +2253,10 @@ defmodule ExMCP.Client do
           inspect(reason)
       )
 
-      %{state | connection_status: :disconnected}
+      close_notification_listeners(
+        %{state | connection_status: :disconnected},
+        {:reconnect_exhausted, reason}
+      )
     end
   end
 

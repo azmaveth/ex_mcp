@@ -7,7 +7,7 @@ defmodule ExMCP.Client.RequestHandler do
   """
 
   require Logger
-  alias ExMCP.Client.{InputDispatcher, MRTR}
+  alias ExMCP.Client.{InputDispatcher, MRTR, NotificationListener}
   alias ExMCP.Error
   alias ExMCP.Internal.{JSONRPC, LogSummary, Maps, Protocol, RequestParams, VersionRegistry}
   alias ExMCP.Protocol.{ErrorCodes, ResponseBuilder, ResultEnvelope}
@@ -405,7 +405,7 @@ defmodule ExMCP.Client.RequestHandler do
              "notifications/resources/list_changed",
              "notifications/resources/updated"
            ] ->
-        route_subscription_event(method, params, state)
+        route_change_notification(method, params, state)
 
       {:notification, "notifications/tasks" = method, params} ->
         route_task_subscription_event(method, params, state)
@@ -836,6 +836,39 @@ defmodule ExMCP.Client.RequestHandler do
         Logger.warning("Received acknowledgment for unknown subscription")
         {:noreply, state}
     end
+  end
+
+  # Modern peers correlate every list-change and resource-update event with a
+  # subscription id, and that path is unchanged. Legacy peers deliver the same
+  # methods on the connection with no correlation, so those go to the locally
+  # registered notification listeners instead.
+  defp route_change_notification(method, params, state) do
+    cond do
+      subscription_event?(params) ->
+        route_subscription_event(method, params, state)
+
+      VersionRegistry.modern?(Map.get(state, :protocol_version)) ->
+        route_subscription_event(method, params, state)
+
+      true ->
+        route_legacy_notification(method, params, state)
+    end
+  end
+
+  defp subscription_event?(params) do
+    is_map(params) and
+      get_in(params, ["_meta", "io.modelcontextprotocol/subscriptionId"]) != nil
+  end
+
+  defp route_legacy_notification(method, params, state) do
+    params = if is_map(params), do: params, else: %{}
+    listeners = Map.get(state, :notification_listeners) || %{}
+
+    if NotificationListener.dispatch(listeners, method, params) == 0 do
+      Logger.debug("Legacy notification had no matching listener", method: method)
+    end
+
+    {:noreply, state}
   end
 
   defp route_subscription_event(method, params, state) do

@@ -59,6 +59,33 @@ defmodule ExMCP.SubscriptionFilter do
 
   def subset?(_acknowledged, _requested), do: false
 
+  @doc """
+  Whether a notification is covered by a normalized filter.
+
+  Shared by modern subscription processes and legacy notification listeners so
+  both eras apply the same rule: the filter is authoritative, and anything it
+  does not name is dropped.
+  """
+  @spec event_allowed?(String.t(), term(), map() | nil) :: boolean()
+  def event_allowed?("notifications/tasks", %{"taskId" => task_id}, filter) do
+    task_id in Map.get(filter || %{}, "taskIds", [])
+  end
+
+  def event_allowed?("notifications/resources/updated", %{"uri" => uri}, filter) do
+    uri in Map.get(filter || %{}, "resourceSubscriptions", [])
+  end
+
+  def event_allowed?("notifications/tools/list_changed", _params, filter),
+    do: Map.get(filter || %{}, "toolsListChanged") == true
+
+  def event_allowed?("notifications/prompts/list_changed", _params, filter),
+    do: Map.get(filter || %{}, "promptsListChanged") == true
+
+  def event_allowed?("notifications/resources/list_changed", _params, filter),
+    do: Map.get(filter || %{}, "resourcesListChanged") == true
+
+  def event_allowed?(_method, _params, _filter), do: false
+
   defp normalize_key(key) when is_binary(key), do: {:ok, key}
   defp normalize_key(key) when is_atom(key), do: {:ok, Atom.to_string(key)}
   defp normalize_key(_key), do: :error
