@@ -2,7 +2,7 @@
 
 - **Status:** Living roadmap — Phase 0 complete; Phase 1 contract design is next
 - **Target:** ExMCP `2.0.0`, after stable `1.0.0` and the supported 1.x line
-- **Last updated:** 2026-09-16
+- **Last updated:** 2026-09-17
 - **Related release work:** [`RELEASE_1_0_0.md`](./RELEASE_1_0_0.md),
   [`API_DIFF_RC5_TO_1_0.md`](./API_DIFF_RC5_TO_1_0.md),
   [`POST_1_0_MAINTENANCE_PLAN.md`](./POST_1_0_MAINTENANCE_PLAN.md),
@@ -422,6 +422,9 @@ another 1.x RC or document a patch-level correctness/security exception.
 | `_meta.ex_mcp.native` provenance and `Adapter.name/0` | Released in `1.3.0` | Default `:off` per §8.1; `native_events: :summary` and `:raw` are opt-in. The one default wire change is Claude SDK `agentInfo.name` becoming `claude_sdk`. |
 | Codex failed-turn errors and per-item streamed text | Released in `1.3.0` | Documented bug fixes with regression tests. A failed `turn/completed` now answers the prompt with a classified JSON-RPC error instead of an empty success. |
 | mint 1.10.0 | Released in `1.3.0` | Dependency security fix for EEF-CVE-2026-82728 and EEF-CVE-2026-82729. |
+| Subscription acknowledgment subset check | Released in `1.4.0` | Security-motivated correctness fix with regression tests: a server cannot broaden a host-authorized filter, on open or on reconnect. The companion tightening of event forwarding to the acknowledged filter is a documented behavior change, accepted because the unfiltered forwarding contradicted the filter contract. |
+| `ExMCP.Client.get_status/2` timeout option | Released in `1.4.0` | Additive optional argument; `get_status/1` unchanged. Accepted because downstream adapters need to pass a declared deadline through the public API and the return shape is stable. |
+| cowlib 2.20.0 / cowboy 2.19.0 | Released in `1.4.0` | Clears EEF-CVE-2026-43971. EEF-CVE-2026-43966 and EEF-CVE-2026-43969 remain as named exceptions because they are won't-fix upstream; the exit is the optional HTTP server dependency in §5. |
 | Internal dispatch deduplication | Case by case | Backport only when golden tests prove identical wire, errors, ordering, and lifecycle. |
 | Richer DSL constraints | Hold for 2.0 | Additive, but expands the stable public language before its design is settled. |
 | Result facade and client lifecycle helpers | Hold for 2.0 | Technically additive, but would create parallel APIs and long-term support obligations. |

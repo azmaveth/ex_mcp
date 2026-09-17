@@ -7,7 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-09-17
+
+- A 1.x minor driven by the Jido Connect review of 1.3.0: the modern
+  subscription client now rejects server acknowledgments that broaden the
+  requested notification filter, `ExMCP.Client.get_status/2` accepts a
+  caller-supplied timeout, and Cowlib moves to 2.20.0, which clears one of the
+  three tracked advisories. The remaining two Cowlib advisories are won't-fix
+  upstream; see Changed. Legacy notification delivery through a public client
+  API (#44) is not in this release.
+
+### Added
+
+- `ExMCP.Client.get_status/2` with a `:timeout` option. It accepts a
+  non-negative millisecond value or `:infinity`, returns `{:error, :timeout}`
+  when the deadline expires and `{:error, :invalid_timeout}` for anything
+  else, and leaves `get_status/1` unchanged. Downstream adapters can now pass
+  their own request deadline through the public API (#43, #45).
+
+### Fixed
+
+- A server acknowledgment of a `ExMCP.Client.listen/3` subscription that adds
+  resource URIs, task IDs, or notification categories the client did not
+  request is rejected with `{:error, :invalid_subscription_acknowledgment}`
+  and the subscription is closed. Previously the expanded filter was stored,
+  and after a reconnect the resynchronization step read resources and tasks
+  from the expanded set. The check applies to the initial acknowledgment and
+  to every reconnect acknowledgment; a rejected reconnect reports the resync
+  failure and stops the subscription before any snapshot read. Equal and
+  narrower acknowledgments continue to work. The client and server now share
+  one filter normalization and subset rule set (#42, #46).
+
 ### Changed
+
+- A modern subscription forwards only events covered by its acknowledged
+  filter. `notifications/resources/updated` requires the URI to be in
+  `resourceSubscriptions`, each `list_changed` notification requires its
+  category to be enabled, and any other method is dropped. Previously every
+  non-task notification on the subscription was forwarded regardless of the
+  filter. Consumers that relied on receiving unfiltered events on a narrow
+  subscription must widen the requested filter (#46).
 
 - Cowlib moves to 2.20.0 and Cowboy to 2.19.0. Cowlib 2.20.0 fixes
   `EEF-CVE-2026-43971` (`cow_link:link/1`), the advisory now records 2.20.0 as
