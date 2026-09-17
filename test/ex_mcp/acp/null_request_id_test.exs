@@ -132,22 +132,16 @@ defmodule ExMCP.ACP.NullRequestIdTest do
       assert %{"id" => nil, "result" => %{}} = receive_raw(transport)
     end
 
-    test "an outbound null request resolves, rejects duplicates, and cleans up on timeout" do
-      {agent, transport, peer} = start_raw_agent(pending_request_timeout: 30)
+    test "an outbound null request resolves and rejects duplicates" do
+      # The default pending-request timeout keeps the timer out of this test;
+      # the timeout path has its own agent below so a slow scheduler cannot
+      # expire the first request before the duplicate check runs.
+      {agent, transport, peer} = start_raw_agent()
 
       send_raw_request(transport, 1, "initialize", initialize_params())
       assert %{"id" => 1, "result" => %{}} = receive_raw(transport)
 
-      request =
-        Envelope.request(
-          "session/request_permission",
-          %{
-            "sessionId" => "null-id-session",
-            "toolCall" => %{"toolCallId" => "tool-1"},
-            "options" => []
-          },
-          nil
-        )
+      request = null_permission_request()
 
       first = Task.async(fn -> GenServer.call(agent, {:client_request, request, :permission}) end)
       assert %{"id" => nil, "method" => "session/request_permission"} = receive_raw(transport)
@@ -161,6 +155,15 @@ defmodule ExMCP.ACP.NullRequestIdTest do
 
       assert {:ok, %{"outcome" => %{"outcome" => "cancelled"}}} = Task.await(first)
       assert :sys.get_state(agent).pending_client_requests == %{}
+    end
+
+    test "an outbound null request is cancelled and cleaned up on timeout" do
+      {agent, transport, _peer} = start_raw_agent(pending_request_timeout: 30)
+
+      send_raw_request(transport, 1, "initialize", initialize_params())
+      assert %{"id" => 1, "result" => %{}} = receive_raw(transport)
+
+      request = null_permission_request()
 
       timed_out =
         Task.async(fn ->
@@ -308,6 +311,18 @@ defmodule ExMCP.ACP.NullRequestIdTest do
 
   defp initialize_params do
     %{"protocolVersion" => 1, "clientCapabilities" => %{}}
+  end
+
+  defp null_permission_request do
+    Envelope.request(
+      "session/request_permission",
+      %{
+        "sessionId" => "null-id-session",
+        "toolCall" => %{"toolCallId" => "tool-1"},
+        "options" => []
+      },
+      nil
+    )
   end
 
   defp permission_request(id) do
