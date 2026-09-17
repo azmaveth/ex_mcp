@@ -25,7 +25,7 @@ defmodule ExMCP.Server.HandlerServerSubscriptionsTest do
 
     send_request(server, listen_request(71, %{"toolsListChanged" => true}))
 
-    assert_receive {:transport_message, encoded_ack}
+    assert_receive {:transport_message, encoded_ack}, 1_000
     acknowledged = Jason.decode!(encoded_ack)
     assert acknowledged["method"] == "notifications/subscriptions/acknowledged"
     assert acknowledged["params"]["_meta"][@subscription_id_key] == 71
@@ -37,7 +37,7 @@ defmodule ExMCP.Server.HandlerServerSubscriptionsTest do
 
     :ok = Server.notify_tools_changed(server)
 
-    assert_receive {:transport_message, encoded_notification}
+    assert_receive {:transport_message, encoded_notification}, 1_000
     notification = Jason.decode!(encoded_notification)
     assert notification["method"] == "notifications/tools/list_changed"
     assert notification["params"]["_meta"][@subscription_id_key] == 71
@@ -47,7 +47,7 @@ defmodule ExMCP.Server.HandlerServerSubscriptionsTest do
 
     assert :ok = Subscriptions.close(server, 71, :test_complete, registry: registry)
 
-    assert_receive {:transport_message, encoded_complete}
+    assert_receive {:transport_message, encoded_complete}, 1_000
     completed = Jason.decode!(encoded_complete)
     assert completed["id"] == 71
     assert completed["result"]["resultType"] == "complete"
@@ -84,7 +84,7 @@ defmodule ExMCP.Server.HandlerServerSubscriptionsTest do
 
     send_request(server, listen_request(73, %{"toolsListChanged" => "yes"}))
 
-    assert_receive {:transport_message, encoded_error}
+    assert_receive {:transport_message, encoded_error}, 1_000
     error = Jason.decode!(encoded_error)
     assert error["id"] == 73
     assert error["error"]["code"] == -32602
@@ -98,11 +98,11 @@ defmodule ExMCP.Server.HandlerServerSubscriptionsTest do
     connect(server)
 
     send_request(server, listen_request(74, %{"toolsListChanged" => true}))
-    assert_receive {:transport_message, _encoded_ack}
+    assert_receive {:transport_message, _encoded_ack}, 1_000
 
     :ok = Server.notify_progress(server, "request-progress", 1, 2)
 
-    assert_receive {:transport_message, encoded_progress}
+    assert_receive {:transport_message, encoded_progress}, 1_000
     progress = Jason.decode!(encoded_progress)
     assert progress["method"] == "notifications/progress"
     assert progress["params"]["progressToken"] == "request-progress"
@@ -166,7 +166,9 @@ defmodule ExMCP.Server.HandlerServerSubscriptionsTest do
 
     assert :sys.get_state(server).handler_state.list_calls == 1
 
-    assert_receive {:transport_message, %{"id" => "beam-duplicate", "result" => %{"tools" => []}}}
+    assert_receive {:transport_message,
+                    %{"id" => "beam-duplicate", "result" => %{"tools" => []}}},
+                   1_000
 
     send(server, {:transport_message, request})
 
@@ -179,7 +181,8 @@ defmodule ExMCP.Server.HandlerServerSubscriptionsTest do
                         "code" => -32600,
                         "data" => %{"type" => "duplicate_request_id"}
                       }
-                    }}
+                    }},
+                   1_000
   end
 
   defp start_registry do
