@@ -252,6 +252,67 @@ defmodule ExMCP.Client.NotificationListenerTest do
       refute_received {:ex_mcp_notification, _, _, _}
     end
 
+    test "a rolled-back registration cannot release a URI another listener holds",
+         %{server: server, client: client} do
+      {:ok, holder} =
+        Client.subscribe_notifications(client, %{"resourceSubscriptions" => ["test://shared"]})
+
+      assert_receive {:server_subscribe, "test://shared"}
+
+      assert {:error, {:subscribe_failed, "test://missing", _reason}} =
+               Client.subscribe_notifications(client, %{
+                 "resourceSubscriptions" => ["test://shared", "test://missing"]
+               })
+
+      # The failed registration shared test://shared rather than subscribing
+      # it again, and its rollback must not take the holder's subscription.
+      refute_received {:server_subscribe, "test://shared"}
+      refute_received {:server_unsubscribe, "test://shared"}
+
+      :ok = Server.notify_resource_update(server, "test://shared")
+      assert_receive {:ex_mcp_notification, ^holder, _, %{"uri" => "test://shared"}}, 1_000
+    end
+
+    test "a subscriber exit racing a new listener leaves the URI subscribed",
+         %{server: server, client: client} do
+      subscriber =
+        spawn(fn ->
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      {:ok, _first} =
+        Client.subscribe_notifications(
+          client,
+          %{"resourceSubscriptions" => ["test://raced"]},
+          subscriber: subscriber
+        )
+
+      assert_receive {:server_subscribe, "test://raced"}
+
+      # Kill the first subscriber and register a second listener for the same
+      # URI without waiting for the asynchronous release to run.
+      send(subscriber, :stop)
+
+      {:ok, second} =
+        Client.subscribe_notifications(client, %{"resourceSubscriptions" => ["test://raced"]})
+
+      :ok = Server.notify_resource_update(server, "test://raced")
+      assert_receive {:ex_mcp_notification, ^second, _, %{"uri" => "test://raced"}}, 1_000
+
+      # Whichever order the release and the new acquisition ran in, every
+      # subscribe is paired with one unsubscribe and the URI ends unsubscribed.
+      assert :ok = Client.unsubscribe_notifications(second)
+      %{notification_worker: worker} = :sys.get_state(client)
+      _drained = :sys.get_state(worker)
+
+      # The first subscribe was consumed by the assertion above.
+      ops = [:subscribe | collect_server_ops("test://raced")]
+      assert Enum.count(ops, &(&1 == :subscribe)) == Enum.count(ops, &(&1 == :unsubscribe))
+      assert List.last(ops) == :unsubscribe
+    end
+
     test "rejects invalid, empty, and task filters", %{client: client} do
       assert {:error, :unknown_subscription_filter} =
                Client.subscribe_notifications(client, %{"bogus" => true})
@@ -329,6 +390,37 @@ defmodule ExMCP.Client.NotificationListenerTest do
 
       push_notification(client, "notifications/resources/updated", %{"uri" => "test://b"})
       assert_receive {:ex_mcp_notification, ^listener, _, %{"uri" => "test://b"}}
+    end
+
+    test "reports only to the listeners that existed when the reconnect happened" do
+      agent = start_agent(allowed_connects: 10)
+      client = start_recording_client(agent)
+      assert_receive {:transport_connect, 1}
+
+      {:ok, before} =
+        Client.subscribe_notifications(client, %{"resourceSubscriptions" => ["test://before"]})
+
+      assert_receive {:transport_request, "resources/subscribe", %{"uri" => "test://before"}}
+
+      send(client, {:transport_closed, :connection_lost})
+      assert_receive {:transport_connect, 2}, 1_000
+
+      # Registered while the reconnect is completing: its own subscribe is
+      # serialized behind the re-subscription, and it is not in the report.
+      {:ok, after_reconnect} =
+        Client.subscribe_notifications(client, %{"resourceSubscriptions" => ["test://after"]})
+
+      assert_receive {:transport_request, "resources/subscribe", %{"uri" => "test://before"}},
+                     1_000
+
+      assert_receive {:transport_request, "resources/subscribe", %{"uri" => "test://after"}},
+                     1_000
+
+      assert_receive {:ex_mcp_notification_reconnected, ^before,
+                      %{resubscribed: ["test://before"], failed: []}},
+                     1_000
+
+      refute_received {:ex_mcp_notification_reconnected, ^after_reconnect, _}
     end
 
     test "reports URIs the server refused after reconnect" do
@@ -434,6 +526,15 @@ defmodule ExMCP.Client.NotificationListenerTest do
       )
 
     client
+  end
+
+  defp collect_server_ops(uri, acc \\ []) do
+    receive do
+      {:server_subscribe, ^uri} -> collect_server_ops(uri, [:subscribe | acc])
+      {:server_unsubscribe, ^uri} -> collect_server_ops(uri, [:unsubscribe | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
   end
 
   defp push_notification(client, method, params) do

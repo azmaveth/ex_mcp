@@ -49,7 +49,10 @@ defmodule ExMCP.Client.NotificationListener do
   that name it, and `resources/unsubscribe` when the last listener naming it
   goes away. A failed `resources/subscribe` fails the whole registration with
   `{:error, {:subscribe_failed, uri, reason}}` and rolls back any subscription
-  the call had already made.
+  the call had already made. All of those wire operations for one client run
+  one at a time in a small worker process, and each listener releases exactly
+  the URIs it acquired, so a rolled-back or exiting listener can never remove
+  a subscription another listener still holds.
 
   Direct calls to `ExMCP.Client.subscribe_resource/3` and
   `ExMCP.Client.unsubscribe_resource/3` are not refcounted with listeners. The
@@ -82,7 +85,7 @@ defmodule ExMCP.Client.NotificationListener do
   subscribers that need to notice should monitor `listener.client`.
   """
 
-  alias ExMCP.Internal.RequestParams
+  alias ExMCP.Client.NotificationListener.Worker
   alias ExMCP.SubscriptionFilter
 
   defmodule Ref do
@@ -121,15 +124,21 @@ defmodule ExMCP.Client.NotificationListener do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
 
     with {:ok, normalized} <- normalize_filter(filter),
-         {:ok, ref, new_uris} <-
+         {:ok, ref, worker} <-
            GenServer.call(client, {:register_notification_listener, normalized, subscriber}) do
-      case subscribe_uris(client, new_uris, timeout) do
+      case acquire(worker, ref.id, uris_of(normalized), timeout) do
         :ok ->
           {:ok, ref}
 
         {:error, uri, reason} ->
-          _ = unsubscribe(ref, timeout: timeout)
+          # The worker holds nothing for a failed acquisition, so dropping the
+          # registration is the whole rollback.
+          _ = deregister_on_client(ref)
           {:error, {:subscribe_failed, uri, reason}}
+
+        {:exit, reason} ->
+          _ = deregister_on_client(ref)
+          {:error, {:listener_unavailable, reason}}
       end
     end
   end
@@ -141,13 +150,10 @@ defmodule ExMCP.Client.NotificationListener do
   def unsubscribe(%Ref{} = ref, opts \\ []) when is_list(opts) do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
 
-    case GenServer.call(ref.client, {:deregister_notification_listener, ref.id}) do
-      {:ok, released_uris} ->
-        unsubscribe_uris(ref.client, released_uris, timeout)
-        :ok
-
-      {:error, :not_found} = error ->
-        error
+    case deregister_on_client(ref) do
+      {:ok, nil} -> :ok
+      {:ok, worker} -> Worker.release(worker, ref.id, timeout)
+      {:error, :not_found} = error -> error
     end
   catch
     # A client that is already gone has no listener left to remove.
@@ -157,30 +163,18 @@ defmodule ExMCP.Client.NotificationListener do
   ## Registry helpers used inside the client process.
 
   @doc false
-  @spec register(registry(), Ref.t(), reference()) :: {registry(), [String.t()]}
-  def register(listeners, %Ref{} = ref, monitor) when is_map(listeners) do
-    new_uris = uris_of(ref.filter) -- uris(listeners)
-    {Map.put(listeners, ref.id, %{ref: ref, monitor: monitor}), new_uris}
-  end
+  @spec register(registry(), Ref.t(), reference()) :: registry()
+  def register(listeners, %Ref{} = ref, monitor) when is_map(listeners),
+    do: Map.put(listeners, ref.id, %{ref: ref, monitor: monitor})
 
   @doc false
   @spec deregister(registry(), reference()) ::
-          {:ok, %{ref: Ref.t(), monitor: reference()}, registry(), [String.t()]} | :not_found
+          {:ok, %{ref: Ref.t(), monitor: reference()}, registry()} | :not_found
   def deregister(listeners, id) when is_map(listeners) do
     case Map.pop(listeners, id) do
       {nil, _listeners} -> :not_found
-      {entry, rest} -> {:ok, entry, rest, uris_of(entry.ref.filter) -- uris(rest)}
+      {entry, rest} -> {:ok, entry, rest}
     end
-  end
-
-  @doc false
-  @spec uris(registry()) :: [String.t()]
-  def uris(listeners) when is_map(listeners) do
-    listeners
-    |> Map.values()
-    |> Enum.flat_map(&uris_of(&1.ref.filter))
-    |> Enum.uniq()
-    |> Enum.sort()
   end
 
   @doc false
@@ -197,9 +191,13 @@ defmodule ExMCP.Client.NotificationListener do
   end
 
   @doc false
-  @spec notify_reconnected(registry(), %{String.t() => :ok | {:error, term()}}) :: :ok
-  def notify_reconnected(listeners, results) when is_map(listeners) and is_map(results) do
-    Enum.each(listeners, fn {_id, %{ref: ref}} ->
+  @spec notify_reconnected(registry(), [reference()], %{String.t() => :ok | {:error, term()}}) ::
+          :ok
+  def notify_reconnected(listeners, listener_ids, results)
+      when is_map(listeners) and is_list(listener_ids) and is_map(results) do
+    listeners
+    |> Map.take(listener_ids)
+    |> Enum.each(fn {_id, %{ref: ref}} ->
       {resubscribed, failed} =
         Enum.reduce(uris_of(ref.filter), {[], []}, fn uri, {ok, bad} ->
           case Map.get(results, uri, {:error, :not_attempted}) do
@@ -225,49 +223,14 @@ defmodule ExMCP.Client.NotificationListener do
     end)
   end
 
-  ## Wire helpers. These run in the caller or in a task, never in the client.
-
-  @doc false
-  @spec subscribe_uris(GenServer.server(), [String.t()], timeout()) ::
-          :ok | {:error, String.t(), term()}
-  def subscribe_uris(client, uris, timeout) do
-    Enum.reduce_while(uris, :ok, fn uri, :ok ->
-      case request(client, "resources/subscribe", uri, timeout) do
-        {:ok, _result} -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, uri, reason}}
-      end
-    end)
-  end
-
-  @doc false
-  @spec unsubscribe_uris(GenServer.server(), [String.t()], timeout()) :: :ok
-  def unsubscribe_uris(client, uris, timeout) do
-    Enum.each(uris, fn uri -> _ = request(client, "resources/unsubscribe", uri, timeout) end)
-  end
-
-  @doc false
-  @spec resubscribe(GenServer.server(), [String.t()], timeout()) ::
-          %{String.t() => :ok | {:error, term()}}
-  def resubscribe(client, uris, timeout) do
-    Map.new(uris, fn uri ->
-      case request(client, "resources/subscribe", uri, timeout) do
-        {:ok, _result} -> {uri, :ok}
-        {:error, reason} -> {uri, {:error, reason}}
-      end
-    end)
-  end
-
-  defp request(client, method, uri, timeout) do
-    ExMCP.Client.make_request(
-      client,
-      method,
-      RequestParams.uri(uri),
-      [timeout: timeout, format: :map],
-      timeout
-    )
+  defp acquire(worker, listener_id, uris, timeout) do
+    Worker.acquire(worker, listener_id, uris, timeout)
   catch
-    :exit, reason -> {:error, {:exit, reason}}
+    :exit, reason -> {:exit, reason}
   end
+
+  defp deregister_on_client(%Ref{} = ref),
+    do: GenServer.call(ref.client, {:deregister_notification_listener, ref.id})
 
   defp normalize_filter(filter) do
     with {:ok, normalized} <- SubscriptionFilter.normalize(filter) do

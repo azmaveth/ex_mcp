@@ -48,6 +48,8 @@ defmodule ExMCP.Client do
     Subscription
   }
 
+  alias ExMCP.Client.NotificationListener.Worker
+
   alias ExMCP.Client.Operations.{Prompts, Resources, Tasks, Tools}
   alias ExMCP.Internal.{Headers, Protocol, RequestParams, VersionInfo, VersionRegistry}
   alias ExMCP.Reliability.Retry
@@ -121,7 +123,14 @@ defmodule ExMCP.Client do
     # See ExMCP.Client.NotificationListener.
     notification_listeners: %{},
     # Monitor ref => listener id, so a dead subscriber releases its listener.
-    notification_listener_monitors: %{}
+    notification_listener_monitors: %{},
+    # Worker that serializes legacy resources/subscribe traffic for the
+    # listeners, started on the first registration, plus its monitor ref.
+    notification_worker: nil,
+    notification_worker_monitor: nil,
+    # Bumped on every successful reconnect so a late resubscribe report from
+    # an earlier connection is ignored.
+    notification_listener_generation: 0
   ]
 
   @type t :: GenServer.server()
@@ -1226,24 +1235,22 @@ defmodule ExMCP.Client do
         }
 
         monitor = Process.monitor(subscriber)
-
-        {listeners, new_uris} =
-          NotificationListener.register(state.notification_listeners, ref, monitor)
-
+        listeners = NotificationListener.register(state.notification_listeners, ref, monitor)
         monitors = Map.put(state.notification_listener_monitors, monitor, id)
+        state = ensure_notification_worker(state)
 
-        {:reply, {:ok, ref, new_uris},
+        {:reply, {:ok, ref, state.notification_worker},
          %{state | notification_listeners: listeners, notification_listener_monitors: monitors}}
     end
   end
 
   def handle_call({:deregister_notification_listener, id}, _from, state) do
     case NotificationListener.deregister(state.notification_listeners, id) do
-      {:ok, entry, listeners, released_uris} ->
+      {:ok, entry, listeners} ->
         Process.demonitor(entry.monitor, [:flush])
         monitors = Map.delete(state.notification_listener_monitors, entry.monitor)
 
-        {:reply, {:ok, released_uris},
+        {:reply, {:ok, state.notification_worker},
          %{state | notification_listeners: listeners, notification_listener_monitors: monitors}}
 
       :not_found ->
@@ -1340,6 +1347,7 @@ defmodule ExMCP.Client do
     end
 
     NotificationListener.close_all(state.notification_listeners, :disconnected)
+    reset_notification_worker(state)
 
     # Update state to disconnected. The manual_disconnect flag ensures a
     # late {:transport_closed, _} message does not trigger auto-reconnection.
@@ -1450,10 +1458,19 @@ defmodule ExMCP.Client do
   end
 
   @impl GenServer
-  def handle_cast({:notification_listeners_resubscribed, results}, state) when is_map(results) do
-    NotificationListener.notify_reconnected(state.notification_listeners, results)
+  def handle_cast(
+        {:notification_listeners_resubscribed, results, listener_ids, generation},
+        %{notification_listener_generation: generation, connection_status: :ready} = state
+      )
+      when is_map(results) and is_list(listener_ids) do
+    NotificationListener.notify_reconnected(state.notification_listeners, listener_ids, results)
     {:noreply, state}
   end
+
+  # A report from an earlier connection, or one that arrived after another
+  # transport loss, describes subscriptions that no longer exist.
+  def handle_cast({:notification_listeners_resubscribed, _results, _ids, _generation}, state),
+    do: {:noreply, state}
 
   def handle_cast({:cancel_mrtr_scope, scope_ref}, state) when is_reference(scope_ref) do
     RequestHandler.cancel_mrtr_scope(scope_ref, state)
@@ -1612,13 +1629,25 @@ defmodule ExMCP.Client do
     state = %{state | notification_listener_monitors: monitors}
 
     case NotificationListener.deregister(state.notification_listeners, id) do
-      {:ok, _entry, listeners, released_uris} ->
-        release_notification_listener_uris(state, released_uris)
+      {:ok, _entry, listeners} ->
+        if state.notification_worker do
+          Worker.release_async(state.notification_worker, id, state.default_timeout || 5_000)
+        end
+
         {:noreply, %{state | notification_listeners: listeners}}
 
       :not_found ->
         {:noreply, state}
     end
+  end
+
+  def handle_info(
+        {:DOWN, ref, :process, _worker, reason},
+        %{notification_worker_monitor: ref} = state
+      )
+      when is_reference(ref) do
+    state = %{state | notification_worker: nil, notification_worker_monitor: nil}
+    {:noreply, close_notification_listeners(state, {:listener_worker_down, reason})}
   end
 
   def handle_info(
@@ -2122,48 +2151,55 @@ defmodule ExMCP.Client do
 
   defp close_notification_listeners(state, reason) do
     NotificationListener.close_all(state.notification_listeners, reason)
+    reset_notification_worker(state)
     %{state | notification_listeners: %{}, notification_listener_monitors: %{}}
   end
 
+  defp ensure_notification_worker(%{notification_worker: worker} = state) when is_pid(worker),
+    do: state
+
+  defp ensure_notification_worker(state) do
+    {:ok, worker} = Worker.start(self())
+    monitor = Process.monitor(worker)
+    %{state | notification_worker: worker, notification_worker_monitor: monitor}
+  end
+
+  defp reset_notification_worker(%{notification_worker: worker}) when is_pid(worker),
+    do: Worker.reset(worker)
+
+  defp reset_notification_worker(_state), do: :ok
+
   # Listeners survive a reconnect. Once the connection is ready again, the
-  # server has forgotten every legacy resource subscription, so re-issue them
-  # off the client loop and report the outcome to each subscriber. A peer that
-  # came back modern cannot serve legacy listeners at all.
+  # server has forgotten every legacy resource subscription, so the worker
+  # re-issues them and reports back for the listeners that existed at this
+  # moment, tagged with this connection's generation. A peer that came back
+  # modern cannot serve legacy listeners at all.
   defp resubscribe_notification_listeners(%{notification_listeners: listeners} = state)
        when map_size(listeners) == 0,
        do: state
 
   defp resubscribe_notification_listeners(state) do
-    if VersionRegistry.modern?(state.protocol_version) do
-      close_notification_listeners(state, {:era_changed, :modern})
-    else
-      client = self()
-      uris = NotificationListener.uris(state.notification_listeners)
-      timeout = state.default_timeout || 5_000
+    cond do
+      VersionRegistry.modern?(state.protocol_version) ->
+        close_notification_listeners(state, {:era_changed, :modern})
 
-      {:ok, _pid} =
-        Task.start(fn ->
-          results = NotificationListener.resubscribe(client, uris, timeout)
-          GenServer.cast(client, {:notification_listeners_resubscribed, results})
-        end)
+      is_pid(state.notification_worker) ->
+        generation = state.notification_listener_generation + 1
+        listener_ids = Map.keys(state.notification_listeners)
 
-      state
+        Worker.resubscribe(
+          state.notification_worker,
+          listener_ids,
+          generation,
+          state.default_timeout || 5_000
+        )
+
+        %{state | notification_listener_generation: generation}
+
+      true ->
+        state
     end
   end
-
-  defp release_notification_listener_uris(_state, []), do: :ok
-
-  defp release_notification_listener_uris(%{connection_status: :ready} = state, uris) do
-    client = self()
-    timeout = state.default_timeout || 5_000
-
-    {:ok, _pid} =
-      Task.start(fn -> NotificationListener.unsubscribe_uris(client, uris, timeout) end)
-
-    :ok
-  end
-
-  defp release_notification_listener_uris(_state, _uris), do: :ok
 
   defp reconnect_allowed?(state, previous_status) do
     state.reconnect_enabled == true and
