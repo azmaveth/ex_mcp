@@ -396,7 +396,10 @@ defmodule ExMCP.ACP.Adapters.Codex.Content do
     end)
   end
 
-  defp replay_item(session_id, %{"type" => "agent_message"} = item) do
+  # App-server v2 history items use the camelCase `agentMessage`; the legacy
+  # `agent_message` spelling is kept for older `thread.turns` histories.
+  defp replay_item(session_id, %{"type" => type} = item)
+       when type in ["agent_message", "agentMessage"] do
     [
       AdapterEvents.agent_message_chunk(session_id, item["text"] || item["message"] || "",
         meta: %{"ex_mcp" => %{"replay" => true}}

@@ -75,6 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Codex status in `docs/POST_1_0_MAINTENANCE_PLAN.md`.
 
 ### Fixed
+- Codex adapter: `session/load` history replay now handles app-server v2's camelCase `agentMessage` items. Previously a replayed `agentMessage` reached the streaming completion path with no session state and crashed the load; only the legacy `agent_message` spelling replayed.
 
 - The stdio transports no longer let the process locale translate protocol
   frames. `ExMCP.Server.StdioServer` and `ExMCP.ACP.Agent.Transport.Stdio`
