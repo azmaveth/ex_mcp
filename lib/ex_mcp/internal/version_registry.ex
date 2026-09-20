@@ -13,22 +13,21 @@ defmodule ExMCP.Internal.VersionRegistry do
   @type feature :: atom()
 
   require Logger
+  alias ExMCP.Internal.RevisionCatalog
   alias ExMCP.Protocol.Methods
 
+  # The raw revision lists live in `ExMCP.Internal.RevisionCatalog` so that
+  # lower-level protocol modules can read them without depending on this
+  # registry. This module remains the canonical owner of enablement, era
+  # preference ordering, and version-specific behaviour.
+
   # Legacy protocol versions in order of preference (newest first)
-  @versions [
-    {"2025-11-25", "Newest legacy revision with tasks, icons, and URL elicitation"},
-    {"2025-06-18", "Previous stable specification"},
-    {"2025-03-26", "Stable specification with batch support"},
-    {"2024-11-05", "Initial stable specification"}
-  ]
+  @versions RevisionCatalog.legacy_revisions()
 
   # Modern revisions participate according to the selected dual-era mode. The
   # zero-arity legacy APIs intentionally retain their initialize-compatible
   # meaning throughout 1.x even though new connections prefer modern by default.
-  @modern_revisions [
-    {"2026-07-28", "Latest stable stateless revision available through modern modes"}
-  ]
+  @modern_revisions RevisionCatalog.modern_revisions()
 
   @modern_versions Enum.map(@modern_revisions, &elem(&1, 0))
 
@@ -231,13 +230,7 @@ defmodule ExMCP.Internal.VersionRegistry do
 
   @doc "Returns the protocol era for a known version."
   @spec era_for(version()) :: :legacy | :modern | :unknown
-  def era_for(version) do
-    cond do
-      version in @modern_versions -> :modern
-      supported?(version) -> :legacy
-      true -> :unknown
-    end
-  end
+  def era_for(version), do: RevisionCatalog.era_for(version)
 
   @doc "Returns whether a version uses the post-2025-11-25 protocol era."
   @spec modern?(version()) :: boolean()

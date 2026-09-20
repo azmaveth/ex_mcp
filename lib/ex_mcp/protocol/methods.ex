@@ -12,7 +12,7 @@ defmodule ExMCP.Protocol.Methods do
   return `Method not found`.
   """
 
-  alias ExMCP.Internal.VersionRegistry
+  alias ExMCP.Internal.RevisionCatalog
 
   @type version :: String.t()
   @type kind :: :request | :notification
@@ -20,11 +20,11 @@ defmodule ExMCP.Protocol.Methods do
   @type handlers :: %{optional(consumer()) => atom()}
   @type row :: {String.t(), version(), version() | nil, kind(), handlers()}
 
-  @versions VersionRegistry.supported_versions()
+  @versions RevisionCatalog.legacy_versions()
   @v2024 Enum.at(@versions, 3)
   @v20250618 Enum.at(@versions, 1)
   @v20251125 Enum.at(@versions, 0)
-  @v20260728 VersionRegistry.known_versions() |> hd()
+  @v20260728 RevisionCatalog.known_versions() |> hd()
 
   @modern_methods ~w(
     server/discover
