@@ -1226,7 +1226,7 @@ defmodule ExMCP.Client do
       VersionRegistry.modern?(state.protocol_version) ->
         {:reply, {:error, :use_listen}, state}
 
-      not Process.alive?(subscriber) ->
+      dead_local_process?(subscriber) ->
         {:reply, {:error, :subscriber_not_alive}, state}
 
       true ->
@@ -2159,6 +2159,11 @@ defmodule ExMCP.Client do
     reset_notification_worker(state)
     %{state | notification_listeners: %{}, notification_listener_monitors: %{}}
   end
+
+  # Process.alive?/1 raises for a pid on another node; a remote subscriber is
+  # left to the monitor, which reports its death like any other.
+  defp dead_local_process?(pid) when is_pid(pid),
+    do: node(pid) == node() and not Process.alive?(pid)
 
   defp ensure_notification_worker(%{notification_worker: worker} = state) when is_pid(worker),
     do: state
