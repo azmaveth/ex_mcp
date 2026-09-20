@@ -468,6 +468,53 @@ specific strongly connected components with
 `mix xref graph --format cycles`. Update the commit anchor when this plan is
 rebased onto a different maintenance baseline.
 
+**Status as of 2026-09-20.** On Elixir 1.19.5 / OTP 28.3.1, `master` at
+`94ba1bf` reported 9 cycles; after the `refactor(xref)` series the same
+toolchain reports 2 (`mix xref graph --format stats`: 313 tracked files, 10
+compile, 37 export, and 657 runtime edges, `Cycles: 2`). Seven small cycles
+were broken, one commit each, with no public API, runtime, or compile-time
+semantic change and the full unit suite (4679 tests, 0 failures) plus
+`mix test.suite compliance` (591 tests, 0 failures) green after each step:
+
+- `MessageProcessor` <-> `MessageProcessor.MethodHandlers`: the `assign/3`
+  struct primitive moved down to `MessageProcessor.Conn` (`@doc false`);
+  the public `MessageProcessor.assign/3` delegates to it and the handlers
+  call `Conn.assign/3`, so dispatch is a one-way invocation boundary.
+- `Content.Validation` <-> `Content.Validation.Rules`: `Validation` injects
+  its custom-validator lookup into `Rules.apply_rule/4`; the persistent_term
+  key and registered-validator semantics are unchanged.
+- `Content.SchemaPolicy` <-> `Content.SchemaRemoteResolver`: the resolver
+  takes the policy preflight function as an explicit argument
+  (`resolve/3`), passed by `SchemaPolicy`, its only caller.
+- `ExMCP` <-> `ClientConfig`: `ClientConfig` reads the library version from
+  the existing `ExMCP.Internal.VersionInfo` instead of the `ExMCP` facade.
+- `Server.Subscriptions` <-> `Tasks`: the store-invocation primitive behind
+  `Tasks.get/2` lives in the new `@moduledoc false` `ExMCP.Tasks.StoreCall`;
+  `Tasks` delegates to it and `Subscriptions` authorizes `taskIds` through it
+  with the same owner map, so only `Tasks -> Subscriptions` remains.
+- `Internal.SessionStore` <-> `SessionStore.DETS` <-> `SessionStore.ETS`:
+  the behaviour's default-selecting `open/1` moved, unchanged, into the new
+  `@moduledoc false` `ExMCP.Internal.SessionStore.Factory`, which
+  `SessionManager` now calls.
+- `Internal.VersionRegistry` <-> `Protocol.ErrorCodes` <-> `Protocol.Methods`
+  (compile) <-> `Types`: the revision catalog suggested above now exists as
+  the pure `@moduledoc false` `ExMCP.Internal.RevisionCatalog`. The registry
+  sources its revision attributes from it and delegates `era_for/1`;
+  `Methods`, `ErrorCodes`, and `Types` read the catalog instead of the
+  registry. `VersionRegistry` remains the canonical registry for enablement,
+  preference ordering, and version-specific behaviour.
+
+Remaining (deliberately untouched; they are a separate decision because they
+require the request-executor contract and the transport-registry/TLS moves
+described above rather than a narrow inversion): the 13-module client cycle
+through `lib/ex_mcp/client.ex` (its operations modules, connection manager,
+era cache, notification listener, request handler, subscription, health
+check, and reliability wrapper) and the 10-module transport cycle through
+`lib/ex_mcp/transport.ex` (the HTTP transport and its header/SSE helpers,
+local, stdio, test, security guard, and `Internal.Security`). No cycle in
+the small set was skipped. Add the xref regression threshold once those two
+are eliminated.
+
 ## Hex source-package documentation cleanup
 
 The rc.7 `package.files` list ships 204,602 bytes (approximately 200 KB) of raw internal
