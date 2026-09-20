@@ -1388,6 +1388,54 @@ defmodule ExMCP.ACP.Adapters.Codex.LifecycleGoldenTest do
              CodexGolden.messages(transcript)
   end
 
+  test "session_resume_ignores_history_cursor" do
+    steps =
+      connected_steps() ++
+        [
+          {:outbound,
+           %{
+             "method" => "session/resume",
+             "id" => 13,
+             "params" => %{"sessionId" => "thread-abc", "cwd" => "/tmp/project"}
+           }},
+          {:note,
+           "resume sends excludeTurns, so a backwards cursor on the reply is ignored: only the returned page is replayed and thread/turns/list is never requested"},
+          {:inbound,
+           %{
+             "id" => 3,
+             "result" => %{
+               "model" => "gpt-5",
+               "thread" => %{
+                 "id" => "thread-abc",
+                 "cwd" => "/tmp/project",
+                 "historyMode" => "paginated"
+               },
+               "initialTurnsPage" => %{
+                 "data" => [load_turn("turn-2", "newest")],
+                 "nextCursor" => "cur-1"
+               },
+               "turnsBackwardsCursor" => "cur-1"
+             }
+           }}
+        ]
+
+    transcript = CodexGolden.assert_golden(@area, "session_resume_ignores_history_cursor", steps)
+
+    refute Enum.any?(CodexGolden.writes(transcript), &(&1["method"] == "thread/turns/list"))
+
+    assert [
+             %{
+               "params" => %{
+                 "update" => %{
+                   "sessionUpdate" => "agent_message_chunk",
+                   "content" => %{"text" => "newest"}
+                 }
+               }
+             },
+             %{"id" => 13, "result" => %{"modes" => _}}
+           ] = CodexGolden.messages(transcript)
+  end
+
   test "session_resume_replays_returned_history" do
     steps =
       connected_steps() ++

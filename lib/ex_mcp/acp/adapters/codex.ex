@@ -291,7 +291,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
             state =
               track_request(state, id, :thread_resume, acp_id, %{
                 mode_id: mode_id,
-                additional_directories: additional_directories
+                additional_directories: additional_directories,
+                page_history: true
               })
 
             {:ok, request, state}
@@ -332,7 +333,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
             state =
               track_request(state, id, :thread_resume, acp_id, %{
                 mode_id: mode_id,
-                additional_directories: additional_directories
+                additional_directories: additional_directories,
+                page_history: false
               })
 
             {:ok, request, state}
@@ -948,10 +950,12 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
     cursor = older_turns_cursor(result)
 
-    if type == :thread_resume and is_binary(cursor) do
+    if type == :thread_resume and meta[:page_history] == true and is_binary(cursor) do
       # Mirrors codex-acp#481: the initial page is only the newest hundred
       # turns of a paginated thread. Page the rest through thread/turns/list
-      # before replaying, so a long session loads in full and in order.
+      # before replaying, so a long session loads in full and in order. Only
+      # session/load pages: session/resume asks for excludeTurns and must not
+      # fetch history even when the reply still carries a cursor.
       meta = %{
         session_id: session_id,
         result: result,
