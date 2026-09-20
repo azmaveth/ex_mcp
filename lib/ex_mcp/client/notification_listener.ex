@@ -136,6 +136,11 @@ defmodule ExMCP.Client.NotificationListener do
           _ = deregister_on_client(ref)
           {:error, {:subscribe_failed, uri, reason}}
 
+        {:error, :listener_removed} ->
+          # The subscriber exited between registration and acquisition; the
+          # client already dropped the listener.
+          {:error, :subscriber_not_alive}
+
         {:exit, reason} ->
           _ = deregister_on_client(ref)
           {:error, {:listener_unavailable, reason}}

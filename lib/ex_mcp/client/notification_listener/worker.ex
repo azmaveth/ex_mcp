@@ -12,6 +12,14 @@ defmodule ExMCP.Client.NotificationListener.Worker do
   # `ExMCP.Client.subscribe_notifications/3` wait on this process, never on the
   # client, so the client loop stays free to serve the requests made here.
   #
+  # Two more cases the bookkeeping has to survive. A URI whose re-subscribe
+  # after a reconnect failed keeps its refcount, because the listeners still
+  # hold it, but is marked lost so the next acquisition goes to the wire again
+  # instead of trusting the count. And a listener whose subscriber died
+  # between registration and acquisition is released before it ever acquired;
+  # that release leaves a tombstone so the late acquisition refuses instead of
+  # subscribing URIs nobody will release.
+  #
   # The worker is started by the client on the first registration, monitors
   # the client, and stops when the client stops.
 
@@ -25,10 +33,14 @@ defmodule ExMCP.Client.NotificationListener.Worker do
   @spec start(pid()) :: GenServer.on_start()
   def start(client) when is_pid(client), do: GenServer.start(__MODULE__, client)
 
-  @doc "Acquires every URI for a listener; all or nothing."
-  @spec acquire(pid(), listener_id(), [uri()], timeout()) :: :ok | {:error, uri(), term()}
-  def acquire(_worker, _listener_id, [], _timeout), do: :ok
+  @doc """
+  Acquires every URI for a listener; all or nothing.
 
+  Returns `{:error, :listener_removed}` when the listener was released before
+  it acquired, which happens when its subscriber exited in between.
+  """
+  @spec acquire(pid(), listener_id(), [uri()], timeout()) ::
+          :ok | {:error, uri(), term()} | {:error, :listener_removed}
   def acquire(worker, listener_id, uris, timeout),
     do: GenServer.call(worker, {:acquire, listener_id, uris, timeout}, :infinity)
 
@@ -57,19 +69,29 @@ defmodule ExMCP.Client.NotificationListener.Worker do
   @impl true
   def init(client) do
     Process.monitor(client)
-    {:ok, %{client: client, counts: %{}, held: %{}}}
+    {:ok, %{client: client, counts: %{}, held: %{}, lost: MapSet.new(), removed: MapSet.new()}}
   end
 
   @impl true
   def handle_call({:acquire, listener_id, uris, timeout}, _from, state) do
-    uris = Enum.uniq(uris)
+    cond do
+      MapSet.member?(state.removed, listener_id) ->
+        {:reply, {:error, :listener_removed},
+         %{state | removed: MapSet.delete(state.removed, listener_id)}}
 
-    case do_acquire(state, uris, timeout, []) do
-      {:ok, state} ->
-        {:reply, :ok, %{state | held: Map.put(state.held, listener_id, uris)}}
+      uris == [] ->
+        {:reply, :ok, %{state | held: Map.put(state.held, listener_id, [])}}
 
-      {:error, uri, reason, state, acquired} ->
-        {:reply, {:error, uri, reason}, release_uris(state, acquired, timeout)}
+      true ->
+        uris = Enum.uniq(uris)
+
+        case do_acquire(state, uris, timeout, []) do
+          {:ok, state} ->
+            {:reply, :ok, %{state | held: Map.put(state.held, listener_id, uris)}}
+
+          {:error, uri, reason, state, acquired} ->
+            {:reply, {:error, uri, reason}, release_uris(state, acquired, timeout)}
+        end
     end
   end
 
@@ -85,15 +107,19 @@ defmodule ExMCP.Client.NotificationListener.Worker do
   def handle_cast({:resubscribe, listener_ids, generation, timeout}, state) do
     results = Map.new(Map.keys(state.counts), &{&1, subscribe(state.client, &1, timeout)})
 
+    lost =
+      for {uri, {:error, _reason}} <- results, into: MapSet.new(), do: uri
+
     GenServer.cast(
       state.client,
       {:notification_listeners_resubscribed, results, listener_ids, generation}
     )
 
-    {:noreply, state}
+    {:noreply, %{state | lost: lost}}
   end
 
-  def handle_cast(:reset, state), do: {:noreply, %{state | counts: %{}, held: %{}}}
+  def handle_cast(:reset, state),
+    do: {:noreply, %{state | counts: %{}, held: %{}, lost: MapSet.new(), removed: MapSet.new()}}
 
   @impl true
   def handle_info({:DOWN, _ref, :process, client, _reason}, %{client: client} = state),
@@ -104,22 +130,30 @@ defmodule ExMCP.Client.NotificationListener.Worker do
   defp do_acquire(state, [], _timeout, _acquired), do: {:ok, state}
 
   defp do_acquire(state, [uri | rest], timeout, acquired) do
-    case Map.get(state.counts, uri, 0) do
-      0 ->
-        case subscribe(state.client, uri, timeout) do
-          :ok -> do_acquire(put_count(state, uri, 1), rest, timeout, [uri | acquired])
-          {:error, reason} -> {:error, uri, reason, state, acquired}
-        end
+    count = Map.get(state.counts, uri, 0)
 
-      count ->
-        do_acquire(put_count(state, uri, count + 1), rest, timeout, [uri | acquired])
+    if count > 0 and not MapSet.member?(state.lost, uri) do
+      do_acquire(put_count(state, uri, count + 1), rest, timeout, [uri | acquired])
+    else
+      case subscribe(state.client, uri, timeout) do
+        :ok ->
+          state = %{put_count(state, uri, count + 1) | lost: MapSet.delete(state.lost, uri)}
+          do_acquire(state, rest, timeout, [uri | acquired])
+
+        {:error, reason} ->
+          {:error, uri, reason, state, acquired}
+      end
     end
   end
 
   defp release_listener(state, listener_id, timeout) do
     case Map.pop(state.held, listener_id) do
-      {nil, _held} -> state
-      {uris, held} -> release_uris(%{state | held: held}, uris, timeout)
+      {nil, _held} ->
+        # Released before it acquired: remember, so the acquisition refuses.
+        %{state | removed: MapSet.put(state.removed, listener_id)}
+
+      {uris, held} ->
+        release_uris(%{state | held: held}, uris, timeout)
     end
   end
 
@@ -130,8 +164,12 @@ defmodule ExMCP.Client.NotificationListener.Worker do
           acc
 
         1 ->
-          _ = request(acc.client, "resources/unsubscribe", uri, timeout)
-          %{acc | counts: Map.delete(acc.counts, uri)}
+          # A lost URI has no server-side subscription to remove.
+          unless MapSet.member?(acc.lost, uri) do
+            _ = request(acc.client, "resources/unsubscribe", uri, timeout)
+          end
+
+          %{acc | counts: Map.delete(acc.counts, uri), lost: MapSet.delete(acc.lost, uri)}
 
         count ->
           put_count(acc, uri, count - 1)

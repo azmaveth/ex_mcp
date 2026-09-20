@@ -322,6 +322,21 @@ defmodule ExMCP.Client.NotificationListenerTest do
       assert List.last(ops) == :unsubscribe
     end
 
+    test "a dead subscriber is refused before any server subscription", %{client: client} do
+      dead = spawn(fn -> :ok end)
+      monitor = Process.monitor(dead)
+      assert_receive {:DOWN, ^monitor, :process, ^dead, _reason}
+
+      assert {:error, :subscriber_not_alive} =
+               Client.subscribe_notifications(
+                 client,
+                 %{"resourceSubscriptions" => ["test://never"]},
+                 subscriber: dead
+               )
+
+      refute_received {:server_subscribe, "test://never"}
+    end
+
     test "rejects invalid, empty, and task filters", %{client: client} do
       assert {:error, :unknown_subscription_filter} =
                Client.subscribe_notifications(client, %{"bogus" => true})
@@ -451,6 +466,20 @@ defmodule ExMCP.Client.NotificationListenerTest do
       assert_receive {:ex_mcp_notification_reconnected, ^listener,
                       %{resubscribed: ["test://keeps"], failed: [{"test://goes-away", _reason}]}},
                      1_000
+
+      # The URI is still held but lost. A later listener naming it must go to
+      # the wire rather than trust the count, and once the server accepts
+      # again the subscription is restored for both listeners.
+      Agent.update(agent, &Map.put(&1, :failing_uris, []))
+
+      {:ok, later} =
+        Client.subscribe_notifications(client, %{"resourceSubscriptions" => ["test://goes-away"]})
+
+      assert_receive {:transport_request, "resources/subscribe", %{"uri" => "test://goes-away"}}
+
+      push_notification(client, "notifications/resources/updated", %{"uri" => "test://goes-away"})
+      assert_receive {:ex_mcp_notification, ^listener, _, %{"uri" => "test://goes-away"}}
+      assert_receive {:ex_mcp_notification, ^later, _, %{"uri" => "test://goes-away"}}
     end
 
     test "closes listeners when reconnection gives up" do

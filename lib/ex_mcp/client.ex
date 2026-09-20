@@ -610,6 +610,8 @@ defmodule ExMCP.Client do
   - `{:ok, listener}` - an `ExMCP.Client.NotificationListener.Ref`
   - `{:error, :use_listen}` - the peer is a modern (MCP 2026-07-28) server
   - `{:error, :not_connected}` - the client is not ready
+  - `{:error, :subscriber_not_alive}` - the subscriber process is not alive,
+    or exited before its resource subscriptions were made
   - `{:error, {:subscribe_failed, uri, reason}}` - a `resources/subscribe`
     request failed; the registration and any earlier subscription of this
     call are rolled back
@@ -1223,6 +1225,9 @@ defmodule ExMCP.Client do
 
       VersionRegistry.modern?(state.protocol_version) ->
         {:reply, {:error, :use_listen}, state}
+
+      not Process.alive?(subscriber) ->
+        {:reply, {:error, :subscriber_not_alive}, state}
 
       true ->
         id = make_ref()
