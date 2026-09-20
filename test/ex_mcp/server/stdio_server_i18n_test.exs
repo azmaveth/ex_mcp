@@ -41,7 +41,12 @@ defmodule ExMCP.Server.StdioServerI18nTest do
   for {label, locale} <- @locales do
     test "moves non-ASCII frames byte-exact under LANG=#{label}", %{script: script, input: input} do
       {output, stderr, code} = run_server(script, input, unquote(locale))
-      diagnostics = "exit #{code}\nstdout:\n#{output}\nstderr:\n#{stderr}"
+
+      # Failure output may contain bytes that are not valid UTF-8, which would
+      # crash the ExUnit formatter and hide the failure; keep it printable.
+      diagnostics =
+        "exit #{code}\nstdout:\n#{printable(output)}\nstderr:\n#{printable(stderr)}"
+
       assert code == 0, diagnostics
 
       responses =
@@ -160,9 +165,16 @@ defmodule ExMCP.Server.StdioServerI18nTest do
 
   defp text_of(%{"result" => %{"content" => [%{"type" => "text", "text" => text}]}}), do: text
 
-  defp server_script do
-    all = I18nCorpus.all_text()
+  defp printable(binary) do
+    if String.valid?(binary),
+      do: binary,
+      else: inspect(binary, binaries: :as_binaries, limit: :infinity, printable_limit: :infinity)
+  end
 
+  # The corpus is read from the support module at runtime rather than embedded
+  # as a literal: `inspect/1` on Elixir 1.17 writes bidi control characters
+  # raw, and the compiler rejects them in source.
+  defp server_script do
     ~s"""
     # A bare `elixir` VM with the test code path: start only what the stdio
     # server itself needs, not every application on the path.
@@ -175,7 +187,7 @@ defmodule ExMCP.Server.StdioServerI18nTest do
       use ExMCP.Server.DSL, name: "i18n", version: "1"
 
       tool "generate", "Generates non-ASCII text of its own" do
-        run(fn _args, state -> {:ok, "generated=" <> #{inspect(all)}, state} end)
+        run(fn _args, state -> {:ok, "generated=" <> ExMCP.Test.I18nCorpus.all_text(), state} end)
       end
 
       tool "echo", "Echoes text and reports its byte length" do
