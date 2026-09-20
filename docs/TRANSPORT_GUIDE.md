@@ -43,6 +43,21 @@ BEAM VM, not scoped to the stdio connection. See
 [Configuration — Logging](CONFIGURATION.md#logging). 1.x keeps this
 global behavior; 2.0 may replace it.
 
+Stdio frames are UTF-8 bytes, and the stdio transports own the encoding of
+the devices they use. `ExMCP.Server.StdioServer` pins `:standard_io` to
+byte mode when it starts, and `ExMCP.ACP.Agent.Transport.Stdio` pins its
+input and output devices when it connects, so the process locale cannot
+translate protocol traffic in either direction. A server launched with no
+locale (launchd, systemd, a host that passes a minimal environment) and a
+server launched from a UTF-8 shell therefore behave identically. Stderr is
+a separate device and is not affected. A byte-order mark at the start of the
+stream is stripped from the first frame.
+
+The VM's filename encoding is a separate setting and is locale-driven on
+Linux (always UTF-8 on macOS). A Linux release whose resource handlers list
+or open files with non-ASCII names should set `+fnu` in `vm.args`; that is
+an application concern, not a transport one.
+
 ## Streamable HTTP
 
 The HTTP transport supports two wire shapes on one MCP POST endpoint. A

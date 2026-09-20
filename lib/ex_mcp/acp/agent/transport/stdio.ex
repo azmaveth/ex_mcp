@@ -8,7 +8,7 @@ defmodule ExMCP.ACP.Agent.Transport.Stdio do
 
   @behaviour ExMCP.ACP.Agent.Transport
 
-  alias ExMCP.Internal.{Options, StdioLoggerConfig}
+  alias ExMCP.Internal.{Options, StdioFraming, StdioLoggerConfig}
 
   @default_max_frame_bytes 1_048_576
   @collector_chunk_bytes 4_096
@@ -16,23 +16,38 @@ defmodule ExMCP.ACP.Agent.Transport.Stdio do
   defstruct input: :stdio,
             output: :stdio,
             max_frame_bytes: @default_max_frame_bytes,
-            closed?: false
+            closed?: false,
+            first_frame?: true
 
   @impl true
   def connect(opts) do
     output = Keyword.get(opts, :output, :stdio)
 
+    input = Keyword.get(opts, :input, :stdio)
+
     if output in [:stdio, :standard_io] do
       StdioLoggerConfig.configure()
     end
 
-    {:ok,
-     %__MODULE__{
-       input: Keyword.get(opts, :input, :stdio),
-       output: output,
-       max_frame_bytes: Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes)
-     }}
+    # Frames are UTF-8 bytes. Pin both devices to byte mode before the first
+    # read or write so the process locale cannot translate them. Embedders
+    # and tests may pass their own devices; StringIO and files accept this.
+    with :ok <- StdioFraming.pin_byte_mode(input),
+         :ok <- pin_output(output, input) do
+      {:ok,
+       %__MODULE__{
+         input: input,
+         output: output,
+         max_frame_bytes:
+           Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes)
+       }}
+    else
+      {:error, reason} -> {:error, {:byte_mode_unavailable, reason}}
+    end
   end
+
+  defp pin_output(output, input) when output == input, do: :ok
+  defp pin_output(output, _input), do: StdioFraming.pin_byte_mode(output)
 
   @impl true
   def send_message(message, %__MODULE__{max_frame_bytes: limit} = _state)
@@ -41,8 +56,10 @@ defmodule ExMCP.ACP.Agent.Transport.Stdio do
 
   def send_message(message, %__MODULE__{output: output} = state)
       when is_binary(message) do
-    IO.puts(output, message)
-    {:ok, state}
+    case StdioFraming.write_frame(output, message) do
+      :ok -> {:ok, state}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @impl true
@@ -83,6 +100,11 @@ defmodule ExMCP.ACP.Agent.Transport.Stdio do
           end
         end
     end
+  end
+
+  # The first frame may carry a byte-order mark from the host; later ones cannot.
+  defp finish_line(line, %__MODULE__{first_frame?: true} = state) do
+    finish_line(StdioFraming.strip_bom(line), %{state | first_frame?: false})
   end
 
   defp finish_line(line, state) do

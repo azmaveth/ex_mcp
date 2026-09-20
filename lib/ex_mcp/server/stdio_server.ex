@@ -51,7 +51,16 @@ defmodule ExMCP.Server.StdioServer do
   require Logger
 
   alias ExMCP.Error.ProtocolError
-  alias ExMCP.Internal.{JSONRPC, LogSummary, MessageValidator, StdioLoggerConfig, VersionRegistry}
+
+  alias ExMCP.Internal.{
+    JSONRPC,
+    LogSummary,
+    MessageValidator,
+    StdioFraming,
+    StdioLoggerConfig,
+    VersionRegistry
+  }
+
   alias ExMCP.Protocol.ErrorCodes
 
   alias ExMCP.Server.{
@@ -89,6 +98,10 @@ defmodule ExMCP.Server.StdioServer do
     # CRITICAL: For STDIO transport, suppress ALL logging to avoid contaminating JSON stream
     # MCP STDIO protocol requires ONLY JSON-RPC messages on stdout
     configure_stdio_logging()
+
+    # Frames are UTF-8 bytes. Pin stdio to byte mode before the reader starts
+    # so the process locale cannot translate them in either direction.
+    :ok = StdioFraming.pin_byte_mode(:standard_io)
 
     module = Keyword.fetch!(opts, :module)
     {subscription_opts, owned_subscription_runtime} = ensure_subscription_runtime(opts)
@@ -143,7 +156,7 @@ defmodule ExMCP.Server.StdioServer do
       # 100ms is usually enough for small scripts, but Mix.install may need more
       startup_delay = Application.get_env(:ex_mcp, :stdio_startup_delay, 100)
       Process.sleep(startup_delay)
-      read_stdin_loop(server)
+      read_stdin_loop(server, :first_line)
     end)
 
     {:ok, state}
@@ -442,16 +455,24 @@ defmodule ExMCP.Server.StdioServer do
 
   # Send a successful response
   defp send_response(response, _state) do
-    json = Jason.encode!(response)
-    IO.puts(json)
+    write_frame(Jason.encode!(response))
   end
 
   # Send an error response
   defp send_error_response(code, message, id, _state) do
     response = JSONRPC.error(id, code, message)
+    write_frame(Jason.encode!(response))
+  end
 
-    json = Jason.encode!(response)
-    IO.puts(json)
+  defp write_frame(json) do
+    case StdioFraming.write_frame(:standard_io, json) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error("Failed to write stdio frame", reason_shape: LogSummary.describe(reason))
+        :ok
+    end
   end
 
   # Configure logging for STDIO transport to prevent stdout contamination
@@ -459,9 +480,10 @@ defmodule ExMCP.Server.StdioServer do
     StdioLoggerConfig.configure()
   end
 
-  # Read from stdin in a loop and send lines to the main process
-  defp read_stdin_loop(server_pid) do
-    case IO.read(:stdio, :line) do
+  # Read from stdin in a loop and send lines to the main process. The first
+  # line may carry a byte-order mark from the host; nothing after it can.
+  defp read_stdin_loop(server_pid, position) do
+    case StdioFraming.read_line(:standard_io) do
       :eof ->
         send(server_pid, {:stdin_closed})
 
@@ -472,7 +494,8 @@ defmodule ExMCP.Server.StdioServer do
 
         send(server_pid, {:stdin_closed})
 
-      line when is_binary(line) ->
+      {:ok, line} ->
+        line = if position == :first_line, do: StdioFraming.strip_bom(line), else: line
         line = String.trim(line)
 
         if line != "" do
@@ -481,7 +504,7 @@ defmodule ExMCP.Server.StdioServer do
           send(server_pid, {:stdin_line, line})
         end
 
-        read_stdin_loop(server_pid)
+        read_stdin_loop(server_pid, :later_line)
     end
   end
 

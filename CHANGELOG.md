@@ -31,6 +31,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chunk-size line tail in the HTTP/1 client). `mix hex.audit` fails on 1.10.0
   since the advisory was published on 2026-09-19.
 
+### Fixed
+
+- The stdio transports no longer let the process locale translate protocol
+  frames. `ExMCP.Server.StdioServer` and `ExMCP.ACP.Agent.Transport.Stdio`
+  now pin the devices they own to byte mode before the first read or write
+  and move raw UTF-8 bytes through one shared framing owner. Previously,
+  under a C locale or no locale (launchd, systemd, minimal MCP host
+  environments) the MCP stdio server double-encoded non-ASCII input and
+  emitted `\x{...}` escapes for non-ASCII output, producing invalid JSON,
+  while under a UTF-8 locale the ACP agent transport corrupted non-ASCII
+  input. An echo tool masked the MCP case because the write reversed the
+  read's damage. A byte-order mark before the first frame is now stripped
+  instead of hanging the session at `initialize`. Diagnosed by deepfates in
+  #41. A shared non-ASCII payload corpus now runs byte-exact through every
+  transport, with a locale matrix on the stdio subprocess test (#52).
+
 ## [1.4.0] - 2026-09-17
 
 - A 1.x minor driven by the Jido Connect review of 1.3.0: the modern
