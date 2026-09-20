@@ -1217,7 +1217,7 @@ defmodule ExMCP.SessionManager do
   end
 
   defp open_store!(config) do
-    case SessionStore.open(config) do
+    case SessionStore.Factory.open(config) do
       {:ok, store} ->
         store
 
