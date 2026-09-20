@@ -68,6 +68,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chunk-size line tail in the HTTP/1 client). `mix hex.audit` fails on 1.10.0
   since the advisory was published on 2026-09-19.
 
+- The Codex ACP adapter is split into `ExMCP.ACP.Adapters.Codex.Permissions`,
+  `Codex.Content`, and `Codex.MCP` (internal modules) with no wire-visible
+  change: the golden transcript fixtures are byte-identical, and the public
+  `ExMCP.ACP.Adapters.Codex` API and state struct are unchanged. See the
+  Codex status in `docs/POST_1_0_MAINTENANCE_PLAN.md`.
+
 ### Fixed
 
 - The stdio transports no longer let the process locale translate protocol
