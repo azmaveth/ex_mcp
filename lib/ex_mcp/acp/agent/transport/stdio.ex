@@ -4,6 +4,12 @@ defmodule ExMCP.ACP.Agent.Transport.Stdio do
 
   This transport reads JSON-RPC lines from this process' stdin and writes
   JSON-RPC lines to stdout. Logs and diagnostics must go to stderr.
+
+  Frames are UTF-8 bytes. Each device is either a character device or a byte
+  device, decided by how it was opened (for stdio, by the process locale)
+  and subject to change by the VM, and the transport reads and writes it the
+  way it is configured at that moment so nothing translates the frames.
+  Embedders may pass their own `:input` and `:output` devices.
   """
 
   @behaviour ExMCP.ACP.Agent.Transport
@@ -22,32 +28,19 @@ defmodule ExMCP.ACP.Agent.Transport.Stdio do
   @impl true
   def connect(opts) do
     output = Keyword.get(opts, :output, :stdio)
-
     input = Keyword.get(opts, :input, :stdio)
 
     if output in [:stdio, :standard_io] do
       StdioLoggerConfig.configure()
     end
 
-    # Frames are UTF-8 bytes. Pin both devices to byte mode before the first
-    # read or write so the process locale cannot translate them. Embedders
-    # and tests may pass their own devices; StringIO and files accept this.
-    with :ok <- StdioFraming.pin_byte_mode(input),
-         :ok <- pin_output(output, input) do
-      {:ok,
-       %__MODULE__{
-         input: input,
-         output: output,
-         max_frame_bytes:
-           Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes)
-       }}
-    else
-      {:error, reason} -> {:error, {:byte_mode_unavailable, reason}}
-    end
+    {:ok,
+     %__MODULE__{
+       input: input,
+       output: output,
+       max_frame_bytes: Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes)
+     }}
   end
-
-  defp pin_output(output, input) when output == input, do: :ok
-  defp pin_output(output, _input), do: StdioFraming.pin_byte_mode(output)
 
   @impl true
   def send_message(message, %__MODULE__{max_frame_bytes: limit} = _state)
@@ -63,40 +56,43 @@ defmodule ExMCP.ACP.Agent.Transport.Stdio do
   end
 
   @impl true
-  def receive_message(%__MODULE__{} = state) do
-    read_frame(state, [], [], 0, 0)
+  def receive_message(%__MODULE__{input: input} = state) do
+    # The device's mode is consulted once per frame; see StdioFraming.
+    read_frame(state, StdioFraming.mode(input), [], [], 0, 0)
   end
 
-  # IO devices satisfy a fixed-size read only after receiving the requested byte
-  # count. Reading a large chunk therefore deadlocks on a short NDJSON frame while
-  # the peer keeps the pipe open. One-byte reads preserve streaming semantics and
-  # impose the limit before any unbounded line allocation. The collector batches
-  # bytes into bounded binary chunks so the frame itself is built in linear space.
-  defp read_frame(%__MODULE__{input: input} = state, chunks, chunk, chunk_size, size) do
-    case IO.binread(input, 1) do
+  # IO devices satisfy a fixed-size read only after receiving the requested
+  # count. Reading a large chunk therefore deadlocks on a short NDJSON frame
+  # while the peer keeps the pipe open. Single-unit reads (one byte on a byte
+  # device, one character on a character device) preserve streaming semantics
+  # and impose the limit before any unbounded line allocation. The collector
+  # batches units into bounded binary chunks so the frame itself is built in
+  # linear space; the limit and the chunking count bytes.
+  defp read_frame(%__MODULE__{input: input} = state, mode, chunks, chunk, chunk_size, size) do
+    case StdioFraming.read_unit(input, mode) do
       :eof ->
         finish_eof(state, chunks, chunk, size)
 
       {:error, reason} ->
         {:error, reason}
 
-      "\n" ->
+      {:ok, "\n"} ->
         finish_line(collect_frame(chunks, chunk), state)
 
-      byte when is_binary(byte) ->
-        size = size + 1
+      {:ok, unit} ->
+        size = size + byte_size(unit)
 
         if size > state.max_frame_bytes do
           {:error, :frame_too_large}
         else
-          chunk = [byte | chunk]
-          chunk_size = chunk_size + 1
+          chunk = [unit | chunk]
+          chunk_size = chunk_size + byte_size(unit)
 
-          if chunk_size == @collector_chunk_bytes do
+          if chunk_size >= @collector_chunk_bytes do
             completed_chunk = chunk |> Enum.reverse() |> IO.iodata_to_binary()
-            read_frame(state, [completed_chunk | chunks], [], 0, size)
+            read_frame(state, mode, [completed_chunk | chunks], [], 0, size)
           else
-            read_frame(state, chunks, chunk, chunk_size, size)
+            read_frame(state, mode, chunks, chunk, chunk_size, size)
           end
         end
     end

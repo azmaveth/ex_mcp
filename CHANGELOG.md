@@ -35,8 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The stdio transports no longer let the process locale translate protocol
   frames. `ExMCP.Server.StdioServer` and `ExMCP.ACP.Agent.Transport.Stdio`
-  now pin the devices they own to byte mode before the first read or write
-  and move raw UTF-8 bytes through one shared framing owner. Previously,
+  now detect, on every read and write, whether each device is a character
+  or a byte device and use the matching calls, through one shared framing
+  owner, which is byte-exact for UTF-8 on every supported OTP and survives
+  the VM flipping a device to latin1 after undecodable input (on OTP 27 that
+  flip still ends the session under a UTF-8 locale; see the transport
+  guide). Previously,
   under a C locale or no locale (launchd, systemd, minimal MCP host
   environments) the MCP stdio server double-encoded non-ASCII input and
   emitted `\x{...}` escapes for non-ASCII output, producing invalid JSON,

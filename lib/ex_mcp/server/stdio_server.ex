@@ -99,10 +99,6 @@ defmodule ExMCP.Server.StdioServer do
     # MCP STDIO protocol requires ONLY JSON-RPC messages on stdout
     configure_stdio_logging()
 
-    # Frames are UTF-8 bytes. Pin stdio to byte mode before the reader starts
-    # so the process locale cannot translate them in either direction.
-    :ok = StdioFraming.pin_byte_mode(:standard_io)
-
     module = Keyword.fetch!(opts, :module)
     {subscription_opts, owned_subscription_runtime} = ensure_subscription_runtime(opts)
 
@@ -464,6 +460,8 @@ defmodule ExMCP.Server.StdioServer do
     write_frame(Jason.encode!(response))
   end
 
+  # Frames are UTF-8 bytes; StdioFraming reads and writes stdio the way the
+  # device is currently configured, so the locale cannot translate them.
   defp write_frame(json) do
     case StdioFraming.write_frame(:standard_io, json) do
       :ok ->

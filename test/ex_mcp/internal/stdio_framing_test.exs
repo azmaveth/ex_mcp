@@ -8,10 +8,14 @@ defmodule ExMCP.Internal.StdioFramingTest do
     describe "on a device opened in #{mode} mode" do
       @mode mode
 
-      test "a pinned device writes every corpus frame byte-exact" do
+      test "detects the device's mode" do
+        {:ok, device} = StringIO.open("", encoding: @mode)
+        assert StdioFraming.mode(device) == @mode
+      end
+
+      test "writes every corpus frame byte-exact" do
         for {label, text} <- I18nCorpus.strings() do
           {:ok, device} = StringIO.open("", encoding: @mode)
-          :ok = StdioFraming.pin_byte_mode(device)
           frame = Jason.encode!(%{"t" => text})
 
           assert :ok = StdioFraming.write_frame(device, frame)
@@ -20,27 +24,55 @@ defmodule ExMCP.Internal.StdioFramingTest do
         end
       end
 
-      test "a pinned device reads every corpus frame byte-exact" do
+      test "reads every corpus frame byte-exact, by line and by unit" do
         for {label, text} <- I18nCorpus.strings() do
           frame = Jason.encode!(%{"t" => text})
-          {:ok, device} = StringIO.open(frame <> "\n", encoding: @mode)
-          :ok = StdioFraming.pin_byte_mode(device)
 
+          {:ok, device} = StringIO.open(frame <> "\n", encoding: @mode)
           assert {:ok, line} = StdioFraming.read_line(device)
           assert line == frame <> "\n", label
           assert :eof = StdioFraming.read_line(device)
+
+          {:ok, device} = StringIO.open(frame <> "\n", encoding: @mode)
+          assert read_all_units(device, @mode) == frame <> "\n", label
         end
       end
     end
   end
 
-  test "byte writes on an unpinned unicode device are not byte-exact, which is why the pin exists" do
-    {:ok, device} = StringIO.open("", encoding: :unicode)
+  test "a byte write on a unicode device is not byte-exact, which is why the mode is consulted" do
     frame = Jason.encode!(%{"t" => "café"})
 
-    :ok = StdioFraming.write_frame(device, frame)
-    {_input, output} = StringIO.contents(device)
+    {:ok, unicode_device} = StringIO.open("", encoding: :unicode)
+    :ok = :file.write(unicode_device, [frame, ?\n])
+    {_input, output} = StringIO.contents(unicode_device)
     refute output == frame <> "\n"
+  end
+
+  test "follows a device whose mode changes between operations" do
+    # OTP flips a unicode-mode stdio to latin1 when it meets input it cannot
+    # decode. Every read and write must use the mode current at that moment.
+    frame = Jason.encode!(%{"t" => "café 日本語"})
+    {:ok, device} = StringIO.open("", encoding: :unicode)
+
+    assert :ok = StdioFraming.write_frame(device, frame)
+    :ok = :io.setopts(device, encoding: :latin1)
+    assert :ok = StdioFraming.write_frame(device, frame)
+
+    {_input, output} = StringIO.contents(device)
+    assert output == frame <> "\n" <> frame <> "\n"
+  end
+
+  test "a unicode device hands back whole characters per unit" do
+    {:ok, device} = StringIO.open("🪁x\n", encoding: :unicode)
+    assert {:ok, "🪁"} = StdioFraming.read_unit(device, :unicode)
+    assert {:ok, "x"} = StdioFraming.read_unit(device, :unicode)
+    assert {:ok, "\n"} = StdioFraming.read_unit(device, :unicode)
+    assert :eof = StdioFraming.read_unit(device, :unicode)
+  end
+
+  test "treats an unqueryable device as a byte device" do
+    assert StdioFraming.mode(spawn(fn -> :ok end)) == :latin1
   end
 
   test "strips a byte-order mark only from the start of a frame" do
@@ -49,5 +81,12 @@ defmodule ExMCP.Internal.StdioFramingTest do
     assert StdioFraming.strip_bom(frame) == frame
     assert StdioFraming.strip_bom("") == ""
     assert StdioFraming.strip_bom(frame <> I18nCorpus.bom()) == frame <> I18nCorpus.bom()
+  end
+
+  defp read_all_units(device, mode, acc \\ []) do
+    case StdioFraming.read_unit(device, mode) do
+      {:ok, unit} -> read_all_units(device, mode, [unit | acc])
+      :eof -> acc |> Enum.reverse() |> IO.iodata_to_binary()
+    end
   end
 end
