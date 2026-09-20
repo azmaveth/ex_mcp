@@ -117,7 +117,12 @@ defmodule ExMCP.Content.Validation.Rules do
 
   def validate_encoding(_), do: :ok
 
-  def apply_rule(content, rule, _opts) when is_atom(rule) do
+  # `custom_validator` resolves rule atoms that are not built in. It is
+  # injected by `ExMCP.Content.Validation` so this module never depends back
+  # on the facade that registers custom validators.
+  def apply_rule(content, rule, opts, custom_validator \\ fn _rule -> nil end)
+
+  def apply_rule(content, rule, _opts, custom_validator) when is_atom(rule) do
     case rule do
       :required_fields ->
         validate_required_fields(content)
@@ -132,8 +137,8 @@ defmodule ExMCP.Content.Validation.Rules do
         validate_encoding(content)
 
       _ ->
-        # Check persistent_term for registered custom validators
-        case :persistent_term.get({ExMCP.Content.Validation, :validator, rule}, nil) do
+        # Check the injected registry for registered custom validators
+        case custom_validator.(rule) do
           nil ->
             {:error, %{rule: rule, message: "Unknown validation rule", severity: :error}}
 
@@ -143,7 +148,7 @@ defmodule ExMCP.Content.Validation.Rules do
     end
   end
 
-  def apply_rule(content, rule, _opts) do
+  def apply_rule(content, rule, _opts, _custom_validator) do
     case rule do
       {:max_size, size} -> validate_max_size(content, size)
       {:mime_types, types} -> validate_mime_types(content, types)

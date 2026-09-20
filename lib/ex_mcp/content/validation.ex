@@ -104,7 +104,7 @@ defmodule ExMCP.Content.Validation do
     errors =
       rules
       |> Enum.reduce_while([], fn rule, acc ->
-        case Rules.apply_rule(content, rule, opts) do
+        case Rules.apply_rule(content, rule, opts, &registered_validator/1) do
           :ok ->
             {:cont, acc}
 
@@ -287,6 +287,8 @@ defmodule ExMCP.Content.Validation do
     :persistent_term.put({__MODULE__, :validator, name}, validator_fn)
     :ok
   end
+
+  defp registered_validator(name), do: :persistent_term.get({__MODULE__, :validator, name}, nil)
 
   @doc """
   Creates a validation rule from a custom function.
