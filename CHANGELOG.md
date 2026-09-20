@@ -70,7 +70,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     tool-call `name`, and both compaction mechanisms. Not applicable:
     codex-acp#471, since ExMCP forwards MCP elicitations without a
     synthetic tool call. See `docs/POST_1_0_MAINTENANCE_PLAN.md`.
-
+- Internal: the three Mint-based pinned HTTP clients
+  (`ExMCP.Internal.PinnedHTTPClient`, `ExMCP.Authorization.PinnedHTTPClient`,
+  and `ExMCP.Transport.HTTP.BoundedClient`) now share one pure response
+  reducer, `ExMCP.Internal.HTTPResponseReducer`, for Mint event accumulation
+  and bounded-body decisions. Each client keeps its own DNS pinning, TLS,
+  compression and framing policy, error atoms, and return shapes. No public
+  API or behavior change.
 - mint moves to 1.10.1, which fixes `EEF-CVE-2026-82672` (unvalidated
   chunk-size line tail in the HTTP/1 client). `mix hex.audit` fails on 1.10.0
   since the advisory was published on 2026-09-19.

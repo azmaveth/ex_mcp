@@ -265,6 +265,49 @@ reducer and contract suite while keeping DNS, target, TLS, redirect, OAuth, and
 authorization policies in their current owners. Do not merge the policy layers
 merely because all three use Mint.
 
+#### Status as of 2026-09-20
+
+Extracted. `ExMCP.Internal.HTTPResponseReducer` (`@moduledoc false`) owns the
+pure mechanics only: `reduce(events, request_ref, acc, limits)` returning
+`{:cont, acc} | {:done, acc} | {:error, reason}`, the empty accumulator,
+`body/1`, `remaining_ms/2`, header normalization, the lenient
+(`content_length_too_large?/2`) and strict
+(`invalid_or_oversized_content_length?/2`) content-length checks,
+`compressed?/1`, `conflicting_framing?/1`, `request_target/1`,
+`default_port/1`, `address_family_options/1`, and `method_name/1`. The
+reducer applies a caller-supplied `:validate_headers` function to every
+`:headers` event, passing both the normalized batch and the accumulated list,
+and returns the caller's error term untouched. Events for a foreign request
+ref and unknown event shapes are skipped; the first `:done` ends the batch.
+
+Each owner kept its policy, its socket and clock handling, and its shapes:
+
+- `ExMCP.Internal.PinnedHTTPClient`: GET only, lenient content-length check
+  on each header batch, no compression check, `{:ok, %{status, headers,
+  body}}`, and `:fetch_failed` for every transport or Mint failure.
+- `ExMCP.Authorization.PinnedHTTPClient`: httpc-style tuple with the status
+  reason, `:compressed_response`, strict content-length on each batch,
+  `:invalid_response` for a `:done` without a status, `:request_failed` for
+  receive failures, Mint connect errors passed through, request-tuple parsing
+  with `content-type` defaulting, and the TLS and `send_timeout` socket
+  options.
+- `ExMCP.Transport.HTTP.BoundedClient`: httpc-style tuple, `TargetPolicy`
+  resolution, the request-size limit, `host` stripping plus forced
+  `content-type` and `accept-encoding: identity`, `:compressed_response`,
+  `:invalid_response_framing`, strict content-length over the accumulated
+  header list (trailers included), and the `{:http_request_failed, _}`,
+  `{:http_receive_failed, _}`, and `{:http_client_error, _}` error shapes.
+
+Characterization suites live in
+`test/ex_mcp/internal/pinned_http_client_test.exs`,
+`test/ex_mcp/authorization/pinned_http_client_test.exs`, and
+`test/ex_mcp/transport/http_bounded_client_test.exs`, driven through
+`ExMCP.Test.RawHTTPServer`; the reducer has its own table-driven suite in
+`test/ex_mcp/internal/http_response_reducer_test.exs`. Request-header
+editing (`put_header/3`, `delete_header/2`, `put_header_if_missing/3`) stayed
+in the owners because the two clients that have it disagree on
+replace-versus-keep semantics.
+
 ## Focused correctness and contract cleanup
 
 Resolve these as separate fixes, with the documented behavior and release lane
