@@ -43,6 +43,33 @@ BEAM VM, not scoped to the stdio connection. See
 [Configuration — Logging](CONFIGURATION.md#logging). 1.x keeps this
 global behavior; 2.0 may replace it.
 
+Stdio frames are UTF-8 bytes. The process locale decides whether the VM
+opens stdio as a character device (UTF-8 locales) or a byte device (any
+other locale, or none), and the stdio transports read and write it the
+matching way: characters on a character device, bytes on a byte device.
+Both are byte-exact for UTF-8, so a server launched with no locale
+(launchd, systemd, a host that passes a minimal environment) and a server
+launched from a UTF-8 shell behave identically. The transports do not change
+the device's mode; OTP 27 cannot switch a unicode-mode stdin after startup,
+and the device is shared with the rest of the VM. They do consult it on
+every read and write, because OTP switches a unicode-mode stdio to latin1
+for good when it meets input it cannot decode, and one bad line from a peer
+must not corrupt every frame after it. A byte-order mark at the start of the
+stream is stripped from the first frame.
+
+One limitation remains on OTP 27 under a UTF-8 locale: if a peer sends
+bytes that are not valid UTF-8, the OTP 27 io server leaves its input buffer
+half decoded and reports a mode that matches neither half, and the session
+ends at that point. OTP 28 and newer drop the bad line and continue. Peers
+that speak MCP send UTF-8, so this only matters with a hostile or broken
+peer; deployments on OTP 27 that must survive it should run under a C
+locale, where stdio is a byte device from the start.
+
+The VM's filename encoding is a separate setting and is locale-driven on
+Linux (always UTF-8 on macOS). A Linux release whose resource handlers list
+or open files with non-ASCII names should set `+fnu` in `vm.args`; that is
+an application concern, not a transport one.
+
 ## Streamable HTTP
 
 The HTTP transport supports two wire shapes on one MCP POST endpoint. A
