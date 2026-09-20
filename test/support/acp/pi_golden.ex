@@ -115,9 +115,14 @@ defmodule ExMCP.Test.PiGolden do
       `System.unique_integer/1` (`"pi-123"`) are replaced by placeholders
       that preserve identity within the transcript: the first distinct id
       becomes `"pi-<1>"`, the next `"pi-<2>"`, and the same real id always
-      maps to the same placeholder. Prompt ids (`"msg-N"`) and extension-UI
-      request ids (`"pi-extension-N"`) come from the adapter's own counter
-      and are kept verbatim because they are part of the wire contract;
+      maps to the same placeholder. The `"id"` of an RPC envelope (a
+      recorded write or a `"type": "response"` message) is tracked
+      separately from ids found anywhere else, so a minted session id that
+      textually collides with a correlation id (the adapter's monotonic and
+      non-monotonic `unique_integer` sequences overlap) still gets its own
+      placeholder. Prompt ids (`"msg-N"`) and extension-UI request ids
+      (`"pi-extension-N"`) come from the adapter's own counter and are kept
+      verbatim because they are part of the wire contract;
     * replayed tool-call ids minted for `toolResult` messages without one
       (`"tool-456"`) become `"tool-<n>"` the same way;
     * ISO-8601 timestamps within one day of the run (the adapter's and the
@@ -641,6 +646,12 @@ defmodule ExMCP.Test.PiGolden do
 
   # -- transcript normalization ---------------------------------------------
 
+  # Ids are normalized per role so that a minted fallback session id that
+  # happens to equal an RPC correlation id (both come from
+  # System.unique_integer/1, whose monotonic and non-monotonic sequences
+  # overlap) still renders deterministically: the "id" of an RPC envelope
+  # (a write, or a response step) lives in the :rpc namespace, everything
+  # else in the :other namespace; both share one counter per prefix.
   defp normalize(transcript, sandbox) do
     acc = %{
       ids: %{},
@@ -652,15 +663,26 @@ defmodule ExMCP.Test.PiGolden do
 
     {entries, _acc} =
       Enum.map_reduce(transcript, acc, fn %Entry{step: step, result: result}, acc ->
-        {step, acc} = walk(step, acc)
-        {result, acc} = walk(result, acc)
+        {step, acc} = walk(step, acc, :other)
+        {result, acc} = walk(result, acc, :other)
         {%Entry{step: step, result: result}, acc}
       end)
 
     entries
   end
 
-  defp walk(binary, acc) when is_binary(binary) do
+  defp walk(binary, acc, :rpc_id) when is_binary(binary) do
+    case Regex.run(~r/^(pi)-(\d+)$/, binary) do
+      [_, kind, _n] ->
+        acc = register_id(acc, {:rpc, binary}, kind)
+        {acc.ids[{:rpc, binary}], acc}
+
+      nil ->
+        walk(binary, acc, :other)
+    end
+  end
+
+  defp walk(binary, acc, _role) when is_binary(binary) do
     binary =
       binary
       |> String.replace(acc.sandbox, @sandbox_placeholder)
@@ -670,36 +692,44 @@ defmodule ExMCP.Test.PiGolden do
     acc =
       @generated_id_pattern
       |> Regex.scan(binary)
-      |> Enum.reduce(acc, fn [id, kind, _n], acc -> register_id(acc, id, kind) end)
+      |> Enum.reduce(acc, fn [id, kind, _n], acc -> register_id(acc, {:other, id}, kind) end)
 
-    {Regex.replace(@generated_id_pattern, binary, fn id, _kind, _n -> acc.ids[id] end), acc}
+    {Regex.replace(@generated_id_pattern, binary, fn id, _kind, _n -> acc.ids[{:other, id}] end),
+     acc}
   end
 
-  defp walk(list, acc) when is_list(list), do: Enum.map_reduce(list, acc, &walk/2)
+  defp walk(list, acc, role) when is_list(list),
+    do: Enum.map_reduce(list, acc, &walk(&1, &2, role))
 
-  defp walk(tuple, acc) when is_tuple(tuple) do
-    {items, acc} = tuple |> Tuple.to_list() |> walk(acc)
+  defp walk(tuple, acc, role) when is_tuple(tuple) do
+    {items, acc} = tuple |> Tuple.to_list() |> walk(acc, role)
     {List.to_tuple(items), acc}
   end
 
-  defp walk(%{__struct__: _} = struct, acc), do: {struct, acc}
+  defp walk(%{__struct__: _} = struct, acc, _role), do: {struct, acc}
 
-  defp walk(map, acc) when is_map(map) do
+  defp walk(map, acc, role) when is_map(map) do
+    envelope? = role == :rpc_envelopes or map["type"] == "response"
+
     {pairs, acc} =
       map
       |> Map.to_list()
       |> Enum.sort()
       |> Enum.map_reduce(acc, fn {key, value}, acc ->
-        {key, acc} = walk(key, acc)
-        {value, acc} = walk(value, acc)
+        {key, acc} = walk(key, acc, :other)
+        {value, acc} = walk(value, acc, child_role(key, envelope?))
         {{key, value}, acc}
       end)
 
     {Map.new(pairs), acc}
   end
 
-  defp walk(fun, acc) when is_function(fun), do: {:__fun__, acc}
-  defp walk(other, acc), do: {other, acc}
+  defp walk(fun, acc, _role) when is_function(fun), do: {:__fun__, acc}
+  defp walk(other, acc, _role), do: {other, acc}
+
+  defp child_role(key, _envelope?) when key in [:writes, :port_writes], do: :rpc_envelopes
+  defp child_role("id", true), do: :rpc_id
+  defp child_role(_key, _envelope?), do: :other
 
   defp normalize_timestamps(binary, now) do
     Regex.replace(@timestamp_pattern, binary, fn stamp ->
@@ -713,11 +743,11 @@ defmodule ExMCP.Test.PiGolden do
     end)
   end
 
-  defp register_id(%{ids: ids} = acc, id, _kind) when is_map_key(ids, id), do: acc
+  defp register_id(%{ids: ids} = acc, key, _kind) when is_map_key(ids, key), do: acc
 
-  defp register_id(%{ids: ids, counters: counters} = acc, id, kind) do
+  defp register_id(%{ids: ids, counters: counters} = acc, key, kind) do
     n = Map.get(counters, kind, 0) + 1
-    %{acc | ids: Map.put(ids, id, "#{kind}-<#{n}>"), counters: Map.put(counters, kind, n)}
+    %{acc | ids: Map.put(ids, key, "#{kind}-<#{n}>"), counters: Map.put(counters, kind, n)}
   end
 
   defp collect_generated_ids(binary, acc) when is_binary(binary) do
