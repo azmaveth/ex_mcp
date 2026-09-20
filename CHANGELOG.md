@@ -33,6 +33,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `ExMCP.SessionManager` no longer logs at `info` when it starts or when it
+  sweeps expired sessions; both are `debug`. The `:ex_mcp` application boots
+  before a stdio server can suppress logging, and the default Elixir logger
+  writes to stdout, so in a release that did not configure `:stdio_mode`
+  ahead of boot the startup line landed in the protocol stream before the
+  first frame. A subprocess test now boots the application's supervision tree
+  under the default logger and asserts stdout stays empty. The configuration
+  guide documents `config :ex_mcp, stdio_mode: true` together with
+  `config :logger, :default_handler, config: [type: :standard_error]` as the
+  stdio deployment setting that closes the window for every application in
+  the VM.
+
 - The stdio transports no longer let the process locale translate protocol
   frames. `ExMCP.Server.StdioServer` and `ExMCP.ACP.Agent.Transport.Stdio`
   now detect, on every read and write, whether each device is a character

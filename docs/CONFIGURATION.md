@@ -1310,6 +1310,27 @@ behavior (sets the primary level to `:emergency` and `:ex_mcp`
 for the BEAM VM, not scoped to the stdio connection: other applications
 and OTP processes in the same VM lose normal logging. 1.x keeps this
 global behavior; 2.0 may replace it.
+
+That suppression starts when the stdio transport starts, which in a release
+is after every application has already booted. The default Elixir logger
+writes to stdout, so anything logged at `info` or above during boot lands
+in the protocol stream before the first frame. ExMCP's own boot logs are at
+`debug` for this reason. For a stdio deployment, configure both of the
+following at compile time so the window is closed before boot:
+
+```elixir
+# config/runtime.exs or config/config.exs
+config :ex_mcp, stdio_mode: true
+
+config :logger, :default_handler, config: [type: :standard_error]
+```
+
+The first suppresses logging from the moment the `:ex_mcp` application
+starts. The second moves the default handler to stderr, where MCP hosts
+expect server diagnostics, so anything that still logs, from any
+application in the VM, cannot reach stdout. Together they make the boot
+sequence safe regardless of what other applications log.
+
 Send ad hoc diagnostics to stderr:
 
 ```elixir

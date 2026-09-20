@@ -418,10 +418,14 @@ only where locale enters:
 ### Out of scope, tracked separately
 
 - Boot-time logger output reaching stdout before `StdioLoggerConfig` runs.
-  The default Elixir logger writes to stdout, and the application boots before
-  the server suppresses logging, so a release that logs at info during boot
-  contaminates the protocol stream. Belongs with the "Stdio logging" row
-  above.
+  Resolved for ExMCP's own logs: `SessionManager` was the only boot-path
+  module logging at `info` and now logs at `debug`, and a subprocess test
+  boots the application's supervision tree under the default logger and
+  asserts stdout stays empty. Other applications in the same VM remain the
+  deployment's responsibility; the configuration guide now documents
+  `stdio_mode: true` plus a stderr default handler as the stdio deployment
+  setting. Replacing the VM-global suppression itself stays a 2.0 item under
+  the "Stdio logging" row above.
 - A Windows console CI lane. Byte mode is the right answer there too, but it
   has not been proven.
 
