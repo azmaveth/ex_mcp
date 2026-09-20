@@ -94,6 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Codex status in `docs/POST_1_0_MAINTENANCE_PLAN.md`.
 
 ### Fixed
+- Codex adapter: `session/load` history replay now handles app-server v2's camelCase `agentMessage` items. Previously a replayed `agentMessage` reached the streaming completion path with no session state and crashed the load; only the legacy `agent_message` spelling replayed.
 
 - `ExMCP.SessionManager` no longer logs at `info` when it starts or when it
   sweeps expired sessions; both are `debug`. The `:ex_mcp` application boots
