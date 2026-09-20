@@ -365,14 +365,18 @@ unchanged, and rejects invalid UTF-8 on both encode and decode.
 ### The fix
 
 1. **One owner for the rule.** An internal `ExMCP.Internal.StdioFraming`
-   with three functions: pin a device to byte mode (`encoding: :latin1`,
-   `binary: true`, done once before any read or write), write a frame
-   (`IO.binwrite` of the JSON plus newline, errors propagated), and read a
-   line (`IO.binread`). `StdioServer` pins `:standard_io` in `init/1` before
-   the reader task starts. The ACP transport pins both its `input` and
-   `output` devices in `connect/1`, since embedders and tests pass their own;
-   `StringIO` and file devices accept the call. Its one-byte reads then return
-   raw bytes as intended.
+   that asks a device whether it is a character (unicode) or byte (latin1)
+   device and reads and writes it the matching way, which is byte-exact for
+   valid UTF-8 in both cases, plus BOM stripping. The mode is consulted on
+   every read and write, never cached and never changed: OTP 27 cannot
+   switch a unicode-mode stdin after VM start (reads fail with
+   `no_translation`), and OTP 27 and 28 both flip a unicode-mode stdio to
+   latin1 for good when it meets input it cannot decode, so one bad line from
+   a peer must not corrupt every frame after it. A read with the wrong view
+   is not recoverable, so the view is never probed. `StdioServer` and the
+   ACP transport both go through it; the ACP transport consults the mode
+   once per frame and counts its limit in bytes, since a unicode read returns
+   a whole character.
 2. **Strip a leading BOM once** at stream start, in the same module.
 3. **Docs.** `TRANSPORT_GUIDE.md`: the stdio transports own their device's
    mode; stdout is protocol-only, so nothing else may write to it, which was
@@ -382,8 +386,12 @@ unchanged, and rejects invalid UTF-8 on both encode and decode.
    that is an application concern, not a transport one.
 4. **Changelog** under Fixed, crediting deepfates and #41.
 
-Pinning `:standard_io` is VM-global, but only when the application chose the
-stdio transport. Stderr is a separate device and is unaffected.
+Nothing is pinned VM-wide. Known limitation: on OTP 27 under a UTF-8
+locale, input already buffered when the io server meets an undecodable byte
+is left half decoded and half raw while the device reports latin1 for all of
+it, and the session ends; OTP 28 and newer drop the line and continue. A raw
+fd port would bypass the io server but steals the descriptor from the tty
+driver and cannot write, so it is not a library-default option.
 
 ### The test tier
 
@@ -403,8 +411,9 @@ only where locale enters:
   `ja_JP.eucJP`, each with a tool that generates its own non-ASCII text, not
   an echo.
 - **Negative cases:** BOM-prefixed first frame (accepted), CRLF-terminated
-  frames (accepted), invalid UTF-8 (dropped without crashing; the choice not
-  to answer `-32700` is documented in the test).
+  frames (accepted), invalid UTF-8 (dropped without crashing on OTP 28 and
+  newer; the stdio subprocess test sends it only there, and the choice not to
+  answer `-32700` is documented in the test).
 
 ### Out of scope, tracked separately
 
