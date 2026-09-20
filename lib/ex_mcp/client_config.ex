@@ -76,6 +76,8 @@ defmodule ExMCP.ClientConfig do
   - `:beam` - BEAM-local transport configuration
   """
 
+  alias ExMCP.Internal.VersionInfo
+
   @type profile :: atom()
   @type transport_type :: :http | :stdio | :beam
   @type auth_type :: :none | :bearer | :basic | :oauth | :custom
@@ -463,7 +465,7 @@ defmodule ExMCP.ClientConfig do
     # Update user_agent if name or version changed
     client_info =
       if Map.has_key?(client_info, :name) or Map.has_key?(client_info, :version) do
-        user_agent = "#{client_info.name}/#{client_info.version} ExMCP/#{ExMCP.version()}"
+        user_agent = "#{client_info.name}/#{client_info.version} ExMCP/#{VersionInfo.version()}"
         Map.put(client_info, :user_agent, user_agent)
       else
         client_info
@@ -763,8 +765,8 @@ defmodule ExMCP.ClientConfig do
   defp default_client_info do
     %{
       name: "ExMCP Client",
-      version: ExMCP.version(),
-      user_agent: "ExMCP Client/#{ExMCP.version()} ExMCP/#{ExMCP.version()}"
+      version: VersionInfo.version(),
+      user_agent: "ExMCP Client/#{VersionInfo.version()} ExMCP/#{VersionInfo.version()}"
     }
   end
 
