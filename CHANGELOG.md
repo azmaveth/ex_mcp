@@ -87,6 +87,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The two large client and transport cycles remain; see
   `docs/POST_1_0_MAINTENANCE_PLAN.md`.
 
+- The Codex ACP adapter is split into `ExMCP.ACP.Adapters.Codex.Permissions`,
+  `Codex.Content`, and `Codex.MCP` (internal modules) with no wire-visible
+  change: the golden transcript fixtures are byte-identical, and the public
+  `ExMCP.ACP.Adapters.Codex` API and state struct are unchanged. See the
+  Codex status in `docs/POST_1_0_MAINTENANCE_PLAN.md`.
+
 ### Fixed
 
 - `ExMCP.SessionManager` no longer logs at `info` when it starts or when it

@@ -107,6 +107,36 @@ Extract one boundary per commit. A boundary should generally remove at least
 100 lines or eliminate a repeated semantic decision; otherwise leaving the
 code local is clearer.
 
+### Status as of 2026-09-20 (boundary extractions)
+
+Three of the proposed boundaries are extracted on
+`refactor/codex-modularization`, one commit each, with every golden fixture
+byte-identical:
+
+- `Codex.Permissions` (857 lines): approval tool-call and option
+  construction, command decision options, permission request metadata, the
+  user-input form schema and answer decoding, structured-decision decoding for
+  every approval method, and the fail-closed cancel/late/closed-session
+  responses. The root keeps pending-request state and the elicitation
+  capability checks.
+- `Codex.Content` (418 lines): ACP prompt block conversion, native
+  `item/started` and `item/completed` mapping for every stateless item type,
+  history replay, and streamed-text reconciliation. Functions return plain
+  message lists; the root wraps them and keeps the stateful `agent_message`
+  completion, which folds deltas into the session accumulators.
+- `Codex.MCP` (226 lines): MCP server transport defaulting and validation,
+  the native `mcp_servers` entries, and native config assembly (gateway
+  providers, trusted projects, sandbox writable roots). Authorization stays in
+  the root: `session_config/3` still authorizes the workspace, the additional
+  directories, and each normalized server in list order, and passes the
+  `trust_authorized_workspaces` policy flag in explicitly.
+
+The root module is 3,284 lines (4,645 at the start of the branch). It still
+owns the model catalog mapping, auth helpers, turn-failure and rate-limit
+classification, session config authorization, and notification dispatch;
+those become boundaries only if they clear the 100-line or repeated-decision
+bar above.
+
 ### Codex completion criteria
 
 - The public `ExMCP.ACP.Adapters.Codex` API and state behavior are unchanged.
@@ -790,9 +820,11 @@ existing, disabled-by-default Codex legacy compatibility option.
    input injection continues case by case.
 5. Extract the shared HTTP reducer and the smallest high-value functional cores
    behind characterization tests.
-6. Modularize Codex one characterized boundary at a time. `Codex.Protocol` is
-   extracted and `Codex.Sessions` holds lookup/update helpers; the lifecycle
-   `Sessions` boundary, `Permissions`, `Content`, and `MCP` remain. The 1.3.0
+6. Modularize Codex one characterized boundary at a time. `Codex.Protocol`,
+   `Codex.Permissions`, `Codex.Content`, and `Codex.MCP` are extracted and
+   `Codex.Sessions` holds lookup/update helpers; the lifecycle `Sessions`
+   boundary remains, and the root still owns the model catalog, auth helpers,
+   turn-failure classification, and session config authorization. The 1.3.0
    failed-turn and per-item streamed-text logic is a natural seed for the
    event-folding and prompt-flow cores. This is behavior-preserving internal
    work: it lands on `master` behind golden tests and ships with the next
