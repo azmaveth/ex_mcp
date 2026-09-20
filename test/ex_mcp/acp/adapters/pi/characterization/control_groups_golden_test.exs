@@ -37,9 +37,10 @@ defmodule ExMCP.ACP.Adapters.Pi.ControlGroupsGoldenTest do
   the adapter raise inside `translate_inbound/2` (there is no transcript to
   pin), so those payloads are deliberately not characterized.
 
-  Mutation check (2026-09-20): making `finish_control_error/3` keep the
-  group instead of deleting it (so later responses stay tracked) fails
-  `failed_new_session_errors_at_once_and_drops_later_responses`.
+  Mutation check (2026-09-20): completing a group while one request is
+  still outstanding (`MapSet.size(refs) <= 1` in
+  `maybe_finish_control_group/2`) fails
+  `session_new_completes_after_all_responses_in_any_order`.
 
   To regenerate a fixture after an intentional behavior change, run the test
   with `PI_GOLDEN=update mix test <this file>[:line]`; that run rewrites the

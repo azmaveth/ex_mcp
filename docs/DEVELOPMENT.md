@@ -278,6 +278,25 @@ mix test test/ex_mcp/acp/adapters/codex/characterization/catalog_golden_test.exs
   A fixture diff in a pull request is a wire change and must be explained as
   one; the update run always fails so it cannot be mistaken for a passing run.
 
+#### Golden Transcript Tests (ACP Pi adapter)
+- Same model for `ExMCP.ACP.Adapters.Pi`: one file per gate area (rpc,
+  control_groups, stream_events, prompt_flow, config, slash_commands,
+  session_safety) under `test/ex_mcp/acp/adapters/pi/characterization/`,
+  fixtures under `test/fixtures/acp/pi/<area>/<scenario>.term`
+- Driven by `ExMCP.Test.PiGolden` (`test/support/acp/pi_golden.ex`) with
+  shared step builders in `ExMCP.Test.PiGolden.Flows`; every run gets a
+  private sandbox (agent dir, session dir, session map, cwd, fake `pi`)
+  referenced from steps as `"<sandbox>"`, so no scenario can touch `~/.pi`
+- `{:respond, type, data}` answers the most recent RPC request of that type;
+  `{:init, managed: true}` runs against the fake `pi`, whose echoed stdin
+  is recorded as `port_writes` and whose `{:port_exit, code}` is a real exit
+- Regenerate with `PI_GOLDEN=update`, exactly like the Codex suite:
+
+```bash
+PI_GOLDEN=update mix test test/ex_mcp/acp/adapters/pi/characterization/config_golden_test.exs:42
+mix test test/ex_mcp/acp/adapters/pi/characterization/config_golden_test.exs
+```
+
 ### Writing Tests
 
 Follow these patterns when writing tests:

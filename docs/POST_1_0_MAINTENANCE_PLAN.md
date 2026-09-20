@@ -135,6 +135,49 @@ Before moving production code, add golden tests for:
 - slash-command expansion and available-command notifications; and
 - session-map and backing JSONL safety rules.
 
+### Status as of 2026-09-20 (characterization gate)
+
+The Pi characterization gate above is met by a golden-transcript suite under
+`test/ex_mcp/acp/adapters/pi/characterization/` driven by
+`ExMCP.Test.PiGolden` (`test/support/acp/pi_golden.ex`, with the shared step
+builders in `ExMCP.Test.PiGolden.Flows`), with one fixture per scenario under
+`test/fixtures/acp/pi/<area>/`:
+
+| Gate bullet | File | Scenarios |
+|---|---|---|
+| RPC messages for new, load, resume, fork, close, delete, prompt | `rpc_golden_test.exs` | 24 |
+| control-group completion and failure ordering | `control_groups_golden_test.exs` | 16 |
+| assistant/thinking/tool/usage stream-event conversion | `stream_events_golden_test.exs` | 19 |
+| prompt queue, steering, follow-up, cancellation, subprocess exit | `prompt_flow_golden_test.exs` | 18 |
+| model, thinking-level, and boolean configuration updates | `config_golden_test.exs` | 16 |
+| slash-command expansion and available-command notifications | `slash_commands_golden_test.exs` | 15 |
+| session-map and backing JSONL safety rules | `session_safety_golden_test.exs` | 15 |
+
+Each scenario reaches its preconditions through the adapter's public
+callbacks only (`init/1`, `translate_outbound/2`, `translate_inbound/2`,
+`handle_adapter_message/2`, `list_sessions/2`, `shutdown/1`) inside a
+per-run sandbox that holds the agent directory, session directory, session
+map, working directory and a fake echoing `pi` executable, so the fixtures
+pin wire behavior rather than state layout and no test reads the developer's
+real Pi settings, prompts, models, or sessions. The fake executable also
+makes managed-mode port writes and real subprocess exits observable.
+Sandbox paths, minted `pi-N` / `tool-N` ids and near-now timestamps are
+normalized (see the harness moduledoc), and the fixtures are byte-stable
+across runs.
+
+Every area was mutation-tested (a single-edit behavior change to `pi.ex` or
+`pi/slash_commands.ex` must fail at least one scenario); the edit and the
+scenario that catches it are recorded in each area's moduledoc so the check
+can be repeated. Three inputs make the adapter raise instead of producing a
+transcript and are therefore recorded as deliberately uncharacterized: a
+`get_available_models` payload whose `models` is not a list, catalog entries
+that are not maps, and a streamed tool-call event that carries the call under
+`partial.content[contentIndex]` (`get_in/2` with an integer index on a list).
+Pi's startup banner (`Startup.build/3`, which inventories `~/.pi` and
+`~/.agents`) and the final `File.cwd!/0` fallback for a missing `cwd` are not
+characterized because they depend on the developer's machine. See
+`docs/DEVELOPMENT.md` for the regeneration workflow.
+
 ### Proposed boundaries
 
 1. **`Pi.RPC`** — RPC envelope construction, correlation ids, and response
