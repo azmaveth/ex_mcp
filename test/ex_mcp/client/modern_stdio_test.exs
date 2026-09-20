@@ -30,6 +30,14 @@ defmodule ExMCP.Client.ModernStdioTest do
     end
   end
 
+  # The stdio transport isolates the child environment, so forward the parent's
+  # Mix paths: a version manager (mise/asdf) child must load the same Hex archive
+  # as the parent instead of a stale global one.
+  defp mix_child_env do
+    [{"MIX_ENV", "test"}] ++
+      for name <- ["MIX_HOME", "MIX_ARCHIVES"], value = System.get_env(name), do: {name, value}
+  end
+
   test "modern client completes discovery and tool calls over stdio without initialize" do
     mix = System.find_executable("mix") || flunk("mix executable is required")
 
@@ -38,7 +46,7 @@ defmodule ExMCP.Client.ModernStdioTest do
         transport: :stdio,
         command: [mix, "run", "--no-compile", "--no-start", @fixture],
         cd: @project_root,
-        env: [{"MIX_ENV", "test"}],
+        env: mix_child_env(),
         protocol_mode: :modern_only,
         capabilities: Extension.put_capability(%{"elicitation" => %{"form" => %{}}}),
         handler: {Handler, [owner: self()]},

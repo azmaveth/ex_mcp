@@ -21,14 +21,24 @@ const requestOptions = { timeout: 10_000 };
 // but allow enough time for the child BEAM to boot before initialization.
 const connectOptions = { timeout: 30_000 };
 
+// The SDK intentionally inherits only a small allow-list of environment
+// variables. Pass MIX_ENV explicitly so a clean CI runner reuses the
+// already-compiled test build instead of compiling a dev build on stdout, and
+// forward the parent's Mix paths so a version manager (mise/asdf) child loads
+// the same Hex archive as the parent instead of a stale global one.
+function mixChildEnv() {
+  const env = { MIX_ENV: process.env.MIX_ENV ?? "test" };
+  for (const name of ["MIX_HOME", "MIX_ARCHIVES"]) {
+    if (process.env[name]) env[name] = process.env[name];
+  }
+  return env;
+}
+
 try {
   const transport = new StdioClientTransport({
     command: serverCommand,
     args: serverArgs,
-    // The SDK intentionally inherits only a small allow-list of environment
-    // variables. Pass MIX_ENV explicitly so a clean CI runner reuses the
-    // already-compiled test build instead of compiling a dev build on stdout.
-    env: { MIX_ENV: process.env.MIX_ENV ?? "test" },
+    env: mixChildEnv(),
   });
 
   const client = new Client({
