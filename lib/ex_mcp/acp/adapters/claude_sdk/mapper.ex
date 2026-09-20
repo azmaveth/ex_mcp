@@ -93,8 +93,13 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         modes()
       end
 
-    if Keyword.get(Map.get(state, :opts, []), :allow_dangerously_skip_permissions, false) or
-         Map.get(state, :permission_mode) == "bypassPermissions" do
+    # A host may opt a session out of bypass through session meta; that wins
+    # over the adapter option and over a bypass mode inherited at spawn time.
+    bypass_allowed? = Map.get(state, :bypass_allowed?, true)
+
+    if bypass_allowed? and
+         (Keyword.get(Map.get(state, :opts, []), :allow_dangerously_skip_permissions, false) or
+            Map.get(state, :permission_mode) == "bypassPermissions") do
       modes ++
         [
           %{
@@ -527,7 +532,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
               "type" => "string",
               "title" => "Other",
               "description" =>
-                "Type your own answer instead of choosing an option above (optional).",
+                if(question["multiSelect"] == true,
+                  do: "Type your own answer to add to your selection above (optional).",
+                  else:
+                    "Type your own answer, or add a note to the option you chose above (optional)."
+                ),
               "_meta" => %{
                 "_askUserQuestionCustomAnswer" => %{
                   "questionId" => "question_#{index}",
@@ -580,27 +589,39 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
   defp ask_user_question_result(%{"action" => "accept", "content" => content}, request)
        when is_map(content) do
-    answers =
+    {answers, annotations} =
       request["_questions"]
       |> Enum.with_index()
-      |> Enum.reduce(%{}, fn {question, index}, acc ->
-        custom = content["question_#{index}_custom"]
-        selected = content["question_#{index}"]
+      |> Enum.reduce({%{}, %{}}, fn {question, index}, {answers, annotations} ->
+        key = question["question"]
+        custom = custom_answer(content["question_#{index}_custom"])
+        picks = picked_answers(content["question_#{index}"])
 
-        answer =
-          cond do
-            is_binary(custom) and String.trim(custom) != "" -> String.trim(custom)
-            is_list(selected) -> Enum.map_join(selected, ", ", &to_string/1)
-            is_binary(selected) -> selected
-            true -> nil
-          end
+        # A multi-select is additive: the checked options and the typed answer
+        # are independent fields, so filling both means both. A single-select
+        # is answered by one thing: the typed answer replaces nothing picked,
+        # and otherwise travels beside the pick as the tool's own per-question
+        # `annotations[question].notes`, the slot the CLI renders to the model
+        # as `"Q"="A" notes: ...`, so a client that presents the box as a
+        # notes field cannot make the selection disappear.
+        cond do
+          question["multiSelect"] == true ->
+            items = if custom == "", do: picks, else: picks ++ [custom]
+            {put_answer(answers, key, join_multi_select(items)), annotations}
 
-        if is_binary(answer) and answer != "",
-          do: Map.put(acc, question["question"], answer),
-          else: acc
+          picks == [] ->
+            {put_answer(answers, key, custom), annotations}
+
+          custom == "" ->
+            {put_answer(answers, key, Enum.join(picks, ", ")), annotations}
+
+          true ->
+            {put_answer(answers, key, Enum.join(picks, ", ")),
+             Map.put(annotations, key, %{"notes" => custom})}
+        end
       end)
 
-    allow_ask_user_question(request, answers)
+    allow_ask_user_question(request, answers, annotations)
   end
 
   defp ask_user_question_result(_response, request) do
@@ -613,13 +634,54 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     }
   end
 
-  defp allow_ask_user_question(request, answers) do
+  defp allow_ask_user_question(request, answers, annotations \\ %{}) do
+    input = request["input"] || %{}
+
+    updated_input =
+      input
+      |> Map.put("answers", answers)
+      |> then(fn input ->
+        if annotations == %{} do
+          input
+        else
+          existing = if is_map(input["annotations"]), do: input["annotations"], else: %{}
+          Map.put(input, "annotations", Map.merge(existing, annotations))
+        end
+      end)
+
     %{
       "behavior" => "allow",
-      "updatedInput" => Map.put(request["input"] || %{}, "answers", answers),
+      "updatedInput" => updated_input,
       "toolUseID" => request["tool_use_id"],
       "decisionClassification" => "user_temporary"
     }
+  end
+
+  defp custom_answer(custom) when is_binary(custom), do: String.trim(custom)
+  defp custom_answer(_custom), do: ""
+
+  defp picked_answers(picks) when is_list(picks) do
+    picks
+    |> Enum.reject(&(is_nil(&1) or &1 == ""))
+    |> Enum.map(&to_string/1)
+  end
+
+  defp picked_answers(pick) when is_binary(pick) and pick != "", do: [pick]
+  defp picked_answers(_pick), do: []
+
+  defp put_answer(answers, _key, ""), do: answers
+  defp put_answer(answers, key, answer), do: Map.put(answers, key, answer)
+
+  # The CLI's own AskUserQuestion UI comma-joins multi-select answers and
+  # JSON-quotes any item that itself contains the separator or a double quote;
+  # the tool's `call()` splits the string back on the same rule, so a typed
+  # answer such as `Redis, not Memcached` stays one item.
+  defp join_multi_select(items) do
+    Enum.map_join(items, ", ", fn item ->
+      if String.contains?(item, ", ") or String.contains?(item, "\""),
+        do: Jason.encode!(item),
+        else: item
+    end)
   end
 
   defp permission_meta(request, tool_call) do

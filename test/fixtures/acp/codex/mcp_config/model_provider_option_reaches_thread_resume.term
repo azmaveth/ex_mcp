@@ -87,7 +87,11 @@
           "params" => %{
             "approvalPolicy" => "on-request",
             "cwd" => "/tmp/project",
-            "initialTurnsPage" => %{"itemsView" => "full", "limit" => 100},
+            "initialTurnsPage" => %{
+              "itemsView" => "full",
+              "limit" => 100,
+              "sortDirection" => "desc"
+            },
             "modelProvider" => "azure",
             "sandbox" => "workspace-write",
             "threadId" => "thread-abc"

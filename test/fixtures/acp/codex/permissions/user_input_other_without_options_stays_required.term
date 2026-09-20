@@ -321,7 +321,7 @@
   %ExMCP.Test.CodexGolden.Entry{
     step: %{
       kind: :note,
-      text: "isOther without options gets no __other field and remains a required free-text question"
+      text: "isOther without options gets no note field and remains a required free-text question"
     },
     result: %{}
   },
@@ -347,14 +347,13 @@
           "method" => "elicitation/create",
           "params" => %{
             "_meta" => %{"codexAcp" => %{"autoResolutionMs" => nil, "isBlocking" => nil}},
-            "message" => "Anything else?",
+            "message" => "Codex needs your input to continue.",
             "mode" => "form",
             "requestedSchema" => %{
               "properties" => %{
                 "notes" => %{
                   "_meta" => %{"codex" => %{"isOther" => true, "isSecret" => false}},
-                  "description" => "Anything else?",
-                  "title" => "Input",
+                  "title" => "Anything else?",
                   "type" => "string"
                 }
               },
@@ -370,7 +369,7 @@
     }
   },
   %ExMCP.Test.CodexGolden.Entry{
-    step: %{kind: :note, text: "A stray notes__other value is not an other-field and is ignored"},
+    step: %{kind: :note, text: "A stray notes_note value is not a note field and is ignored"},
     result: %{}
   },
   %ExMCP.Test.CodexGolden.Entry{
@@ -381,7 +380,7 @@
         "jsonrpc" => "2.0",
         "result" => %{
           "action" => "accept",
-          "content" => %{"notes" => "Ship it", "notes__other" => "ignored"}
+          "content" => %{"notes" => "Ship it", "notes_note" => "ignored"}
         }
       }
     },

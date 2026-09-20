@@ -157,7 +157,11 @@
               }
             },
             "cwd" => "/tmp/project",
-            "initialTurnsPage" => %{"itemsView" => "full", "limit" => 100},
+            "initialTurnsPage" => %{
+              "itemsView" => "full",
+              "limit" => 100,
+              "sortDirection" => "desc"
+            },
             "modelProvider" => "custom-gateway",
             "sandbox" => "workspace-write",
             "threadId" => "thread-abc"

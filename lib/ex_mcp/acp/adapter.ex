@@ -78,6 +78,8 @@ defmodule ExMCP.ACP.Adapter do
               | {:messages_and_reply, messages :: [map()], result :: map(), state()}
               | {:messages_and_write, messages :: [map()], iodata(), state()}
               | {:reply_and_write, result :: map(), iodata(), state()}
+              | {:messages_and_reply_and_write, messages :: [map()], result :: map(), iodata(),
+                 state()}
               | {:error, reason :: any(), state()}
               | {:one_shot, function(), state()}
 

@@ -216,7 +216,7 @@ defmodule ExMCP.ACPCompatTest do
     test "tracks the full catalog baseline and all adapter reference repositories" do
       assert {:ok, manifest} = ACPCompat.load_manifest()
       assert length(manifest["catalog"]["agents"]) == 40
-      assert length(manifest["registry"]["agents"]) == 39
+      assert length(manifest["registry"]["agents"]) == 41
 
       repositories = Enum.map(manifest["adapterUpstreams"], & &1["repository"])
 

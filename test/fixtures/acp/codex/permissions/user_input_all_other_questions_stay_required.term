@@ -321,7 +321,7 @@
   %ExMCP.Test.CodexGolden.Entry{
     step: %{
       kind: :note,
-      text: "Every question is isOther with options, so nothing is required and the key is omitted"
+      text: "Every question is isOther with options; each stays a required choice and gets a _note field"
     },
     result: %{}
   },
@@ -360,52 +360,61 @@
           "method" => "elicitation/create",
           "params" => %{
             "_meta" => %{"codexAcp" => %{"autoResolutionMs" => nil, "isBlocking" => nil}},
-            "message" => "Input requested",
+            "message" => "Codex needs your input to continue.",
             "mode" => "form",
             "requestedSchema" => %{
               "properties" => %{
                 "editor" => %{
                   "_meta" => %{"codex" => %{"isOther" => true, "isSecret" => false}},
-                  "description" => "Which editor?",
                   "oneOf" => [
                     %{"const" => "Vim", "title" => "Vim"},
-                    %{"const" => "Emacs", "title" => "Emacs"}
+                    %{"const" => "Emacs", "title" => "Emacs"},
+                    %{
+                      "const" => "None of the above",
+                      "description" => "Provide a different answer in the note field.",
+                      "title" => "None of the above"
+                    }
                   ],
-                  "title" => "Input",
+                  "title" => "Which editor?",
                   "type" => "string"
                 },
-                "editor__other" => %{
+                "editor_note" => %{
                   "_meta" => %{
                     "codex" => %{
-                      "isOtherAnswer" => true,
                       "isSecret" => false,
-                      "questionId" => "editor"
+                      "questionId" => "editor",
+                      "role" => "user_note"
                     }
                   },
-                  "description" => "Type your own answer instead of choosing an option above.",
-                  "title" => "Other",
+                  "title" => "Additional answer or note",
                   "type" => "string"
                 },
                 "langs" => %{
                   "_meta" => %{"codex" => %{"isOther" => true, "isSecret" => false}},
-                  "description" => "Which languages?",
-                  "oneOf" => [%{"const" => "Elixir", "title" => "Elixir"}],
-                  "title" => "Input",
+                  "oneOf" => [
+                    %{"const" => "Elixir", "title" => "Elixir"},
+                    %{
+                      "const" => "None of the above",
+                      "description" => "Provide a different answer in the note field.",
+                      "title" => "None of the above"
+                    }
+                  ],
+                  "title" => "Which languages?",
                   "type" => "string"
                 },
-                "langs__other" => %{
+                "langs_note" => %{
                   "_meta" => %{
                     "codex" => %{
-                      "isOtherAnswer" => true,
                       "isSecret" => false,
-                      "questionId" => "langs"
+                      "questionId" => "langs",
+                      "role" => "user_note"
                     }
                   },
-                  "description" => "Type your own answer instead of choosing an option above.",
-                  "title" => "Other",
+                  "title" => "Additional answer or note",
                   "type" => "string"
                 }
               },
+              "required" => ["langs", "editor"],
               "type" => "object"
             },
             "sessionId" => "thread-1",
@@ -417,7 +426,10 @@
     }
   },
   %ExMCP.Test.CodexGolden.Entry{
-    step: %{kind: :note, text: "A non-string, non-list answer value is dropped"},
+    step: %{
+      kind: :note,
+      text: "A note without a choice still answers as user_note; a non-string, non-list answer value is dropped"
+    },
     result: %{}
   },
   %ExMCP.Test.CodexGolden.Entry{
@@ -428,14 +440,17 @@
         "jsonrpc" => "2.0",
         "result" => %{
           "action" => "accept",
-          "content" => %{"editor" => 42, "langs__other" => "Gleam"}
+          "content" => %{"editor" => 42, "langs_note" => "Gleam"}
         }
       }
     },
     result: %{
       tag: :ok,
       writes: [
-        %{"id" => 100, "result" => %{"answers" => %{"langs" => %{"answers" => ["Gleam"]}}}}
+        %{
+          "id" => 100,
+          "result" => %{"answers" => %{"langs" => %{"answers" => ["user_note: Gleam"]}}}
+        }
       ]
     }
   }

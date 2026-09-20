@@ -321,7 +321,7 @@
   %ExMCP.Test.CodexGolden.Entry{
     step: %{
       kind: :note,
-      text: "With a single question the request message still wins over the question text as the prompt; the question text stays in the property description"
+      text: "A real question already named color_note pushes the synthesized note field to color_note1"
     },
     result: %{}
   },
@@ -333,8 +333,15 @@
         "method" => "item/tool/requestUserInput",
         "params" => %{
           "itemId" => "question-tool",
-          "message" => "Codex needs one detail before continuing",
-          "questions" => [%{"header" => "Color", "id" => "color", "question" => "Which color?"}],
+          "questions" => [
+            %{
+              "id" => "color",
+              "isOther" => true,
+              "options" => [%{"label" => "Blue"}],
+              "question" => "Which color?"
+            },
+            %{"id" => "color_note", "question" => "Real second question"}
+          ],
           "threadId" => "thread-1",
           "turnId" => "turn-1"
         }
@@ -348,18 +355,41 @@
           "method" => "elicitation/create",
           "params" => %{
             "_meta" => %{"codexAcp" => %{"autoResolutionMs" => nil, "isBlocking" => nil}},
-            "message" => "Codex needs one detail before continuing",
+            "message" => "Codex needs your input to continue.",
             "mode" => "form",
             "requestedSchema" => %{
               "properties" => %{
                 "color" => %{
+                  "_meta" => %{"codex" => %{"isOther" => true, "isSecret" => false}},
+                  "oneOf" => [
+                    %{"const" => "Blue", "title" => "Blue"},
+                    %{
+                      "const" => "None of the above",
+                      "description" => "Provide a different answer in the note field.",
+                      "title" => "None of the above"
+                    }
+                  ],
+                  "title" => "Which color?",
+                  "type" => "string"
+                },
+                "color_note" => %{
                   "_meta" => %{"codex" => %{"isOther" => false, "isSecret" => false}},
-                  "description" => "Which color?",
-                  "title" => "Color",
+                  "title" => "Real second question",
+                  "type" => "string"
+                },
+                "color_note1" => %{
+                  "_meta" => %{
+                    "codex" => %{
+                      "isSecret" => false,
+                      "questionId" => "color",
+                      "role" => "user_note"
+                    }
+                  },
+                  "title" => "Additional answer or note",
                   "type" => "string"
                 }
               },
-              "required" => ["color"],
+              "required" => ["color", "color_note"],
               "type" => "object"
             },
             "sessionId" => "thread-1",
@@ -376,12 +406,29 @@
       message: %{
         "id" => "codex-user-input-<1>",
         "jsonrpc" => "2.0",
-        "result" => %{"action" => "accept", "content" => %{"color" => "Blue"}}
+        "result" => %{
+          "action" => "accept",
+          "content" => %{
+            "color" => "None of the above",
+            "color_note" => "second",
+            "color_note1" => "Green"
+          }
+        }
       }
     },
     result: %{
       tag: :ok,
-      writes: [%{"id" => 100, "result" => %{"answers" => %{"color" => %{"answers" => ["Blue"]}}}}]
+      writes: [
+        %{
+          "id" => 100,
+          "result" => %{
+            "answers" => %{
+              "color" => %{"answers" => ["None of the above", "user_note: Green"]},
+              "color_note" => %{"answers" => ["second"]}
+            }
+          }
+        }
+      ]
     }
   }
 ]

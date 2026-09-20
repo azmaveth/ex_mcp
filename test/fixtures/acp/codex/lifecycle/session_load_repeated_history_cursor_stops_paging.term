@@ -4,9 +4,9 @@
       kind: :init,
       opts: [
         workspace_roots: ["/tmp"],
-        cwd: "/tmp/project",
         authorize_mcp_server: :__fun__,
-        trust_authorized_workspaces: true
+        trust_authorized_workspaces: true,
+        cwd: "/tmp/project"
       ]
     },
     result: %{tag: :ok}
@@ -77,23 +77,9 @@
     step: %{
       kind: :outbound,
       message: %{
-        "id" => 0,
-        "method" => "initialize",
-        "params" => %{
-          "clientCapabilities" => %{"elicitation" => %{"form" => %{}}},
-          "protocolVersion" => 1
-        }
-      }
-    },
-    result: %{skipped: true, tag: :ok}
-  },
-  %ExMCP.Test.CodexGolden.Entry{
-    step: %{
-      kind: :outbound,
-      message: %{
-        "id" => 10,
-        "method" => "session/new",
-        "params" => %{"cwd" => "/tmp/project", "mcpServers" => []}
+        "id" => 12,
+        "method" => "session/load",
+        "params" => %{"cwd" => "/tmp/project", "mcpServers" => [], "sessionId" => "thread-abc"}
       }
     },
     result: %{
@@ -101,12 +87,19 @@
       writes: [
         %{
           "id" => 3,
-          "method" => "thread/start",
+          "method" => "thread/resume",
           "params" => %{
             "approvalPolicy" => "on-request",
             "config" => %{"projects" => %{"/tmp/project" => %{"trust_level" => "trusted"}}},
             "cwd" => "/tmp/project",
-            "sandbox" => "workspace-write"
+            "initialTurnsPage" => %{
+              "itemsView" => "full",
+              "limit" => 100,
+              "sortDirection" => "desc"
+            },
+            "modelProvider" => "openai",
+            "sandbox" => "workspace-write",
+            "threadId" => "thread-abc"
           }
         }
       ]
@@ -118,26 +111,99 @@
       message: %{
         "id" => 3,
         "result" => %{
+          "initialTurnsPage" => %{
+            "data" => [
+              %{
+                "id" => "turn-2",
+                "items" => [
+                  %{"id" => "turn-2-msg", "text" => "newest", "type" => "agent_message"}
+                ],
+                "status" => "completed"
+              }
+            ],
+            "nextCursor" => nil
+          },
           "model" => "gpt-5",
-          "thread" => %{"cwd" => "/tmp/project", "id" => "thread-1", "updatedAt" => 1700000000}
+          "thread" => %{"cwd" => "/tmp/project", "id" => "thread-abc"},
+          "turnsBackwardsCursor" => "cur-1"
+        }
+      }
+    },
+    result: %{
+      skipped: true,
+      tag: :skip_and_write,
+      writes: [
+        %{
+          "id" => 4,
+          "method" => "thread/turns/list",
+          "params" => %{
+            "cursor" => "cur-1",
+            "itemsView" => "full",
+            "limit" => 50,
+            "sortDirection" => "desc",
+            "threadId" => "thread-abc"
+          }
+        }
+      ]
+    }
+  },
+  %ExMCP.Test.CodexGolden.Entry{
+    step: %{
+      kind: :note,
+      text: "A page that hands back a cursor already followed ends paging with what was read"
+    },
+    result: %{}
+  },
+  %ExMCP.Test.CodexGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "id" => 4,
+        "result" => %{
+          "data" => [
+            %{
+              "id" => "turn-1",
+              "items" => [%{"id" => "turn-1-msg", "text" => "middle", "type" => "agent_message"}],
+              "status" => "completed"
+            }
+          ],
+          "nextCursor" => "cur-1"
         }
       }
     },
     result: %{
       messages: [
         %{
-          "id" => 10,
+          "jsonrpc" => "2.0",
+          "method" => "session/update",
+          "params" => %{
+            "sessionId" => "thread-abc",
+            "update" => %{
+              "_meta" => %{"ex_mcp" => %{"replay" => true}},
+              "content" => %{"text" => "middle", "type" => "text"},
+              "sessionUpdate" => "agent_message_chunk"
+            }
+          }
+        },
+        %{
+          "jsonrpc" => "2.0",
+          "method" => "session/update",
+          "params" => %{
+            "sessionId" => "thread-abc",
+            "update" => %{
+              "_meta" => %{"ex_mcp" => %{"replay" => true}},
+              "content" => %{"text" => "newest", "type" => "text"},
+              "sessionUpdate" => "agent_message_chunk"
+            }
+          }
+        },
+        %{
+          "id" => 12,
           "jsonrpc" => "2.0",
           "result" => %{
             "_meta" => %{
               "ex_mcp" => %{
-                "codex" => %{
-                  "thread" => %{
-                    "cwd" => "/tmp/project",
-                    "id" => "thread-1",
-                    "updatedAt" => 1700000000
-                  }
-                }
+                "codex" => %{"thread" => %{"cwd" => "/tmp/project", "id" => "thread-abc"}}
               }
             },
             "configOptions" => [
@@ -250,177 +316,11 @@
               ],
               "currentModeId" => "agent"
             },
-            "sessionId" => "thread-1"
+            "sessionId" => "thread-abc"
           }
         }
       ],
       tag: :messages
-    }
-  },
-  %ExMCP.Test.CodexGolden.Entry{
-    step: %{
-      kind: :outbound,
-      message: %{
-        "id" => 20,
-        "method" => "session/prompt",
-        "params" => %{
-          "prompt" => [%{"text" => "Run the test suite", "type" => "text"}],
-          "sessionId" => "thread-1"
-        }
-      }
-    },
-    result: %{
-      tag: :ok,
-      writes: [
-        %{
-          "id" => 4,
-          "method" => "turn/start",
-          "params" => %{
-            "approvalPolicy" => "on-request",
-            "approvalsReviewer" => "auto_review",
-            "cwd" => "/tmp/project",
-            "effort" => "medium",
-            "input" => [
-              %{"text" => "Run the test suite", "text_elements" => [], "type" => "text"}
-            ],
-            "model" => "gpt-5",
-            "sandboxPolicy" => %{
-              "excludeSlashTmp" => false,
-              "excludeTmpdirEnvVar" => false,
-              "networkAccess" => false,
-              "type" => "workspaceWrite",
-              "writableRoots" => []
-            },
-            "summary" => "auto",
-            "threadId" => "thread-1"
-          }
-        }
-      ]
-    }
-  },
-  %ExMCP.Test.CodexGolden.Entry{
-    step: %{
-      kind: :inbound,
-      message: %{
-        "id" => 4,
-        "result" => %{"turn" => %{"id" => "turn-1", "status" => "inProgress"}}
-      }
-    },
-    result: %{skipped: true, tag: :skip}
-  },
-  %ExMCP.Test.CodexGolden.Entry{
-    step: %{
-      kind: :inbound,
-      message: %{
-        "method" => "turn/started",
-        "params" => %{"threadId" => "thread-1", "turn" => %{"id" => "turn-1"}}
-      }
-    },
-    result: %{skipped: true, tag: :skip}
-  },
-  %ExMCP.Test.CodexGolden.Entry{
-    step: %{
-      kind: :note,
-      text: "A real question already named color__other pushes the synthesized field to color__other1"
-    },
-    result: %{}
-  },
-  %ExMCP.Test.CodexGolden.Entry{
-    step: %{
-      kind: :inbound,
-      message: %{
-        "id" => 100,
-        "method" => "item/tool/requestUserInput",
-        "params" => %{
-          "itemId" => "question-tool",
-          "questions" => [
-            %{
-              "id" => "color",
-              "isOther" => true,
-              "options" => [%{"label" => "Blue"}],
-              "question" => "Which color?"
-            },
-            %{"id" => "color__other", "question" => "Real second question"}
-          ],
-          "threadId" => "thread-1",
-          "turnId" => "turn-1"
-        }
-      }
-    },
-    result: %{
-      messages: [
-        %{
-          "id" => "codex-user-input-<1>",
-          "jsonrpc" => "2.0",
-          "method" => "elicitation/create",
-          "params" => %{
-            "_meta" => %{"codexAcp" => %{"autoResolutionMs" => nil, "isBlocking" => nil}},
-            "message" => "Input requested",
-            "mode" => "form",
-            "requestedSchema" => %{
-              "properties" => %{
-                "color" => %{
-                  "_meta" => %{"codex" => %{"isOther" => true, "isSecret" => false}},
-                  "description" => "Which color?",
-                  "oneOf" => [%{"const" => "Blue", "title" => "Blue"}],
-                  "title" => "Input",
-                  "type" => "string"
-                },
-                "color__other" => %{
-                  "_meta" => %{"codex" => %{"isOther" => false, "isSecret" => false}},
-                  "description" => "Real second question",
-                  "title" => "Input",
-                  "type" => "string"
-                },
-                "color__other1" => %{
-                  "_meta" => %{
-                    "codex" => %{
-                      "isOtherAnswer" => true,
-                      "isSecret" => false,
-                      "questionId" => "color"
-                    }
-                  },
-                  "description" => "Type your own answer instead of choosing an option above.",
-                  "title" => "Other",
-                  "type" => "string"
-                }
-              },
-              "required" => ["color__other"],
-              "type" => "object"
-            },
-            "sessionId" => "thread-1",
-            "toolCallId" => "question-tool"
-          }
-        }
-      ],
-      tag: :messages
-    }
-  },
-  %ExMCP.Test.CodexGolden.Entry{
-    step: %{
-      kind: :outbound,
-      message: %{
-        "id" => "codex-user-input-<1>",
-        "jsonrpc" => "2.0",
-        "result" => %{
-          "action" => "accept",
-          "content" => %{"color__other" => "second", "color__other1" => "Green"}
-        }
-      }
-    },
-    result: %{
-      tag: :ok,
-      writes: [
-        %{
-          "id" => 100,
-          "result" => %{
-            "answers" => %{
-              "color" => %{"answers" => ["Green"]},
-              "color__other" => %{"answers" => ["second"]}
-            }
-          }
-        }
-      ]
     }
   }
 ]

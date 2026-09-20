@@ -482,92 +482,18 @@ defmodule ExMCP.ACP.AdapterBridge do
   end
 
   defp handle_outbound(%{"method" => "session/new", "id" => id} = msg, _json, _from, state) do
-    case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
-      {:ok, :skip, new_adapter_state} ->
-        state = %{state | adapter_state: new_adapter_state}
-        session_id = "session_#{System.unique_integer([:positive])}"
-        state = synthesize_result(state, id, session_result(state, session_id))
-        {:reply, :ok, state}
-
-      {:ok, :pending, new_adapter_state} ->
-        {:reply, :ok, %{state | adapter_state: new_adapter_state}}
-
-      {:ok, data, new_adapter_state} ->
-        state = %{state | adapter_state: new_adapter_state}
-        _ = write_to_port(state, data)
-        {:reply, :ok, state}
-
-      {:reply, result, new_adapter_state} ->
-        state = %{state | adapter_state: new_adapter_state}
-
-        state =
-          synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))
-
-        {:reply, :ok, state}
-
-      {:messages_and_reply, messages, result, new_adapter_state} ->
-        state = %{state | adapter_state: new_adapter_state}
-        state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
-
-        state =
-          synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))
-
-        {:reply, :ok, state}
-
-      {:reply_and_write, result, data, new_adapter_state} ->
-        state = %{state | adapter_state: new_adapter_state}
-        _ = write_to_port(state, data)
-
-        state =
-          synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))
-
-        {:reply, :ok, state}
-
-      {:error, reason, new_adapter_state} ->
-        state = %{state | adapter_state: new_adapter_state}
-        state = synthesize_error(state, id, -32_602, to_string(reason))
-        {:reply, :ok, state}
-    end
+    msg
+    |> translate_lifecycle(state)
+    |> apply_lifecycle_translation(id, state, -32_602, fn state ->
+      session_result(state, "session_#{System.unique_integer([:positive])}")
+    end)
   end
 
   defp handle_outbound(%{"method" => "session/load", "id" => id} = msg, _json, _from, state) do
     if ensure_capability(state, :load_session) do
-      case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
-        {:ok, :skip, new_adapter_state} ->
-          state = %{state | adapter_state: new_adapter_state}
-          state = synthesize_result(state, id, session_state_result(state))
-          {:reply, :ok, state}
-
-        {:ok, :pending, new_adapter_state} ->
-          {:reply, :ok, %{state | adapter_state: new_adapter_state}}
-
-        {:ok, data, new_adapter_state} ->
-          state = %{state | adapter_state: new_adapter_state}
-          _ = write_to_port(state, data)
-          {:reply, :ok, state}
-
-        {:reply, result, new_adapter_state} ->
-          state = %{state | adapter_state: new_adapter_state}
-
-          state =
-            synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))
-
-          {:reply, :ok, state}
-
-        {:messages_and_reply, messages, result, new_adapter_state} ->
-          state = %{state | adapter_state: new_adapter_state}
-          state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
-
-          state =
-            synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))
-
-          {:reply, :ok, state}
-
-        {:error, reason, new_adapter_state} ->
-          state = %{state | adapter_state: new_adapter_state}
-          state = synthesize_error(state, id, -32_603, to_string(reason))
-          {:reply, :ok, state}
-      end
+      msg
+      |> translate_lifecycle(state)
+      |> apply_lifecycle_translation(id, state, -32_603, &session_state_result/1)
     else
       {:reply, :ok, reject_unsupported_method(state, id, "session/load")}
     end
@@ -575,42 +501,9 @@ defmodule ExMCP.ACP.AdapterBridge do
 
   defp handle_outbound(%{"method" => "session/resume", "id" => id} = msg, _json, _from, state) do
     if ensure_capability(state, :session_resume) do
-      case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
-        {:ok, :skip, new_adapter_state} ->
-          state = %{state | adapter_state: new_adapter_state}
-          state = synthesize_result(state, id, session_state_result(state))
-          {:reply, :ok, state}
-
-        {:ok, :pending, new_adapter_state} ->
-          {:reply, :ok, %{state | adapter_state: new_adapter_state}}
-
-        {:ok, data, new_adapter_state} ->
-          state = %{state | adapter_state: new_adapter_state}
-          _ = write_to_port(state, data)
-          {:reply, :ok, state}
-
-        {:reply, result, new_adapter_state} ->
-          state = %{state | adapter_state: new_adapter_state}
-
-          state =
-            synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))
-
-          {:reply, :ok, state}
-
-        {:messages_and_reply, messages, result, new_adapter_state} ->
-          state = %{state | adapter_state: new_adapter_state}
-          state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
-
-          state =
-            synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))
-
-          {:reply, :ok, state}
-
-        {:error, reason, new_adapter_state} ->
-          state = %{state | adapter_state: new_adapter_state}
-          state = synthesize_error(state, id, -32_603, to_string(reason))
-          {:reply, :ok, state}
-      end
+      msg
+      |> translate_lifecycle(state)
+      |> apply_lifecycle_translation(id, state, -32_603, &session_state_result/1)
     else
       {:reply, :ok, reject_unsupported_method(state, id, "session/resume")}
     end
@@ -863,6 +756,58 @@ defmodule ExMCP.ACP.AdapterBridge do
 
   defp synthesize_session_lifecycle_result(state, id, result) do
     synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))
+  end
+
+  defp translate_lifecycle(msg, state),
+    do: state.adapter_mod.translate_outbound(msg, state.adapter_state)
+
+  # Applies an adapter's translation of a session lifecycle request (new,
+  # load, resume): adopts the adapter state, writes any control data to the
+  # port, pushes any replayed messages, and synthesizes the client's reply.
+  # `skip_result` builds the reply when the adapter has nothing to add.
+  defp apply_lifecycle_translation(translation, id, state, error_code, skip_result) do
+    case translation do
+      {:ok, :skip, adapter_state} ->
+        state = %{state | adapter_state: adapter_state}
+        {:reply, :ok, synthesize_result(state, id, skip_result.(state))}
+
+      {:ok, :pending, adapter_state} ->
+        {:reply, :ok, %{state | adapter_state: adapter_state}}
+
+      {:ok, data, adapter_state} ->
+        state = %{state | adapter_state: adapter_state}
+        _ = write_to_port(state, data)
+        {:reply, :ok, state}
+
+      {:reply, result, adapter_state} ->
+        lifecycle_reply(state, adapter_state, id, [], nil, result)
+
+      {:messages_and_reply, messages, result, adapter_state} ->
+        lifecycle_reply(state, adapter_state, id, messages, nil, result)
+
+      {:reply_and_write, result, data, adapter_state} ->
+        lifecycle_reply(state, adapter_state, id, [], data, result)
+
+      {:messages_and_reply_and_write, messages, result, data, adapter_state} ->
+        lifecycle_reply(state, adapter_state, id, messages, data, result)
+
+      {:error, reason, adapter_state} ->
+        state = %{state | adapter_state: adapter_state}
+        {:reply, :ok, synthesize_error(state, id, error_code, to_string(reason))}
+    end
+  end
+
+  defp lifecycle_reply(state, adapter_state, id, messages, data, result) do
+    state = %{state | adapter_state: adapter_state}
+    if data, do: _ = write_to_port(state, data)
+
+    state =
+      if messages == [],
+        do: state,
+        else: push_messages(state, Enum.map(messages, &Jason.encode!/1))
+
+    {:reply, :ok,
+     synthesize_result(state, id, Map.merge(session_state_result(state), result || %{}))}
   end
 
   defp list_sessions_result(result) when is_list(result), do: %{"sessions" => result}

@@ -140,6 +140,103 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert Enum.any?(result["configOptions"], &(&1["id"] == "model"))
     end
 
+    test "session/new honours the host's opt-out of bypassPermissions", %{state: state} do
+      {:ok, allowing} =
+        ClaudeSDK.init(
+          cwd: "/tmp/project",
+          model: "sonnet",
+          allow_dangerously_skip_permissions: true
+        )
+
+      opted_out = %{
+        "id" => 1,
+        "method" => "session/new",
+        "params" => %{
+          "cwd" => "/tmp/project",
+          "_meta" => %{
+            "claudeCode" => %{"options" => %{"allowDangerouslySkipPermissions" => false}}
+          }
+        }
+      }
+
+      assert {:reply, result, state_out} = ClaudeSDK.translate_outbound(opted_out, allowing)
+      refute Enum.any?(result["modes"]["availableModes"], &(&1["id"] == "bypassPermissions"))
+      assert state_out.bypass_allowed? == false
+
+      set_mode = %{
+        "id" => 2,
+        "method" => "session/set_mode",
+        "params" => %{"sessionId" => state_out.session_id, "modeId" => "bypassPermissions"}
+      }
+
+      assert {:error, "Unsupported Claude permission mode: bypassPermissions", _state} =
+               ClaudeSDK.translate_outbound(set_mode, state_out)
+
+      # Without the meta the adapter option still offers the mode.
+      plain = %{"id" => 3, "method" => "session/new", "params" => %{"cwd" => "/tmp/project"}}
+      assert {:reply, result, _state} = ClaudeSDK.translate_outbound(plain, allowing)
+      assert Enum.any?(result["modes"]["availableModes"], &(&1["id"] == "bypassPermissions"))
+
+      # `true` cannot switch bypass on for an adapter that did not allow it.
+      forced =
+        put_in(
+          opted_out,
+          ["params", "_meta", "claudeCode", "options", "allowDangerouslySkipPermissions"],
+          true
+        )
+
+      assert {:reply, result, _state} = ClaudeSDK.translate_outbound(forced, state)
+      refute Enum.any?(result["modes"]["availableModes"], &(&1["id"] == "bypassPermissions"))
+    end
+
+    test "opting out clamps an active bypassPermissions mode back to default", %{state: state} do
+      state = %{state | permission_mode: "bypassPermissions"}
+
+      msg = %{
+        "id" => 1,
+        "method" => "session/new",
+        "params" => %{
+          "cwd" => "/tmp/project",
+          "_meta" => %{
+            "claudeCode" => %{"options" => %{"allowDangerouslySkipPermissions" => false}}
+          }
+        }
+      }
+
+      assert {:reply_and_write, result, data, state_out} =
+               ClaudeSDK.translate_outbound(msg, state)
+
+      assert result["modes"]["currentModeId"] == "default"
+      refute Enum.any?(result["modes"]["availableModes"], &(&1["id"] == "bypassPermissions"))
+      assert state_out.permission_mode == "default"
+
+      control = data |> IO.iodata_to_binary() |> String.trim() |> Jason.decode!()
+      assert control["request"]["subtype"] == "set_permission_mode"
+      assert control["request"]["mode"] == "default"
+      assert Map.values(state_out.pending_controls) |> Enum.member?(:set_permission_mode)
+    end
+
+    test "session/resume applies the opt-out the same way", %{state: state} do
+      state = %{state | permission_mode: "bypassPermissions"}
+
+      msg = %{
+        "id" => 1,
+        "method" => "session/resume",
+        "params" => %{
+          "sessionId" => "claude_sdk_7",
+          "_meta" => %{
+            "claudeCode" => %{"options" => %{"allowDangerouslySkipPermissions" => false}}
+          }
+        }
+      }
+
+      assert {:reply_and_write, result, _data, state_out} =
+               ClaudeSDK.translate_outbound(msg, state)
+
+      assert result["modes"]["currentModeId"] == "default"
+      assert state_out.bypass_allowed? == false
+    end
+
     test "session/close clears both ACP and provider session identities", %{state: state} do
       state = %{
         state
@@ -1065,6 +1162,91 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
              }
     end
 
+    test "AskUserQuestion keeps a single-select pick and carries custom text as notes",
+         %{state: state} do
+      {request, state} = ask_user_question(state, multi_select: false)
+
+      response = %{
+        "id" => request["id"],
+        "result" => %{
+          "action" => "accept",
+          "content" => %{"question_0" => "Blue", "question_0_custom" => "  navy, please  "}
+        }
+      }
+
+      assert {:ok, data, _state} = ClaudeSDK.translate_outbound(response, state)
+      updated_input = decoded_updated_input(data)
+
+      assert updated_input["answers"] == %{"Which color?" => "Blue"}
+      assert updated_input["annotations"] == %{"Which color?" => %{"notes" => "navy, please"}}
+    end
+
+    test "AskUserQuestion custom text alone answers a single-select question",
+         %{state: state} do
+      {request, state} = ask_user_question(state, multi_select: false)
+
+      response = %{
+        "id" => request["id"],
+        "result" => %{"action" => "accept", "content" => %{"question_0_custom" => "Teal"}}
+      }
+
+      assert {:ok, data, _state} = ClaudeSDK.translate_outbound(response, state)
+      updated_input = decoded_updated_input(data)
+
+      assert updated_input["answers"] == %{"Which color?" => "Teal"}
+      refute Map.has_key?(updated_input, "annotations")
+    end
+
+    test "AskUserQuestion joins custom text into a multi-select in the CLI's quoted form",
+         %{state: state} do
+      {request, state} = ask_user_question(state, multi_select: true)
+
+      response = %{
+        "id" => request["id"],
+        "result" => %{
+          "action" => "accept",
+          "content" => %{
+            "question_0" => ["Blue", "Green"],
+            "question_0_custom" => "Redis, not Memcached"
+          }
+        }
+      }
+
+      assert {:ok, data, _state} = ClaudeSDK.translate_outbound(response, state)
+      updated_input = decoded_updated_input(data)
+
+      assert updated_input["answers"] == %{
+               "Which color?" => ~s(Blue, Green, "Redis, not Memcached")
+             }
+
+      refute Map.has_key?(updated_input, "annotations")
+    end
+
+    test "AskUserQuestion merges notes into annotations the tool input already carries",
+         %{state: state} do
+      {request, state} =
+        ask_user_question(state,
+          multi_select: false,
+          input_extra: %{"annotations" => %{"Other question" => %{"notes" => "kept"}}}
+        )
+
+      response = %{
+        "id" => request["id"],
+        "result" => %{
+          "action" => "accept",
+          "content" => %{"question_0" => "Blue", "question_0_custom" => "note"}
+        }
+      }
+
+      assert {:ok, data, _state} = ClaudeSDK.translate_outbound(response, state)
+      updated_input = decoded_updated_input(data)
+
+      assert updated_input["annotations"] == %{
+               "Other question" => %{"notes" => "kept"},
+               "Which color?" => %{"notes" => "note"}
+             }
+    end
+
     test "AskUserQuestion fails closed without form elicitation", %{state: state} do
       event = %{
         "type" => "control_request",
@@ -1230,4 +1412,52 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
 
   defp cwd_placeholder, do: "__cwd__"
   defp session_id_placeholder, do: "__session_id__"
+
+  defp ask_user_question(state, opts) do
+    state = %{
+      state
+      | session_id: "s1",
+        client_capabilities: %{"elicitation" => %{"form" => %{}}}
+    }
+
+    input =
+      Map.merge(
+        %{
+          "questions" => [
+            %{
+              "question" => "Which color?",
+              "header" => "Color",
+              "multiSelect" => Keyword.fetch!(opts, :multi_select),
+              "options" => [
+                %{"label" => "Blue", "description" => "Cool"},
+                %{"label" => "Green", "description" => "Calm"}
+              ]
+            }
+          ]
+        },
+        Keyword.get(opts, :input_extra, %{})
+      )
+
+    event = %{
+      "type" => "control_request",
+      "request_id" => "ask-#{System.unique_integer([:positive])}",
+      "request" => %{
+        "subtype" => "can_use_tool",
+        "tool_name" => "AskUserQuestion",
+        "tool_use_id" => "question-tool",
+        "input" => input
+      }
+    }
+
+    {:messages, [request], state} = ClaudeSDK.translate_inbound(Jason.encode!(event), state)
+    {request, state}
+  end
+
+  defp decoded_updated_input(data) do
+    data
+    |> IO.iodata_to_binary()
+    |> String.trim()
+    |> Jason.decode!()
+    |> get_in(["response", "response", "updatedInput"])
+  end
 end

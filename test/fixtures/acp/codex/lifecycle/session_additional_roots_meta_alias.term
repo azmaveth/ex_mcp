@@ -290,7 +290,11 @@
               "sandbox_workspace_write" => %{"writable_roots" => ["/tmp/shared"]}
             },
             "cwd" => "/tmp/project",
-            "initialTurnsPage" => %{"itemsView" => "full", "limit" => 100},
+            "initialTurnsPage" => %{
+              "itemsView" => "full",
+              "limit" => 100,
+              "sortDirection" => "desc"
+            },
             "modelProvider" => "openai",
             "sandbox" => "workspace-write",
             "threadId" => "thread-load"

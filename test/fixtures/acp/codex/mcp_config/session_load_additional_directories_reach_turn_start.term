@@ -88,7 +88,11 @@
             "approvalPolicy" => "on-request",
             "config" => %{"sandbox_workspace_write" => %{"writable_roots" => ["/tmp/vendor"]}},
             "cwd" => "/tmp/project",
-            "initialTurnsPage" => %{"itemsView" => "full", "limit" => 100},
+            "initialTurnsPage" => %{
+              "itemsView" => "full",
+              "limit" => 100,
+              "sortDirection" => "desc"
+            },
             "modelProvider" => "openai",
             "sandbox" => "workspace-write",
             "threadId" => "thread-abc"

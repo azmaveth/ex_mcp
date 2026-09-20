@@ -24,7 +24,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   alias ExMCP.ACP.Adapters.Codex.{Config, Events, FileChanges, Protocol, Sessions, SlashCommands}
   alias ExMCP.ACP.{AdapterEvents, Envelope, PendingRequests}
-  alias ExMCP.Internal.{Maps, NameValue, WorkspacePath}
+  alias ExMCP.Internal.{LogSummary, Maps, NameValue, WorkspacePath}
 
   defstruct [
     :model,
@@ -273,7 +273,11 @@ defmodule ExMCP.ACP.Adapters.Codex do
             wire_params =
               %{
                 "threadId" => session_id,
-                "initialTurnsPage" => %{"limit" => 100, "itemsView" => "full"}
+                "initialTurnsPage" => %{
+                  "limit" => 100,
+                  "sortDirection" => "desc",
+                  "itemsView" => "full"
+                }
               }
               |> maybe_put("model", params["model"] || state.model)
               |> maybe_put("modelProvider", resume_model_provider(state))
@@ -942,15 +946,70 @@ defmodule ExMCP.ACP.Adapters.Codex do
     state = Sessions.put(state, session_id, session)
     state = %{state | closed_sessions: Map.delete(state.closed_sessions, session_id)}
 
-    replay_messages =
-      if type == :thread_resume do
-        replay_thread_history(session_id, result)
-      else
-        []
-      end
+    cursor = older_turns_cursor(result)
 
-    response = Envelope.response(acp_id, session_result(session_id, result, session, state))
-    {:messages, replay_messages ++ [response], state}
+    if type == :thread_resume and is_binary(cursor) do
+      # Mirrors codex-acp#481: the initial page is only the newest hundred
+      # turns of a paginated thread. Page the rest through thread/turns/list
+      # before replaying, so a long session loads in full and in order.
+      meta = %{
+        session_id: session_id,
+        result: result,
+        session: session,
+        older_turns: [],
+        seen_cursors: MapSet.new([cursor])
+      }
+
+      request_older_turns(acp_id, cursor, meta, state)
+    else
+      replay_messages =
+        if type == :thread_resume do
+          replay_turns(session_id, initial_turns(result))
+        else
+          []
+        end
+
+      response = Envelope.response(acp_id, session_result(session_id, result, session, state))
+      {:messages, replay_messages ++ [response], state}
+    end
+  end
+
+  defp handle_typed_response(:thread_turns_list, %{acp_id: acp_id} = entry, reply, state) do
+    meta = Map.get(entry, :meta, %{})
+
+    case reply do
+      {:ok, page} when is_map(page) ->
+        meta = %{meta | older_turns: meta.older_turns ++ List.wrap(page["data"])}
+        next_cursor = page["nextCursor"]
+
+        cond do
+          is_binary(next_cursor) and MapSet.member?(meta.seen_cursors, next_cursor) ->
+            Logger.warning(
+              "Codex returned a repeated thread history cursor; replaying what was read"
+            )
+
+            finish_older_turns(acp_id, meta, state)
+
+          is_binary(next_cursor) ->
+            meta = %{meta | seen_cursors: MapSet.put(meta.seen_cursors, next_cursor)}
+            request_older_turns(acp_id, next_cursor, meta, state)
+
+          true ->
+            finish_older_turns(acp_id, meta, state)
+        end
+
+      {:ok, _other} ->
+        finish_older_turns(acp_id, meta, state)
+
+      {:error, error} ->
+        # An app-server without thread/turns/list, or a failed page: the load
+        # still succeeds with the turns already in hand.
+        Logger.debug("Codex thread history page failed; replaying the initial page only",
+          reason_shape: LogSummary.describe(error)
+        )
+
+        finish_older_turns(acp_id, meta, state)
+    end
   end
 
   defp handle_typed_response(type, %{acp_id: acp_id}, {:error, error}, state)
@@ -1907,7 +1966,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
         is_map(question) and is_binary(question["id"]) and question["id"] != ""
       end)
 
-    {properties, required, other_fields} = user_input_schema(questions)
+    {properties, required, note_fields} = user_input_schema(questions)
     session_id = Sessions.id_from_params(params, state)
     acp_id = "codex-user-input-#{System.unique_integer([:positive])}"
 
@@ -1915,7 +1974,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
       "sessionId" => session_id,
       "toolCallId" => params["itemId"],
       "mode" => "form",
-      "message" => user_input_message(params, questions),
+      "message" => "Codex needs your input to continue.",
       "requestedSchema" =>
         %{"type" => "object", "properties" => properties}
         |> maybe_put("required", if(required == [], do: nil, else: required)),
@@ -1933,7 +1992,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
       method: "item/tool/requestUserInput",
       params: params,
       questions: questions,
-      other_fields: other_fields,
+      note_fields: note_fields,
       session_id: session_id
     }
 
@@ -1945,82 +2004,94 @@ defmodule ExMCP.ACP.Adapters.Codex do
     {:messages, [Envelope.request("elicitation/create", request_params, acp_id)], state}
   end
 
+  # Mirrors codex-acp's `request_user_input` form (agentclientprotocol/codex-acp#299):
+  # the full question is the field title and the short header its description,
+  # every primary question is required, an `isOther` question with options gets
+  # a "None of the above" choice, and its free text lives in a separate note
+  # field tagged `_meta.codex.role: "user_note"`. The note travels back to
+  # Codex as `user_note: <text>` beside the selection rather than replacing it.
+  @user_input_other_option "None of the above"
+  @user_input_note_prefix "user_note: "
+
   defp user_input_schema(questions) do
     question_ids = MapSet.new(questions, & &1["id"])
 
-    Enum.reduce(questions, {%{}, [], %{}}, fn question, {properties, required, other_fields} ->
+    Enum.reduce(questions, {%{}, [], %{}}, fn question, {properties, required, note_fields} ->
       id = question["id"]
 
       if is_binary(id) and id != "" do
-        property = user_input_property(question)
-        properties = Map.put(properties, id, property)
         has_other_answer = question["isOther"] == true and List.wrap(question["options"]) != []
+        properties = Map.put(properties, id, user_input_property(question, has_other_answer))
 
-        {properties, other_fields} =
+        {properties, note_fields} =
           if has_other_answer do
-            other_id = user_input_other_field_id(id, question_ids)
+            note_id = user_input_note_field_id(id, question_ids)
 
-            property = %{
+            note = %{
               "type" => "string",
-              "title" => "Other",
-              "description" => "Type your own answer instead of choosing an option above.",
+              "title" => "Additional answer or note",
               "_meta" => %{
                 "codex" => %{
                   "questionId" => id,
-                  "isOtherAnswer" => true,
+                  "role" => "user_note",
                   "isSecret" => question["isSecret"] == true
                 }
               }
             }
 
-            {Map.put(properties, other_id, property), Map.put(other_fields, id, other_id)}
+            {Map.put(properties, note_id, note), Map.put(note_fields, id, note_id)}
           else
-            {properties, other_fields}
+            {properties, note_fields}
           end
 
-        required = if has_other_answer, do: required, else: required ++ [id]
-        {properties, required, other_fields}
+        {properties, required ++ [id], note_fields}
       else
-        {properties, required, other_fields}
+        {properties, required, note_fields}
       end
     end)
   end
 
-  defp user_input_message(params, [question]) do
-    params["message"] || question["question"] || "Input requested"
+  defp user_input_note_field_id(question_id, question_ids, index \\ 0) do
+    candidate = question_id <> "_note" <> if(index == 0, do: "", else: Integer.to_string(index))
+
+    if MapSet.member?(question_ids, candidate),
+      do: user_input_note_field_id(question_id, question_ids, index + 1),
+      else: candidate
   end
 
-  defp user_input_message(params, _questions), do: params["message"] || "Input requested"
-
-  defp user_input_other_field_id(question_id, question_ids, suffix \\ "") do
-    candidate = question_id <> "__other" <> suffix
-
-    if MapSet.member?(question_ids, candidate) do
-      next_suffix =
-        if suffix == "", do: "1", else: Integer.to_string(String.to_integer(suffix) + 1)
-
-      user_input_other_field_id(question_id, question_ids, next_suffix)
-    else
-      candidate
-    end
-  end
-
-  defp user_input_property(question) do
-    base = %{
-      "type" => "string",
-      "title" => question["header"] || "Input",
-      "description" => question["question"],
-      "_meta" => %{
-        "codex" => %{
-          "isOther" => question["isOther"] == true,
-          "isSecret" => question["isSecret"] == true
+  defp user_input_property(question, has_other_answer) do
+    base =
+      %{
+        "type" => "string",
+        "title" => question["question"] || question["header"] || question["id"],
+        "_meta" => %{
+          "codex" => %{
+            "isOther" => question["isOther"] == true,
+            "isSecret" => question["isSecret"] == true
+          }
         }
       }
-    }
+      |> maybe_put("description", question["header"])
 
     case question["options"] do
       options when is_list(options) and options != [] ->
-        Map.put(base, "oneOf", Enum.map(options, &user_input_option/1))
+        choices = Enum.map(options, &user_input_option/1)
+
+        choices =
+          if has_other_answer and
+               not Enum.any?(options, &(&1["label"] == @user_input_other_option)),
+             do:
+               choices ++
+                 [
+                   %{
+                     "const" => @user_input_other_option,
+                     "title" => @user_input_other_option,
+                     "description" => "Provide a different answer in the note field."
+                   }
+                 ],
+             else: choices
+
+        Map.put(base, "oneOf", choices)
 
       _no_options ->
         base
@@ -2099,23 +2170,38 @@ defmodule ExMCP.ACP.Adapters.Codex do
     answers =
       Enum.reduce(entry.questions, %{}, fn question, answers ->
         id = question["id"]
-        custom = content[entry.other_fields[id]]
-        value = if is_binary(custom) and String.trim(custom) != "", do: custom, else: content[id]
+        values = user_input_values(content[id])
 
-        values =
-          case value do
-            value when is_binary(value) and value != "" -> [value]
-            values when is_list(values) -> Enum.filter(values, &is_binary/1)
-            _missing -> []
+        notes =
+          case Map.get(entry, :note_fields, %{})[id] do
+            nil ->
+              []
+
+            note_id ->
+              Enum.map(
+                user_input_values(content[note_id]),
+                &(@user_input_note_prefix <> String.trim(&1))
+              )
           end
 
-        if values == [], do: answers, else: Map.put(answers, id, %{"answers" => values})
+        case values ++ notes do
+          [] -> answers
+          all -> Map.put(answers, id, %{"answers" => all})
+        end
       end)
 
     %{"answers" => answers}
   end
 
   defp user_input_response(_entry, _response), do: %{"answers" => %{}}
+
+  defp user_input_values(value) when is_binary(value),
+    do: if(String.trim(value) == "", do: [], else: [value])
+
+  defp user_input_values(values) when is_list(values),
+    do: Enum.filter(values, &(is_binary(&1) and String.trim(&1) != ""))
+
+  defp user_input_values(_value), do: []
 
   defp late_server_request_result("item/tool/requestUserInput"), do: %{"answers" => %{}}
   defp late_server_request_result("mcpServer/elicitation/request"), do: %{"action" => "cancel"}
@@ -2445,12 +2531,52 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp maybe_add_generated_image(content, _item), do: content
 
-  defp replay_thread_history(session_id, result) do
-    turns =
-      get_in(result, ["initialTurnsPage", "data"]) ||
-        get_in(result, ["thread", "turns"]) ||
-        []
+  # The initial page is requested newest-first, so it is reversed here; a
+  # legacy full `thread.turns` history is already chronological.
+  defp initial_turns(result) do
+    case get_in(result, ["initialTurnsPage", "data"]) do
+      turns when is_list(turns) -> Enum.reverse(turns)
+      _none -> get_in(result, ["thread", "turns"]) || []
+    end
+  end
 
+  defp older_turns_cursor(result) do
+    case result["turnsBackwardsCursor"] do
+      cursor when is_binary(cursor) and cursor != "" -> cursor
+      _none -> get_in(result, ["initialTurnsPage", "nextCursor"])
+    end
+  end
+
+  defp request_older_turns(acp_id, cursor, meta, state) do
+    {id, state} = next_request_id(state)
+
+    request =
+      Protocol.encode_request(id, Protocol.method(:thread_turns_list), %{
+        "threadId" => meta.session_id,
+        "cursor" => cursor,
+        "limit" => 50,
+        "sortDirection" => "desc",
+        "itemsView" => "full"
+      })
+
+    {:skip_and_write, request, track_request(state, id, :thread_turns_list, acp_id, meta)}
+  end
+
+  # Pages arrive newest-first; reversed, they precede the initial page.
+  defp finish_older_turns(acp_id, meta, state) do
+    turns = Enum.reverse(meta.older_turns) ++ initial_turns(meta.result)
+    replay_messages = replay_turns(meta.session_id, turns)
+
+    response =
+      Envelope.response(
+        acp_id,
+        session_result(meta.session_id, meta.result, meta.session, state)
+      )
+
+    {:messages, replay_messages ++ [response], state}
+  end
+
+  defp replay_turns(session_id, turns) do
     Enum.flat_map(turns, fn turn ->
       turn
       |> Map.get("items", [])
