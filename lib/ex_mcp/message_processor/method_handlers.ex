@@ -10,6 +10,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
 
   alias ExMCP.Error
   alias ExMCP.Internal.JSONRPC
+  alias ExMCP.MessageProcessor.Conn
   alias ExMCP.Protocol.{ErrorCodes, Initialize}
   alias ExMCP.Server.{Discover, Dispatch, MRTR, ResultNormalizer}
   alias ExMCP.Transport.HTTP.ToolHeaders
@@ -75,7 +76,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
 
       {:error, message} ->
         conn
-        |> ExMCP.MessageProcessor.assign(:http_status, 400)
+        |> Conn.assign(:http_status, 400)
         |> Map.put(:response, JSONRPC.error(id, ErrorCodes.header_mismatch(), message))
     end
   end
@@ -588,7 +589,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
   defp put_error(conn, _message, %Error.ProtocolError{} = error, id) do
     conn =
       if error.code == ErrorCodes.missing_required_client_capability(),
-        do: ExMCP.MessageProcessor.assign(conn, :http_status, 400),
+        do: Conn.assign(conn, :http_status, 400),
         else: conn
 
     %{conn | response: JSONRPC.error(id, Error.to_json_rpc(error))}
@@ -607,7 +608,7 @@ defmodule ExMCP.MessageProcessor.MethodHandlers do
     conn =
       case conn.assigns do
         %{request_context: %{era: :modern}} ->
-          ExMCP.MessageProcessor.assign(conn, :http_status, 404)
+          Conn.assign(conn, :http_status, 404)
 
         _legacy_or_unscoped ->
           conn
