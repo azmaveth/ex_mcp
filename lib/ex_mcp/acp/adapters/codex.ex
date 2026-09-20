@@ -27,6 +27,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
     Content,
     Events,
     FileChanges,
+    MCP,
     Permissions,
     Protocol,
     Sessions,
@@ -3023,22 +3024,15 @@ defmodule ExMCP.ACP.Adapters.Codex do
          :ok <- authorize_additional_directories(additional_directories, cwd, state),
          {:ok, mcp_config} <- mcp_config(params["mcpServers"], cwd, state) do
       config =
-        state.opts
-        |> codex_config()
-        |> merge_gateway_config(state.gateway_config)
-        |> maybe_merge_trusted_projects(cwd, additional_directories, state.opts)
-        |> merge_sandbox_workspace_roots(additional_directories)
-        |> merge_config(mcp_config)
+        MCP.native_config(codex_config(state.opts), mcp_config, %{
+          cwd: cwd,
+          additional_directories: additional_directories,
+          gateway_config: state.gateway_config,
+          trust_authorized_workspaces:
+            Keyword.get(state.opts, :trust_authorized_workspaces, false)
+        })
 
-      {:ok, empty_to_nil(config), additional_directories}
-    end
-  end
-
-  defp maybe_merge_trusted_projects(config, cwd, additional_directories, opts) do
-    if Keyword.get(opts, :trust_authorized_workspaces, false) do
-      merge_trusted_projects(config, cwd, additional_directories)
-    else
-      config
+      {:ok, config, additional_directories}
     end
   end
 
@@ -3057,74 +3051,6 @@ defmodule ExMCP.ACP.Adapters.Codex do
         %{}
     end
   end
-
-  defp merge_gateway_config(config, nil), do: config
-
-  defp merge_gateway_config(config, %{
-         model_provider: model_provider,
-         provider_config: provider_config
-       }) do
-    providers =
-      config
-      |> Map.get("model_providers", %{})
-      |> case do
-        providers when is_map(providers) -> providers
-        _ -> %{}
-      end
-      |> Map.put(model_provider, provider_config)
-
-    Map.put(config, "model_providers", providers)
-  end
-
-  defp merge_trusted_projects(config, cwd, additional_directories) do
-    roots =
-      [cwd | additional_directories]
-      |> Enum.filter(&(is_binary(&1) and &1 != ""))
-      |> Enum.uniq()
-
-    if roots == [] do
-      config
-    else
-      projects =
-        config
-        |> Map.get("projects", %{})
-        |> case do
-          projects when is_map(projects) -> projects
-          _ -> %{}
-        end
-        |> Map.merge(Map.new(roots, &{&1, %{"trust_level" => "trusted"}}))
-
-      Map.put(config, "projects", projects)
-    end
-  end
-
-  defp merge_sandbox_workspace_roots(config, []), do: config
-
-  defp merge_sandbox_workspace_roots(config, additional_directories) do
-    sandbox =
-      config
-      |> Map.get("sandbox_workspace_write", %{})
-      |> case do
-        sandbox when is_map(sandbox) -> sandbox
-        _ -> %{}
-      end
-
-    roots =
-      sandbox
-      |> Map.get("writable_roots", [])
-      |> List.wrap()
-      |> Enum.filter(&is_binary/1)
-      |> Enum.concat(additional_directories)
-      |> Enum.uniq()
-
-    Map.put(config, "sandbox_workspace_write", Map.put(sandbox, "writable_roots", roots))
-  end
-
-  defp merge_config(config, nil), do: config
-  defp merge_config(config, mcp_config), do: Map.merge(config, mcp_config)
-
-  defp empty_to_nil(config) when map_size(config) == 0, do: nil
-  defp empty_to_nil(config), do: config
 
   defp additional_directories(params, cwd) do
     raw = params["additionalDirectories"] || get_in(params, ["_meta", "additionalRoots"])
@@ -3280,132 +3206,31 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp authorization_result({:ok, _value}, _message), do: :ok
   defp authorization_result(_result, message), do: {:error, message}
 
-  defp validate_http_mcp_server(server) do
-    uri = if is_binary(server["url"]), do: URI.parse(server["url"]), else: %URI{}
-
-    if valid_mcp_name?(server["name"]) and uri.scheme in ["http", "https"] and
-         is_binary(uri.host) and uri.host != "" and valid_name_value_list?(server["headers"]) do
-      :ok
-    else
-      {:error, "Invalid HTTP MCP server configuration"}
-    end
-  end
-
-  defp validate_stdio_mcp_server(server) do
-    if valid_mcp_name?(server["name"]) and is_binary(server["command"]) and
-         server["command"] != "" and Path.type(server["command"]) == :absolute and
-         is_list(server["args"]) and Enum.all?(server["args"], &is_binary/1) and
-         valid_name_value_list?(server["env"]) do
-      :ok
-    else
-      {:error, "Invalid stdio MCP server configuration"}
-    end
-  end
-
-  defp valid_mcp_name?(name), do: is_binary(name) and String.trim(name) != ""
-
-  defp valid_name_value_list?(values) when is_list(values) do
-    Enum.all?(values, fn
-      %{"name" => name, "value" => value} -> is_binary(name) and is_binary(value)
-      {name, value} -> is_binary(name) and is_binary(value)
-      _other -> false
-    end)
-  end
-
-  defp valid_name_value_list?(_values), do: false
-
   defp mcp_config(nil, _cwd, _state), do: {:ok, nil}
   defp mcp_config([], _cwd, _state), do: {:ok, nil}
 
+  # Each server is normalized, then authorized by the adapter's policy, then
+  # emitted, in list order; the first failure rejects the whole list.
   defp mcp_config(servers, cwd, state) when is_list(servers) do
     Enum.reduce_while(servers, {:ok, %{}}, fn server, {:ok, acc} ->
-      case mcp_server_config(server, cwd, state) do
-        {:ok, {name, _config}} when is_map_key(acc, name) ->
-          {:halt, {:error, "MCP server names must be unique"}}
+      with {:ok, server} <- MCP.normalize_server(server),
+           :ok <- authorize_mcp_server(server, cwd, state) do
+        {name, config} = MCP.server_config(server)
 
-        {:ok, {name, config}} ->
-          {:cont, {:ok, Map.put(acc, name, config)}}
-
-        {:error, reason} ->
-          {:halt, {:error, reason}}
+        if is_map_key(acc, name),
+          do: {:halt, {:error, "MCP server names must be unique"}},
+          else: {:cont, {:ok, Map.put(acc, name, config)}}
+      else
+        {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
     |> case do
-      {:ok, config} when map_size(config) == 0 -> {:ok, nil}
-      {:ok, config} -> {:ok, %{"mcp_servers" => config}}
+      {:ok, entries} -> {:ok, MCP.servers_config(entries)}
       {:error, reason} -> {:error, reason}
     end
   end
 
   defp mcp_config(_servers, _cwd, _state), do: {:error, "mcpServers must be a list"}
-
-  defp mcp_server_config(%{"type" => "http"} = server, cwd, state) do
-    with :ok <- validate_http_mcp_server(server),
-         :ok <- authorize_mcp_server(server, cwd, state) do
-      name = sanitize_mcp_server_name(server["name"])
-
-      {:ok,
-       {name,
-        %{}
-        |> Map.put("url", server["url"])
-        |> maybe_put("http_headers", headers_to_map(server["headers"]))}}
-    end
-  end
-
-  defp mcp_server_config(%{"type" => "stdio"} = server, cwd, state) do
-    with :ok <- validate_stdio_mcp_server(server),
-         :ok <- authorize_mcp_server(server, cwd, state) do
-      name = sanitize_mcp_server_name(server["name"])
-
-      {:ok,
-       {name,
-        %{}
-        |> Map.put("command", server["command"])
-        |> maybe_put("args", server["args"])
-        |> maybe_put("env", env_to_map(server["env"]))}}
-    end
-  end
-
-  defp mcp_server_config(%{"type" => "sse"}, _cwd, _state),
-    do: {:error, "Codex doesn't support MCP SSE transport protocol"}
-
-  defp mcp_server_config(%{"type" => "acp"}, _cwd, _state),
-    do: {:error, "Codex doesn't support MCP ACP transport protocol"}
-
-  defp mcp_server_config(server, cwd, state) when is_map(server) do
-    if Map.has_key?(server, "command") do
-      mcp_server_config(Map.put(server, "type", "stdio"), cwd, state)
-    else
-      {:error, "Unsupported MCP server transport"}
-    end
-  end
-
-  defp mcp_server_config(_server, _cwd, _state), do: {:error, "Invalid MCP server"}
-
-  defp sanitize_mcp_server_name(nil), do: "mcp_server"
-
-  defp sanitize_mcp_server_name(name) do
-    name
-    |> to_string()
-    |> String.trim()
-    |> String.replace(~r/\s+/, "_")
-    |> case do
-      "" -> "mcp_server"
-      sanitized -> sanitized
-    end
-  end
-
-  defp headers_to_map(headers), do: name_value_list_to_map(headers)
-  defp env_to_map(env), do: name_value_list_to_map(env)
-
-  defp name_value_list_to_map(values) when is_list(values) do
-    Map.new(values, fn
-      %{"name" => name, "value" => value} -> {name, value}
-      {name, value} -> {to_string(name), to_string(value)}
-    end)
-  end
-
-  defp name_value_list_to_map(_values), do: nil
 
   # General helpers shared with the model catalog
 
