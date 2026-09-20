@@ -282,7 +282,7 @@ defmodule ExMCP.Client.NotificationListenerTest do
           end
         end)
 
-      {:ok, _first} =
+      {:ok, first} =
         Client.subscribe_notifications(
           client,
           %{"resourceSubscriptions" => ["test://raced"]},
@@ -304,6 +304,15 @@ defmodule ExMCP.Client.NotificationListenerTest do
       # Whichever order the release and the new acquisition ran in, every
       # subscribe is paired with one unsubscribe and the URI ends unsubscribed.
       assert :ok = Client.unsubscribe_notifications(second)
+
+      # The client has handled the first subscriber's exit once its listener
+      # is gone from client state; by then the release is queued at the
+      # worker, and a synchronous call to the worker drains it.
+      ExMCP.TestHelpers.wait_until(
+        fn -> not Map.has_key?(:sys.get_state(client).notification_listeners, first.id) end,
+        timeout: 1_000
+      )
+
       %{notification_worker: worker} = :sys.get_state(client)
       _drained = :sys.get_state(worker)
 
