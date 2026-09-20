@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ExMCP.Client.subscribe_notifications/3` and
+  `ExMCP.Client.unsubscribe_notifications/2`, a public delivery path for
+  legacy-era (MCP 2024-11-05 through 2025-11-25) list-change and
+  resource-update notifications. A listener registers a filter using the same
+  keys as `listen/3`, minus `taskIds`, and receives matching notifications as
+  `{:ex_mcp_notification, listener, method, params}`. Listened resource URIs
+  are subscribed on the server once and shared across listeners, released
+  when the last listener naming them goes away or its subscriber exits, and
+  re-subscribed after an automatic reconnect with a
+  `{:ex_mcp_notification_reconnected, listener, result}` report. On a modern
+  peer the call returns `{:error, :use_listen}`. Previously the client parsed
+  these notifications and dropped them with a warning about an unknown
+  subscription; that warning is now a debug-level message when no listener
+  matches. Modern subscription routing and `subscribe_resource/3` are
+  unchanged (#44).
+
 ### Changed
 
 - mint moves to 1.10.1, which fixes `EEF-CVE-2026-82672` (unvalidated

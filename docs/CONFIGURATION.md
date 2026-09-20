@@ -1031,6 +1031,50 @@ Set `:subscription_keepalive_interval_ms` to a positive integer or
 `:infinity`. Disabling keepalives delays detection of a quiet peer disconnect
 until the next notification or server-initiated closure.
 
+## Legacy notifications (MCP 2024-11-05 through 2025-11-25)
+
+Legacy peers deliver `notifications/tools/list_changed`,
+`notifications/prompts/list_changed`, `notifications/resources/list_changed`,
+and `notifications/resources/updated` on the connection itself, with nothing
+that correlates them to a request. `ExMCP.Client.subscribe_notifications/3`
+registers a local filter for those notifications and delivers each match to
+the subscriber process. It accepts the same filter keys as `listen/3`, minus
+`taskIds`:
+
+```elixir
+{:ok, listener} =
+  ExMCP.Client.subscribe_notifications(client, %{
+    "toolsListChanged" => true,
+    "resourceSubscriptions" => ["file:///project/config.json"]
+  })
+
+receive do
+  {:ex_mcp_notification, ^listener, "notifications/tools/list_changed", _params} ->
+    {:ok, tools} = ExMCP.Client.list_tools(client)
+
+  {:ex_mcp_notification, ^listener, "notifications/resources/updated", %{"uri" => uri}} ->
+    {:ok, content} = ExMCP.Client.read_resource(client, uri)
+end
+
+:ok = ExMCP.Client.unsubscribe_notifications(listener)
+```
+
+This is a local listener, not a server-acknowledged subscription. The client
+sends `resources/subscribe` once per listened URI, shared across listeners,
+and `resources/unsubscribe` when the last listener naming a URI is removed;
+list-change notifications need no request. The requested filter is
+authoritative: a resource update for a URI the filter does not name is never
+delivered. On a modern peer the call returns `{:error, :use_listen}`; use
+`listen/3` there.
+
+The client monitors the subscriber and removes the listener when it exits.
+Listeners survive an automatic reconnect: after the client re-initializes it
+re-sends `resources/subscribe` for every listened URI and sends
+`{:ex_mcp_notification_reconnected, listener, %{resubscribed: uris, failed: [{uri, reason}]}}`.
+When the client gives up reconnecting, disconnects, or stops, each subscriber
+receives `{:ex_mcp_notification_closed, listener, reason}`. The full message
+and lifecycle contract is in `ExMCP.Client.NotificationListener`.
+
 ## Completions
 
 `completion/complete` suggests values for a prompt argument or a resource

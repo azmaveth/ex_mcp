@@ -407,24 +407,8 @@ defmodule ExMCP.Client.Subscription do
     Map.put(snapshot, "tasks", tasks)
   end
 
-  defp event_allowed?("notifications/tasks", %{"taskId" => task_id}, filter) do
-    task_id in Map.get(filter || %{}, "taskIds", [])
-  end
-
-  defp event_allowed?("notifications/resources/updated", %{"uri" => uri}, filter) do
-    uri in Map.get(filter || %{}, "resourceSubscriptions", [])
-  end
-
-  defp event_allowed?("notifications/tools/list_changed", _params, filter),
-    do: Map.get(filter || %{}, "toolsListChanged") == true
-
-  defp event_allowed?("notifications/prompts/list_changed", _params, filter),
-    do: Map.get(filter || %{}, "promptsListChanged") == true
-
-  defp event_allowed?("notifications/resources/list_changed", _params, filter),
-    do: Map.get(filter || %{}, "resourcesListChanged") == true
-
-  defp event_allowed?(_method, _params, _filter), do: false
+  defp event_allowed?(method, params, filter),
+    do: SubscriptionFilter.event_allowed?(method, params, filter)
 
   defp safe_resync(operation) do
     case operation.() do
