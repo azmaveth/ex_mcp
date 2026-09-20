@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- mint moves to 1.10.1, which fixes `EEF-CVE-2026-82672` (unvalidated
+  chunk-size line tail in the HTTP/1 client). `mix hex.audit` fails on 1.10.0
+  since the advisory was published on 2026-09-19.
+
 ## [1.4.0] - 2026-09-17
 
 - A 1.x minor driven by the Jido Connect review of 1.3.0: the modern
