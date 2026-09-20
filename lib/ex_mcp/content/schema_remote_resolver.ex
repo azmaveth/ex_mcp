@@ -2,7 +2,6 @@ defmodule ExMCP.Content.SchemaRemoteResolver do
   @moduledoc false
 
   alias ExJsonSchema.Schema.Root
-  alias ExMCP.Content.SchemaPolicy
   alias ExMCP.Internal.NetworkPolicy
 
   require Logger
@@ -12,16 +11,21 @@ defmodule ExMCP.Content.SchemaRemoteResolver do
 
   @type network_error :: {:network_schema_error, atom()}
 
-  @spec resolve(map() | boolean(), keyword()) ::
-          {:ok, Root.t()} | {:error, SchemaPolicy.policy_error() | network_error()}
-  def resolve(schema, policy_opts) do
+  # Policy preflight is injected by `ExMCP.Content.SchemaPolicy` (the only
+  # caller) so this resolver never depends back on the policy module that
+  # selects it. It is applied to the root schema and to every fetched document.
+  @type preflight :: (map() | boolean(), keyword() -> :ok | {:error, term()})
+
+  @spec resolve(map() | boolean(), keyword(), preflight()) ::
+          {:ok, Root.t()} | {:error, term()}
+  def resolve(schema, policy_opts, preflight) when is_function(preflight, 2) do
     network_opts = policy_opts[:network_refs]
     state = %{documents: %{}, fetched: %{}, aggregate_bytes: 0, document_count: 0}
 
     with {:ok, normalized_schema} <- normalize_references(schema, nil),
-         :ok <- SchemaPolicy.preflight(normalized_schema, policy_opts),
+         :ok <- preflight.(normalized_schema, policy_opts),
          {:ok, references} <- referenced_documents(normalized_schema, nil),
-         {:ok, state} <- fetch_references(references, state, [], 0, policy_opts),
+         {:ok, state} <- fetch_references(references, state, [], 0, policy_opts, preflight),
          {:ok, resolved_documents} <- resolve_documents(state.documents),
          {:ok, root} <- resolve_root(normalized_schema, resolved_documents) do
       Logger.info(
@@ -49,15 +53,16 @@ defmodule ExMCP.Content.SchemaRemoteResolver do
   @spec public_address?(:inet.ip_address()) :: boolean()
   defdelegate public_address?(address), to: NetworkPolicy
 
-  defp fetch_references([], state, _stack, _depth, _policy_opts), do: {:ok, state}
+  defp fetch_references([], state, _stack, _depth, _policy_opts, _preflight), do: {:ok, state}
 
-  defp fetch_references([reference | rest], state, stack, depth, policy_opts) do
-    with {:ok, next_state} <- fetch_document(reference, state, stack, depth, policy_opts) do
-      fetch_references(rest, next_state, stack, depth, policy_opts)
+  defp fetch_references([reference | rest], state, stack, depth, policy_opts, preflight) do
+    with {:ok, next_state} <-
+           fetch_document(reference, state, stack, depth, policy_opts, preflight) do
+      fetch_references(rest, next_state, stack, depth, policy_opts, preflight)
     end
   end
 
-  defp fetch_document(reference, state, stack, depth, policy_opts) do
+  defp fetch_document(reference, state, stack, depth, policy_opts, preflight) do
     network_opts = policy_opts[:network_refs]
 
     with :ok <- check_reference_depth(depth, network_opts),
@@ -69,12 +74,30 @@ defmodule ExMCP.Content.SchemaRemoteResolver do
           {:ok, put_document(state, reference, schema)}
 
         _missing ->
-          fetch_new_document(reference, uri, canonical, state, stack, depth, policy_opts)
+          fetch_new_document(
+            reference,
+            uri,
+            canonical,
+            state,
+            stack,
+            depth,
+            policy_opts,
+            preflight
+          )
       end
     end
   end
 
-  defp fetch_new_document(reference, uri, canonical, state, stack, depth, policy_opts) do
+  defp fetch_new_document(
+         reference,
+         uri,
+         canonical,
+         state,
+         stack,
+         depth,
+         policy_opts,
+         preflight
+       ) do
     network_opts = policy_opts[:network_refs]
 
     with :ok <- check_document_count(state, network_opts),
@@ -84,7 +107,7 @@ defmodule ExMCP.Content.SchemaRemoteResolver do
          {:ok, decoded} <- decode_schema(response.body),
          identified_schema = ensure_retrieval_id(decoded, response.final_uri),
          {:ok, schema} <- normalize_references(identified_schema, response.final_uri),
-         :ok <- SchemaPolicy.preflight(schema, policy_opts),
+         :ok <- preflight.(schema, policy_opts),
          {:ok, nested_references} <- referenced_documents(schema, response.final_uri) do
       next_state =
         state
@@ -99,7 +122,8 @@ defmodule ExMCP.Content.SchemaRemoteResolver do
         next_state,
         [canonical_uri(response.final_uri), canonical | stack],
         depth + 1,
-        policy_opts
+        policy_opts,
+        preflight
       )
     end
   end
