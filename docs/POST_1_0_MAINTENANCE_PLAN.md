@@ -6,7 +6,7 @@
 - **Baseline:** ExMCP `1.0.0`
 - **Scope:** behavior-preserving modularization, functional-core extraction,
   dependency cleanup, and Hex source-package cleanup
-- **Last updated:** 2026-09-05
+- **Last updated:** 2026-09-20
 
 This is a repository-maintenance document, not user-facing package
 documentation. It records cleanup that is valuable but too invasive to mix
@@ -321,6 +321,110 @@ update only; the lifecycle-transition boundary in the Codex plan remains.
 Dialyzer reports 27 unnecessary entries in `.dialyzer_ignore.exs` on the CI
 dialyzer version; prune them once verified against the full OTP/Elixir matrix.
 
+## Stdio byte-mode framing and internationalization
+
+Tracked in GitHub #52. Diagnosed by deepfates in #41, which was withdrawn
+before review; the diagnosis was correct and the unified fix sketched in that
+thread is the shape adopted here.
+
+### The defect
+
+Both stdio transports let the VM's device encoding translate protocol frames.
+That encoding is chosen by the process locale at VM start, and it has exactly
+two values: `unicode` under a UTF-8 locale, `latin1` under anything else,
+including no locale at all. Eleven locales were checked on 2026-09-20 (unset,
+C, POSIX, ISO-8859-1, EUC-JP, Shift_JIS, GB18030, KOI8-R, and three UTF-8
+variants); there is no third mode, so "other locales" is not a dimension the
+fix has to generalize over.
+
+| Transport | Device mode | Read | Write |
+|---|---|---|---|
+| `ExMCP.Server.StdioServer` (`IO.read`, `IO.puts`) | latin1 (launchd, systemd, minimal MCP hosts) | UTF-8 input is re-encoded byte by byte; `café` reaches the handler as `cafÃ©` (35 bytes for 11) | codepoints above U+00FF become `\x{65E5}` escapes inside the JSON string; the frame is not valid JSON |
+| `ExMCP.ACP.Agent.Transport.Stdio` (`IO.binread(_, 1)`, `IO.puts`) | unicode (any UTF-8 developer shell) | each one-byte read returns the decoded codepoint as a latin1 byte, so `é` arrives as `0xE9` and anything above U+00FF fails with `no_translation` | unaffected |
+| same | latin1 | unaffected | same corruption as the MCP server |
+
+An echo tool hides the MCP case completely, because writing the double-encoded
+text back through the same device reverses the damage exactly. The interop
+lanes only ever send ASCII. Both facts explain why this shipped.
+
+Two related findings from the same investigation:
+
+- `IO.binwrite` on a unicode-mode device double-encodes. Switching the write
+  calls without owning the device mode would move the corruption from one
+  locale to the other.
+- A byte-order mark before the first frame makes it undecodable, and the
+  server silently drops undecodable lines by design (Mix.install noise), so a
+  BOM-emitting host hangs at `initialize`.
+
+Not affected: the client-side stdio transports move bytes through
+binary-mode Ports, and the isolated child environment already passes `LANG`
+and every `LC_*` variable through. The JSON layer round-trips astral
+characters, surrogate-pair escapes, U+2028/U+2029, and decomposed sequences
+unchanged, and rejects invalid UTF-8 on both encode and decode.
+
+### The fix
+
+1. **One owner for the rule.** An internal `ExMCP.Internal.StdioFraming`
+   with three functions: pin a device to byte mode (`encoding: :latin1`,
+   `binary: true`, done once before any read or write), write a frame
+   (`IO.binwrite` of the JSON plus newline, errors propagated), and read a
+   line (`IO.binread`). `StdioServer` pins `:standard_io` in `init/1` before
+   the reader task starts. The ACP transport pins both its `input` and
+   `output` devices in `connect/1`, since embedders and tests pass their own;
+   `StringIO` and file devices accept the call. Its one-byte reads then return
+   raw bytes as intended.
+2. **Strip a leading BOM once** at stream start, in the same module.
+3. **Docs.** `TRANSPORT_GUIDE.md`: the stdio transports own their device's
+   mode; stdout is protocol-only, so nothing else may write to it, which was
+   already the contract. Deployment note: Linux releases whose resource
+   handlers touch non-ASCII filenames need `+fnu` in `vm.args`, because the
+   VM's filename encoding is locale-driven on Linux (always UTF-8 on macOS);
+   that is an application concern, not a transport one.
+4. **Changelog** under Fixed, crediting deepfates and #41.
+
+Pinning `:standard_io` is VM-global, but only when the application chose the
+stdio transport. Stderr is a separate device and is unaffected.
+
+### The test tier
+
+One payload corpus, reused across transports, with the locale matrix applied
+only where locale enters:
+
+- **Corpus** (`test/support/i18n_corpus.ex`): Latin-1 (`café`), CJK, astral
+  emoji, a joiner sequence, combining marks in decomposed form, right-to-left
+  text with bidi controls, U+2028, an astral character delivered as a
+  surrogate-pair `\u` escape (as other SDKs emit), and a multibyte payload at
+  the frame-size limit so byte accounting is exercised rather than grapheme
+  accounting.
+- **Positive round trips, byte-exact:** MCP stdio server as a subprocess; ACP
+  stdio transport through devices opened in unicode mode and in latin1 mode;
+  HTTP client to `HttpPlug`; the in-process test transport.
+- **Locale matrix, subprocess test only:** unset, `C`, `en_US.UTF-8`,
+  `ja_JP.eucJP`, each with a tool that generates its own non-ASCII text, not
+  an echo.
+- **Negative cases:** BOM-prefixed first frame (accepted), CRLF-terminated
+  frames (accepted), invalid UTF-8 (dropped without crashing; the choice not
+  to answer `-32700` is documented in the test).
+
+### Out of scope, tracked separately
+
+- Boot-time logger output reaching stdout before `StdioLoggerConfig` runs.
+  The default Elixir logger writes to stdout, and the application boots before
+  the server suppresses logging, so a release that logs at info during boot
+  contaminates the protocol stream. Belongs with the "Stdio logging" row
+  above.
+- A Windows console CI lane. Byte mode is the right answer there too, but it
+  has not been proven.
+
+### Release lane and acceptance
+
+A characterized correctness fix eligible for a 1.x patch or the next minor: no
+wire change, no API change, identical behavior for ASCII payloads and for
+properly configured devices. Done when the acceptance list in #52 passes:
+the subprocess test under all four locales, the corpus byte-exact through
+every transport, the three negative cases asserted, and the ASCII-only
+interop lanes still green.
+
 ## Dependency-direction cleanup
 
 At commit `4591af6`, `mix xref graph --format stats` reported eight dependency
@@ -562,3 +666,8 @@ existing, disabled-by-default Codex legacy compatibility option.
 12. Keep ACP v2 monitoring non-shipping until its Preview adoption gates are
     met; then implement separate v1/v2 protocol surfaces around shared session
     and effect cores.
+13. Fix stdio byte-mode framing for both stdio transports and land the i18n
+    payload tier (GitHub #52) as a 1.x correctness fix, ahead of the
+    modularization items: it is small, it is user-visible data corruption in
+    common deployments, and its subprocess test is the first locale-aware gate
+    in CI.
