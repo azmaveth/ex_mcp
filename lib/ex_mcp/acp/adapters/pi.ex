@@ -18,6 +18,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   alias ExMCP.ACP.Adapters.Pi.{
     Config,
+    Events,
     Prompt,
     RPC,
     SessionStore,
@@ -1048,7 +1049,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
          state
        )
        when type in ["toolcall_start", "toolcall_delta", "toolcall_end", "tool_call"] do
-    {notification, state} = tool_call_stream_update(tool_event, state)
+    {notification, state} = Events.tool_call_stream_update(tool_event, state)
 
     if notification do
       {:messages, [notification], state}
@@ -1067,32 +1068,9 @@ defmodule ExMCP.ACP.Adapters.Pi do
        ) do
     args = event["args"] || %{}
     {line, state} = maybe_snapshot_edit(tool_call_id, tool_name, args, state)
-    locations = Tools.locations(args, state.cwd, line)
 
-    update = %{
-      "toolCallId" => tool_call_id,
-      "title" => tool_name,
-      "kind" => Tools.kind(tool_name),
-      "status" => "in_progress",
-      "locations" => locations,
-      "rawInput" => args
-    }
-
-    {notification, current_tool_calls} =
-      if Map.has_key?(state.current_tool_calls, tool_call_id) do
-        {AdapterEvents.tool_call_update(state.session_id, RPC.compact(update)),
-         Map.put(state.current_tool_calls, tool_call_id, "in_progress")}
-      else
-        {AdapterEvents.tool_call(state.session_id, RPC.compact(update)),
-         Map.put(state.current_tool_calls, tool_call_id, "in_progress")}
-      end
-
-    state = %{
-      state
-      | active_tool_executions:
-          Map.put(state.active_tool_executions, tool_call_id, %{name: tool_name, args: args}),
-        current_tool_calls: current_tool_calls
-    }
+    {notification, state} =
+      Events.tool_execution_start(tool_call_id, tool_name, args, line, state)
 
     {:messages, [notification], state}
   end
@@ -1104,17 +1082,10 @@ defmodule ExMCP.ACP.Adapters.Pi do
          } = event,
          state
        ) do
-    text = Tools.result_text(event["partialResult"])
-
     notification =
-      AdapterEvents.tool_call_update(state.session_id, %{
-        "toolCallId" => tool_call_id,
-        "status" => "in_progress",
-        "content" => Tools.text_content(text),
-        "rawOutput" => event["partialResult"]
-      })
+      Events.tool_execution_update(state.session_id, tool_call_id, event["partialResult"])
 
-    {:messages, [RPC.compact(notification)], state}
+    {:messages, [notification], state}
   end
 
   defp process_event(
@@ -1129,25 +1100,14 @@ defmodule ExMCP.ACP.Adapters.Pi do
     text = Tools.result_text(result)
     {content, state} = tool_result_content(tool_call_id, text, is_error, state)
 
-    notification =
-      AdapterEvents.tool_call_update(state.session_id, %{
-        "toolCallId" => tool_call_id,
-        "status" => if(is_error, do: "failed", else: "completed"),
-        "content" => content,
-        "rawOutput" => result
-      })
+    {notification, state} =
+      Events.tool_execution_end(tool_call_id, result, is_error, content, state)
 
-    state = %{
-      state
-      | active_tool_executions: Map.delete(state.active_tool_executions, tool_call_id),
-        current_tool_calls: Map.delete(state.current_tool_calls, tool_call_id)
-    }
-
-    {:messages, [RPC.compact(notification)], state}
+    {:messages, [notification], state}
   end
 
   defp process_event(%{"type" => "agent_end"} = event, state) do
-    {:skip, %{state | last_usage: usage_from_agent_end(event)}}
+    {:skip, %{state | last_usage: Events.usage_from_agent_end(event)}}
   end
 
   defp process_event(%{"type" => "agent_settled"}, %{pending_prompt: nil} = state) do
@@ -1192,24 +1152,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
               "auto_retry_start",
               "auto_retry_end"
             ] do
-    info =
-      AdapterEvents.session_info_update(state.session_id, %{
-        "_meta" => %{"ex_mcp" => %{"pi" => event}}
-      })
-
-    messages =
-      case auto_status_text(type) do
-        nil ->
-          [info]
-
-        text ->
-          [
-            AdapterEvents.agent_message_chunk(state.session_id, text),
-            info
-          ]
-      end
-
-    {:messages, messages, state}
+    {:messages, Events.auto_status_messages(state.session_id, type, event), state}
   end
 
   defp process_event(%{"type" => "extension_ui_request"} = event, state) do
@@ -1536,7 +1479,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
       if group[:replay?] == false do
         []
       else
-        replay_messages(group.responses[:messages], session_id)
+        Events.replay_messages(group.responses[:messages], session_id)
       end
 
     response =
@@ -1587,85 +1530,6 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   defp process_untracked_response(_event, state), do: {:skip, state}
 
-  defp auto_status_text("auto_compaction_start"), do: "Context nearing limit, compacting."
-  defp auto_status_text("auto_compaction_end"), do: "Compaction finished, resuming."
-  defp auto_status_text("auto_retry_start"), do: "Retrying after transient failure."
-  defp auto_status_text("auto_retry_end"), do: "Retry finished, resuming."
-  defp auto_status_text(_type), do: nil
-
-  defp tool_call_stream_update(tool_event, state) do
-    tool_call =
-      tool_event["toolCall"] ||
-        partial_content_at(tool_event) ||
-        tool_event
-
-    tool_call_id = tool_call["id"] || tool_event["id"]
-    tool_name = tool_call["name"] || tool_event["name"] || "tool"
-
-    if is_binary(tool_call_id) and tool_call_id != "" do
-      raw_input = tool_raw_input(tool_call)
-      locations = Tools.locations(raw_input, state.cwd)
-      existing_status = state.current_tool_calls[tool_call_id]
-      status = existing_status || "pending"
-
-      update =
-        %{
-          "toolCallId" => tool_call_id,
-          "title" => tool_name,
-          "kind" => Tools.kind(tool_name),
-          "status" => status,
-          "locations" => locations,
-          "rawInput" => raw_input
-        }
-        |> RPC.compact()
-
-      if existing_status do
-        {AdapterEvents.tool_call_update(state.session_id, update), state}
-      else
-        state = %{
-          state
-          | current_tool_calls: Map.put(state.current_tool_calls, tool_call_id, "pending")
-        }
-
-        {AdapterEvents.tool_call(state.session_id, update), state}
-      end
-    else
-      {nil, state}
-    end
-  end
-
-  defp tool_raw_input(%{"arguments" => args}) when is_map(args), do: args
-  defp tool_raw_input(%{"args" => args}) when is_map(args), do: args
-
-  defp tool_raw_input(%{"partialArgs" => partial}) when is_binary(partial) do
-    case Jason.decode(partial) do
-      {:ok, args} when is_map(args) -> args
-      _ -> %{"partialArgs" => partial}
-    end
-  end
-
-  defp tool_raw_input(_tool_call), do: %{}
-
-  # Pi streams a tool call either under `toolCall` or as one entry of the
-  # partial content list addressed by `contentIndex`. `Access` cannot index a
-  # list, so the previous `get_in/2` raised on exactly the shape this clause
-  # exists to support.
-  defp partial_content_at(%{"partial" => %{"content" => content}} = tool_event)
-       when is_list(content) do
-    case tool_event["contentIndex"] || 0 do
-      index when is_integer(index) and index >= 0 ->
-        case Enum.at(content, index) do
-          entry when is_map(entry) -> entry
-          _other -> nil
-        end
-
-      _index ->
-        nil
-    end
-  end
-
-  defp partial_content_at(_tool_event), do: nil
-
   defp maybe_snapshot_edit(tool_call_id, "edit", %{"path" => path} = args, state)
        when is_binary(path) do
     abs =
@@ -1715,76 +1579,6 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     {content, state}
   end
-
-  defp replay_messages(data, session_id) do
-    messages = if is_map(data) and is_list(data["messages"]), do: data["messages"], else: []
-
-    Enum.flat_map(messages, fn message ->
-      case message["role"] do
-        "user" ->
-          replay_text_update(
-            session_id,
-            "user_message_chunk",
-            normalize_message_text(message["content"])
-          )
-
-        "assistant" ->
-          replay_text_update(
-            session_id,
-            "agent_message_chunk",
-            normalize_message_text(message["content"])
-          )
-
-        "toolResult" ->
-          tool_name = message["toolName"] || "tool"
-          tool_call_id = message["toolCallId"] || "tool-#{System.unique_integer([:positive])}"
-          text = Tools.result_text(message)
-
-          [
-            AdapterEvents.tool_call(session_id, %{
-              "toolCallId" => tool_call_id,
-              "title" => tool_name,
-              "kind" => Tools.kind(tool_name),
-              "status" => "completed",
-              "rawOutput" => message
-            }),
-            AdapterEvents.tool_call_update(session_id, %{
-              "toolCallId" => tool_call_id,
-              "status" => if(message["isError"], do: "failed", else: "completed"),
-              "content" => Tools.text_content(text),
-              "rawOutput" => message
-            })
-            |> RPC.compact()
-          ]
-
-        _ ->
-          []
-      end
-    end)
-  end
-
-  defp replay_text_update(_session_id, _type, ""), do: []
-
-  defp replay_text_update(session_id, type, text) do
-    [
-      AdapterEvents.session_update_type(session_id, type, %{
-        "content" => %{"type" => "text", "text" => text}
-      })
-    ]
-  end
-
-  defp normalize_message_text(content) when is_binary(content), do: content
-
-  defp normalize_message_text(content) when is_list(content) do
-    content
-    |> Enum.flat_map(fn
-      %{"type" => "text", "text" => text} when is_binary(text) -> [text]
-      _ -> []
-    end)
-    |> Enum.join("")
-  end
-
-  defp normalize_message_text(_content), do: ""
 
   defp start_next_queued_prompt(state) do
     case PromptQueue.pop(state.prompt_queue) do
@@ -1847,26 +1641,6 @@ defmodule ExMCP.ACP.Adapters.Pi do
     else
       []
     end
-  end
-
-  defp usage_from_agent_end(event) do
-    usage =
-      event
-      |> Map.get("messages", [])
-      |> Enum.filter(&(&1["role"] == "assistant"))
-      |> List.last()
-      |> case do
-        %{"usage" => usage} -> usage
-        _ -> %{}
-      end
-
-    %{
-      "inputTokens" => usage["input"] || 0,
-      "outputTokens" => usage["output"] || 0,
-      "cacheReadTokens" => usage["cacheRead"] || 0,
-      "cacheWriteTokens" => usage["cacheWrite"] || 0,
-      "cost" => get_in(usage, ["cost", "total"])
-    }
   end
 
   defp slash_result_messages(%{type: :slash_export, session_id: session_id} = group, _state) do
