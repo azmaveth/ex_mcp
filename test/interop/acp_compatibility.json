@@ -235,6 +235,13 @@
       "repository": "https://github.com/svkozak/pi-acp",
       "branch": "main",
       "commit": "d1cffc047ab37a096ee70ca39cfc1de463db8d12"
+    },
+    {
+      "id": "zcode",
+      "adapter": "ExMCP.ACP.Adapters.ZCode",
+      "repository": "https://github.com/zai-org/ZCode",
+      "branch": "main",
+      "commit": "872ad960de7ec172591f7e1952f7849229f94521"
     }
   ],
   "interopAgents": [

@@ -701,8 +701,9 @@ inputs:
 
 - membership of the public ACP agents page;
 - IDs and versions from the machine-readable ACP Registry; and
-- exact upstream revisions for `claude-agent-acp`, `codex-acp`, and `pi-acp`,
-  whose behavior informed ExMCP's Claude, Codex, and Pi adapters.
+- exact upstream revisions for `claude-agent-acp`, `codex-acp`, `pi-acp`, and
+  `ZCode`, whose behavior informed ExMCP's Claude, Codex, Pi, and ZCode
+  adapters.
 
 `mix acp.compat.check` reports additions, removals, registry releases, and
 reference-repository commits without installing or running remote catalog
@@ -825,6 +826,17 @@ tasks on both sides are covered by the `asyncTasks` deferral above.
 
 The manifest pins now advance to the reviewed heads. The pins lead the
 open items above, so they must not advance again until those are decided.
+
+### 2026-09-21 ZCode source baseline
+
+ZCode's newly published source repository is tracked from its first public
+`main` revision, `872ad960de7ec172591f7e1952f7849229f94521`. The weekly
+ecosystem check now reports later `zai-org/ZCode` commits with a direct compare
+link, alongside the Claude, Codex, and Pi reference adapters. ZCode Protocol v1
+remains the adapter's production boundary in that revision; upstream also
+contains an in-progress V4 wire used by its own clients. Treat V4 drift as a
+separate migration signal rather than silently changing the adapter's wire
+version.
 
 ## ACP v1 completion and v2 monitoring
 
