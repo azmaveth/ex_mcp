@@ -34,6 +34,11 @@ defmodule ExMCP.ACP.Adapters.Pi.ConfigGoldenTest do
   slash_commands area, and `steering_mode` / `follow_up_mode` also by the
   prompt_flow area.
 
+  A `get_available_models` payload is agent-controlled, so the malformed
+  shapes are pinned here too: entries that are not maps, or lack a provider
+  or id, are dropped from the selector, and a `models` value that is not a
+  list yields no model selector at all. Before the fix each of those raised.
+
   Mutation check (2026-09-20): keeping the model selector's `options` in
   `confirmation_config_options_for_state/1` fails
   `managed_set_config_replies_with_confirmation_without_model_catalog`.
@@ -60,6 +65,17 @@ defmodule ExMCP.ACP.Adapters.Pi.ConfigGoldenTest do
   end
 
   defp option(update, id), do: Enum.find(update["configOptions"] || [], &(&1["id"] == id))
+
+  # `session/new` carries the catalog on its reply rather than in a
+  # `session/update` notification.
+  defp reply_options(transcript) do
+    transcript
+    |> PiGolden.messages()
+    |> Enum.find_value(%{}, fn message ->
+      options = get_in(message, ["result", "configOptions"])
+      if is_list(options), do: %{"configOptions" => options}
+    end)
+  end
 
   describe "session/set_mode" do
     test "set_mode_accepts_every_thinking_level" do
@@ -186,6 +202,47 @@ defmodule ExMCP.ACP.Adapters.Pi.ConfigGoldenTest do
                %{error: "session/set_model requires modelId"},
                %{error: "session/set_model requires modelId"}
              ] = transcript |> Enum.take(-4) |> Enum.map(&Map.take(&1.result, [:error]))
+    end
+
+    test "malformed_catalog_entries_are_dropped_not_raised" do
+      steps =
+        Flows.open_session(1,
+          models: [
+            "not-a-map",
+            42,
+            nil,
+            %{"provider" => "openai", "id" => "gpt-5.1"},
+            %{"provider" => "anthropic"},
+            %{"id" => "orphan"},
+            %{"provider" => "custom", "id" => "usable", "name" => "Usable"}
+          ]
+        )
+
+      transcript =
+        PiGolden.assert_golden(@area, "malformed_catalog_entries_are_dropped_not_raised", steps)
+
+      assert %{
+               "options" => [
+                 %{"value" => "openai/gpt-5.1", "name" => "openai/gpt-5.1"},
+                 %{"value" => "custom/usable", "name" => "custom/Usable"}
+               ]
+             } = transcript |> reply_options() |> option("model")
+    end
+
+    test "a_catalog_whose_models_is_not_a_list_yields_no_selector" do
+      steps =
+        Flows.open_session(1, models: %{"openai" => ["gpt-5.1"]}) ++
+          [{:note, "a string payload is equally unusable and equally must not raise"}] ++
+          Flows.open_session(2, models: "gpt-5.1")
+
+      transcript =
+        PiGolden.assert_golden(
+          @area,
+          "a_catalog_whose_models_is_not_a_list_yields_no_selector",
+          steps
+        )
+
+      assert option(reply_options(transcript), "model") == nil
     end
 
     test "set_model_without_a_catalog_omits_the_model_selector" do

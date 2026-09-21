@@ -1660,7 +1660,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp tool_call_stream_update(tool_event, state) do
     tool_call =
       tool_event["toolCall"] ||
-        get_in(tool_event, ["partial", "content", tool_event["contentIndex"] || 0]) ||
+        partial_content_at(tool_event) ||
         tool_event
 
     tool_call_id = tool_call["id"] || tool_event["id"]
@@ -1709,6 +1709,20 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp tool_raw_input(_tool_call), do: %{}
+
+  # Pi streams a tool call either under `toolCall` or as one entry of the
+  # partial content list addressed by `contentIndex`. `Access` cannot index a
+  # list, so the previous `get_in/2` raised on exactly the shape this clause
+  # exists to support.
+  defp partial_content_at(%{"partial" => %{"content" => content}} = tool_event)
+       when is_list(content) do
+    case tool_event["contentIndex"] || 0 do
+      index when is_integer(index) and index >= 0 -> Enum.at(content, index)
+      _index -> nil
+    end
+  end
+
+  defp partial_content_at(_tool_event), do: nil
 
   defp maybe_snapshot_edit(tool_call_id, "edit", %{"path" => path} = args, state)
        when is_binary(path) do
@@ -2023,7 +2037,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp model_state(data, state_data) do
     available =
       data
-      |> Map.get("models", [])
+      |> catalog_models()
       |> Enum.flat_map(fn model ->
         provider = model["provider"] |> to_string_or_nil()
         id = model["id"] |> to_string_or_nil()
@@ -2058,6 +2072,19 @@ defmodule ExMCP.ACP.Adapters.Pi do
       %{"availableModels" => available, "currentModelId" => current || "default"}
     end
   end
+
+  # A `get_available_models` payload is agent-controlled: `models` may be absent,
+  # not a list, or hold entries that are not maps. Anything unusable is dropped
+  # rather than raised on, so one malformed catalog entry cannot take down the
+  # session that requested the catalog.
+  defp catalog_models(data) when is_map(data) do
+    case Map.get(data, "models") do
+      models when is_list(models) -> Enum.filter(models, &is_map/1)
+      _other -> []
+    end
+  end
+
+  defp catalog_models(_data), do: []
 
   defp thinking_state(state_data) do
     current = normalize_thinking_level(state_data["thinkingLevel"])

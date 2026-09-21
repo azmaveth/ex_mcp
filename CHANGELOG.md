@@ -100,6 +100,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Codex status in `docs/POST_1_0_MAINTENANCE_PLAN.md`.
 
 ### Fixed
+- Pi adapter: three agent-controlled payloads no longer crash the adapter.
+  A streamed tool call carried under `partial.content[contentIndex]` is now
+  selected with `Enum.at/2` (`Access` cannot index a list, so the clause
+  written to support that shape always raised), and a `get_available_models`
+  payload whose `models` is not a list, or whose entries are not maps, drops
+  the unusable data instead of raising. Found by the new Pi characterization
+  gate and pinned by three golden scenarios.
 - Codex adapter: `session/load` history replay now handles app-server v2's camelCase `agentMessage` items. Previously a replayed `agentMessage` reached the streaming completion path with no session state and crashed the load; only the legacy `agent_message` spelling replayed.
 
 - `ExMCP.SessionManager` no longer logs at `info` when it starts or when it
