@@ -64,7 +64,8 @@ defmodule ExMCP.ACP.Adapters.Pi do
     last_usage: %{},
     pending_controls: %{},
     control_groups: %{},
-    msg_counter: 0
+    msg_counter: 0,
+    rpc_counter: 0
   ]
 
   @impl true
@@ -593,23 +594,21 @@ defmodule ExMCP.ACP.Adapters.Pi do
       file_commands = SlashCommands.load(cwd, state.opts)
       settings = Settings.load(cwd, state.opts)
 
-      # Mint in emission order: the rpc counter is shared with control-group ids,
-      # so binding the switch request first keeps the ids identical to the
-      # separate load and resume clauses this replaced.
-      switch_request =
-        {:switch, rpc(RPC.method(:switch_session), %{"sessionPath" => session_file})}
-
-      replay_requests =
-        if replay?, do: [{:messages, rpc(RPC.method(:get_messages))}], else: []
-
-      requests =
-        [switch_request] ++
-          replay_requests ++
+      # Built in emission order, so the ids ascend the way they are sent.
+      kinds =
+        [{:switch, RPC.method(:switch_session), %{"sessionPath" => session_file}}] ++
+          if(replay?, do: [{:messages, RPC.method(:get_messages), %{}}], else: []) ++
           [
-            {:state, rpc(RPC.method(:get_state))},
-            {:models, rpc(RPC.method(:get_available_models))},
-            {:commands, rpc(RPC.method(:get_commands))}
+            {:state, RPC.method(:get_state), %{}},
+            {:models, RPC.method(:get_available_models), %{}},
+            {:commands, RPC.method(:get_commands), %{}}
           ]
+
+      {requests, state} =
+        Enum.map_reduce(kinds, state, fn {kind, type, fields}, acc ->
+          {id, message, acc} = rpc(acc, type, fields)
+          {{kind, {id, message}}, acc}
+        end)
 
       group = %{
         type: :session_load,
@@ -650,10 +649,10 @@ defmodule ExMCP.ACP.Adapters.Pi do
     file_commands = SlashCommands.load(cwd, state.opts)
     settings = Settings.load(cwd, state.opts)
 
-    {new_id, new_session} = rpc(RPC.method(:new_session))
-    {state_id, get_state} = rpc(RPC.method(:get_state))
-    {models_id, get_models} = rpc(RPC.method(:get_available_models))
-    {commands_id, get_commands} = rpc(RPC.method(:get_commands))
+    {new_id, new_session, state} = rpc(state, RPC.method(:new_session))
+    {state_id, get_state, state} = rpc(state, RPC.method(:get_state))
+    {models_id, get_models, state} = rpc(state, RPC.method(:get_available_models))
+    {commands_id, get_commands, state} = rpc(state, RPC.method(:get_commands))
 
     group = %{
       type: :session_new,
@@ -903,7 +902,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp start_control_command(type, acp_id, session_id, command, params, state, extra \\ %{}) do
-    {rpc_id, rpc_msg} = rpc(command, RPC.compact(params))
+    {rpc_id, rpc_msg, state} = rpc(state, command, RPC.compact(params))
 
     group =
       %{
@@ -1304,7 +1303,9 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp finish_control_group(%{type: :slash_autocompact_toggle_get} = group, state) do
     data = group.responses[:result] || %{}
     enabled = not truthy?(data["autoCompactionEnabled"])
-    {rpc_id, rpc_msg} = rpc(RPC.method(:set_auto_compaction), %{"enabled" => enabled})
+
+    {rpc_id, rpc_msg, state} =
+      rpc(state, RPC.method(:set_auto_compaction), %{"enabled" => enabled})
 
     group =
       group
@@ -1736,9 +1737,13 @@ defmodule ExMCP.ACP.Adapters.Pi do
     }
   end
 
-  defp rpc(type, fields \\ %{}) do
-    id = RPC.rpc_id(System.unique_integer([:positive, :monotonic]))
-    {id, RPC.request(id, type, fields)}
+  # Correlation ids are minted from a counter on the adapter state, the way
+  # prompt ids already are. A VM-global sequence made the emitted ids depend on
+  # unrelated activity in the same VM, and made the order they were bound in
+  # invisible to the golden fixtures, which normalize ids by first appearance.
+  defp rpc(state, type, fields \\ %{}) do
+    {id, counter} = RPC.next_rpc_id(state.rpc_counter)
+    {id, RPC.request(id, type, fields), %{state | rpc_counter: counter}}
   end
 
   defp append_opt(args, opts, key, flag) do

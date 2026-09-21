@@ -308,10 +308,10 @@
     result: %{
       tag: :ok,
       writes: [
-        %{"id" => "pi-<5>", "type" => "new_session"},
-        %{"id" => "pi-<6>", "type" => "get_state"},
-        %{"id" => "pi-<7>", "type" => "get_available_models"},
-        %{"id" => "pi-<8>", "type" => "get_commands"}
+        %{"id" => "pi-<1>", "type" => "new_session"},
+        %{"id" => "pi-<2>", "type" => "get_state"},
+        %{"id" => "pi-<3>", "type" => "get_available_models"},
+        %{"id" => "pi-<4>", "type" => "get_commands"}
       ]
     }
   },
@@ -321,7 +321,7 @@
       message: %{
         "command" => "new_session",
         "data" => %{},
-        "id" => "pi-<5>",
+        "id" => "pi-<1>",
         "success" => true,
         "type" => "response"
       }
@@ -340,7 +340,7 @@
           "sessionId" => "pi-session",
           "thinkingLevel" => "medium"
         },
-        "id" => "pi-<6>",
+        "id" => "pi-<2>",
         "success" => true,
         "type" => "response"
       }
@@ -358,7 +358,7 @@
             %{"id" => "gpt-5.1", "name" => "GPT-5.1", "provider" => "openai"}
           ]
         },
-        "id" => "pi-<7>",
+        "id" => "pi-<3>",
         "success" => true,
         "type" => "response"
       }
@@ -371,7 +371,7 @@
       message: %{
         "command" => "get_commands",
         "data" => %{"commands" => []},
-        "id" => "pi-<8>",
+        "id" => "pi-<4>",
         "success" => true,
         "type" => "response"
       }

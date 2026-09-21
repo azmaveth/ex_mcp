@@ -119,6 +119,19 @@ defmodule ExMCP.ACP.Adapters.Pi.RPC do
     {prompt_id(next), next}
   end
 
+  @doc """
+  Returns the next correlation id and the advanced counter.
+
+  Mirrors `next_prompt_id/1`. The counter lives in the adapter state rather
+  than in a VM-global sequence so that the ids a connection emits are
+  deterministic and strictly ascending in the order the requests are built.
+  """
+  @spec next_rpc_id(integer()) :: {request_id(), integer()}
+  def next_rpc_id(counter) when is_integer(counter) do
+    next = counter + 1
+    {rpc_id(next), next}
+  end
+
   @spec control_entry(request_id(), control_kind(), String.t()) :: control_entry()
   def control_entry(rpc_id, kind, group_id)
       when is_binary(rpc_id) and is_atom(kind) and is_binary(group_id) do

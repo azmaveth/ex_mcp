@@ -316,13 +316,13 @@
       tag: :ok,
       writes: [
         %{
-          "id" => "pi-<9>",
+          "id" => "pi-<1>",
           "sessionPath" => "<sandbox>/sessions/kept.jsonl",
           "type" => "switch_session"
         },
-        %{"id" => "pi-<10>", "type" => "get_state"},
-        %{"id" => "pi-<11>", "type" => "get_available_models"},
-        %{"id" => "pi-<12>", "type" => "get_commands"}
+        %{"id" => "pi-<2>", "type" => "get_state"},
+        %{"id" => "pi-<3>", "type" => "get_available_models"},
+        %{"id" => "pi-<4>", "type" => "get_commands"}
       ]
     }
   },
@@ -332,7 +332,7 @@
       message: %{
         "command" => "switch_session",
         "data" => %{},
-        "id" => "pi-<9>",
+        "id" => "pi-<1>",
         "success" => true,
         "type" => "response"
       }
@@ -351,7 +351,7 @@
           "sessionId" => "kept",
           "thinkingLevel" => "medium"
         },
-        "id" => "pi-<10>",
+        "id" => "pi-<2>",
         "success" => true,
         "type" => "response"
       }
@@ -364,7 +364,7 @@
       message: %{
         "command" => "get_available_models",
         "data" => %{"models" => []},
-        "id" => "pi-<11>",
+        "id" => "pi-<3>",
         "success" => true,
         "type" => "response"
       }
@@ -377,7 +377,7 @@
       message: %{
         "command" => "get_commands",
         "data" => %{"commands" => []},
-        "id" => "pi-<12>",
+        "id" => "pi-<4>",
         "success" => true,
         "type" => "response"
       }

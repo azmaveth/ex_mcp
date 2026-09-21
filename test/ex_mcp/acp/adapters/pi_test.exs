@@ -259,7 +259,7 @@ defmodule ExMCP.ACP.Adapters.PiTest do
                "get_commands"
              ]
 
-      assert consecutive_rpc_ids(requests)
+      assert ascending_rpc_ids(requests)
     end
 
     test "session/resume mints correlation ids in emission order and skips replay", %{
@@ -293,7 +293,7 @@ defmodule ExMCP.ACP.Adapters.PiTest do
                "get_commands"
              ]
 
-      assert consecutive_rpc_ids(requests)
+      assert ascending_rpc_ids(requests)
     end
 
     test "session/new sends Pi control requests and completes from correlated responses", %{
@@ -1224,14 +1224,14 @@ defmodule ExMCP.ACP.Adapters.PiTest do
     end
   end
 
-  # The rpc counter is process-global, so absolute values depend on test order.
-  # The invariant that matters is that ids are minted in emission order: each
-  # request carries the next number after the one before it.
-  defp consecutive_rpc_ids(requests) do
-    numbers =
-      Enum.map(requests, fn %{"id" => "pi-" <> n} -> String.to_integer(n) end)
-
-    numbers == Enum.to_list(List.first(numbers)..List.last(numbers)//1)
+  # Correlation ids come from `System.unique_integer([:positive, :monotonic])`,
+  # which is VM-global, so in an async suite another test can mint between two
+  # of these requests. Absolute values and even consecutiveness are therefore
+  # not safe to assert; strictly ascending is, because the counter is monotonic,
+  # and it is what catches a refactor that binds the requests out of order.
+  defp ascending_rpc_ids(requests) do
+    numbers = Enum.map(requests, fn %{"id" => "pi-" <> n} -> String.to_integer(n) end)
+    numbers == Enum.sort(numbers) and length(Enum.uniq(numbers)) == length(numbers)
   end
 
   defp decode_many(data) do

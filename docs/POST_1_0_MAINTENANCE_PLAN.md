@@ -212,25 +212,32 @@ catalog entries that are not maps. All three are fixed in 1.5.0 and pinned
 by golden scenarios in the stream_events and config areas; each scenario
 reproduces the original crash when the fix is reverted.
 
-### Known limit of the Pi golden harness
+### Correlation ids and what the golden harness can see
 
 `ExMCP.Test.PiGolden` normalizes minted `pi-N` correlation ids by order of
 first appearance in the transcript, so two runs that emit the same requests in
-the same order produce identical fixtures even when the underlying ids were
-minted in a different order. The rpc counter is shared with control-group ids,
-so a refactor can silently renumber the wire while all 123 scenarios still
-pass. This was not hypothetical: the `Pi.Sessions` extraction merged the
-`session/load` and `session/resume` clauses and bound the replay request before
-the switch request, which swapped `switch_session` and `get_messages` on the
-wire with every fixture unchanged.
+the same order produce identical fixtures even when the ids were minted in a
+different order. That is a real blind spot: the `Pi.Sessions` extraction merged
+the `session/load` and `session/resume` clauses, bound the replay request
+before the switch request, and swapped `switch_session` and `get_messages` on
+the wire with all 123 fixtures unchanged.
 
-Correlation still works when ids are renumbered, because each response carries
-back the id it was sent, so this is a wire-value change rather than a
-functional break. It is still a change the gate is supposed to catch. Two
-tests in `pi_test.exs` (`session/load` and `session/resume` mint correlation
-ids in emission order) assert the numeric invariant directly, and they fail
-when the minting order is reversed. Add the equivalent assertion to any future
-adapter harness rather than assuming identity normalization covers it.
+The underlying cause was that ids came from `System.unique_integer/1`, a
+VM-global sequence. Emitted ids therefore depended on unrelated activity in the
+same VM, which is why the harness had to normalize them at all, and why a test
+could not assert anything stronger than ordering.
+
+Correlation ids are now minted from `rpc_counter` on the adapter state, the way
+prompt ids already used `msg_counter`. Ids are deterministic per connection and
+ascend in the order the requests are built, and the session-switch path mints
+through `Enum.map_reduce` over the request list, so emission order and mint
+order cannot diverge by construction. Two tests in `pi_test.exs` assert that
+the ids of a `session/load` and a `session/resume` ascend and are distinct.
+
+The ids are opaque correlation tokens: nothing parses them, they are only map
+and set keys, and Pi echoes back whatever it was sent, so the numbering is
+ExMCP's to choose. A scenario that starts the adapter twice now sees both
+connections number from one, which is why two fixtures changed with the switch.
 
 ### Proposed boundaries
 
