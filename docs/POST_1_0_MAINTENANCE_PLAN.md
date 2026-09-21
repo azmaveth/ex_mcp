@@ -299,6 +299,100 @@ What deliberately stayed in the root:
 - Golden RPC fixtures and ACP event ordering are unchanged.
 - No test reads the developer's real Pi settings, prompts, models, or sessions.
 
+## Claude adapter characterization gate
+
+At the 1.5.0 baseline, `ExMCP.ACP.Adapters.ClaudeSDK` is approximately 4,390
+lines across `claude_sdk.ex` and `claude_sdk/{mapper,protocol,session_store,
+tool_info}.ex`, the largest of the three ACP adapters and the last one without
+a characterization gate. The four queued Claude parity items (see "2026-09-21
+Claude parity sequencing") change prompt-flow ordering and session identity,
+so the gate is their prerequisite rather than a follow-up.
+
+Before porting those items, add golden tests for:
+
+- `post_connect`, `session/new`, `load`, `resume`, `list`, `close`, `delete`,
+  and `fork_session/2`;
+- prompt content conversion for text, images, resources, and resource links;
+- `can_use_tool`, permission modes, the `set_permission_mode` control, the
+  `allowDangerouslySkipPermissions` session opt-out, and AskUserQuestion
+  answer folding;
+- event ordering for `agent_message_chunk`, `agent_thought_chunk`,
+  `tool_call` / `tool_call_update`, `plan`, `session_info_update`,
+  `current_mode_update`, `config_option_update`, `available_commands_update`,
+  and usage;
+- MCP server normalization, native config output, and authorization failures;
+- cancellation, `interrupt`, error replies, late and unknown responses, and
+  subprocess exit; and
+- model, mode, and config-option catalog normalization.
+
+### Status as of 2026-09-21 (characterization gate)
+
+The Claude gate above is met by a golden-transcript suite under
+`test/ex_mcp/acp/adapters/claude_sdk/characterization/` driven by
+`ExMCP.Test.ClaudeGolden` (`test/support/acp/claude_golden.ex`, with the
+shared step builders in `ExMCP.Test.ClaudeGolden.Flows`), with one fixture per
+scenario under `test/fixtures/acp/claude/<area>/`:
+
+| Gate bullet | File | Scenarios |
+|---|---|---|
+| post_connect and session lifecycle | `lifecycle_golden_test.exs` | 44 |
+| prompt content conversion | `prompt_content_golden_test.exs` | 38 |
+| permissions, modes, opt-out, AskUserQuestion | `permissions_golden_test.exs` | 56 |
+| session update ordering | `session_updates_golden_test.exs` | 57 |
+| MCP configuration and authorization | `mcp_config_golden_test.exs` | 39 |
+| cancellation, late responses, fail-closed answers | `faults_golden_test.exs` | 31 |
+| model, mode, and config-option catalogs | `catalog_golden_test.exs` | 30 |
+
+Each scenario reaches its preconditions through the adapter's public callbacks
+only (`init/1`, `command/1`, `env/1`, `post_connect/1`, `auth_methods/1,2`,
+`capabilities/0`, `modes/0`, `config_options/0`, `list_sessions/2`,
+`fork_session/2`, `translate_outbound/2`, `translate_inbound/2`) inside a
+per-run sandbox that holds the Claude config directory, the working directory
+and a fake `claude` executable, so the fixtures pin wire behavior rather than
+state layout and no test reads the developer's real Claude configuration,
+credentials, sessions, or projects. The harness refuses any `cwd`,
+`claude_config_dir`, `cli_path`, `:env` `CLAUDE_CONFIG_DIR` or request
+`params.cwd` outside the sandbox, and a fixture containing the home directory
+fails the run. Sandbox paths (in both their literal and symlink-resolved form,
+plus the SDK project-key form), minted control-request / session / tool ids,
+adapter-minted ACP request ids, forked session UUIDs, session byte counts and
+near-now timestamps are normalized (see the harness moduledoc); the fixtures
+are byte-stable across regeneration runs.
+
+Every area was mutation-tested (a single-edit behavior change to
+`claude_sdk.ex`, `claude_sdk/mapper.ex` or `claude_sdk/protocol.ex` must fail
+at least one scenario); the edit and the scenario that catches it are recorded
+in each area's moduledoc so the check can be repeated.
+
+Two things are deliberately not characterized. Subprocess exit is not
+reachable: the Claude adapter is not adapter-managed, so port exit, port close
+and partial-line buffering belong to `ExMCP.ACP.AdapterBridge` and its own
+tests, and there is no adapter callback this gate could drive. The
+remote-login branch of `auth_methods/2` reads `NO_BROWSER`, `SSH_CONNECTION`,
+`SSH_CLIENT`, `SSH_TTY` and `CLAUDE_CODE_REMOTE` straight from the OS
+environment, which an async test may not mutate; the harness fails an
+`:auth_methods` step when one of them is set rather than guessing.
+
+Building the gate surfaced one latent defect, pinned as it behaves today
+rather than fixed: a Claude `read_file` control request's `max_bytes` never
+reaches the ACP client, because the adapter passes it to
+`ExMCP.ACP.Protocol.encode_file_read_request/3` as `:max_bytes` while that
+function reads only `:line` and `:limit`. The client therefore sees no cap
+(`faults_golden_test.exs`, `read_file_drops_the_max_bytes_limit`). Fixing it
+is a separate reviewed commit that must update that fixture.
+
+See `docs/DEVELOPMENT.md` for the regeneration workflow.
+
+Portability note: the session store reads mtime through
+`File.stat(path, time: :posix)`, which is whole-second granularity, so two
+session files written in the same second carry the same `lastModified`.
+`Enum.sort_by/3` is stable, which leaves the tie broken by directory listing
+order, and that differs between filesystems. Fixtures generated on macOS
+therefore failed on the Linux CI runners. The `:write_file` step accepts
+`mtime:` and the two ordering-dependent `session/list` scenarios pin distinct
+values, so the sort is asserted rather than inherited from the platform. Any
+new scenario whose expected output depends on session order must do the same.
+
 ## Functional-core and effect-boundary follow-up
 
 These extractions are candidates for the supported 1.x line after stable 1.0,
@@ -925,6 +1019,10 @@ is already forwarded as `modelUsage` inside `_meta.ex_mcp.claude_sdk`, so that
 item is a decision about presentation shape rather than new plumbing, and
 `modes/1` already advertises Auto when the model supports it, so the mode-catalog
 gap is `_meta.kind` plus the fallback warning.
+
+Update (2026-09-21): the gate is built and green - see "Claude adapter
+characterization gate" above for its areas, isolation rules and the one latent
+defect it recorded. The four parity ports are unblocked.
 
 ### 2026-09-21 ZCode source baseline
 

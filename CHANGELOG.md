@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Claude adapter golden-transcript characterization suite:
+  `ExMCP.Test.ClaudeGolden` (`test/support/acp/claude_golden.ex`, with
+  `ExMCP.Test.ClaudeGolden.Flows`) and seven golden areas under
+  `test/ex_mcp/acp/adapters/claude_sdk/characterization/` with 295 fixtures
+  under `test/fixtures/acp/claude/`, pinning the adapter's session
+  lifecycle, prompt content conversion, permission bridge, session update
+  ordering, process configuration and authorization, fault handling and
+  catalog normalization before the queued Claude parity ports. Every run
+  uses a private sandbox for the Claude config directory, working directory
+  and CLI, so no scenario reads the developer's real Claude configuration,
+  credentials, sessions or projects. The suite and its fixtures are
+  repo-only; no library code or behavior changes.
+
 ### Changed
 
 - The Pi ACP adapter is split into `ExMCP.ACP.Adapters.Pi.Config`,
