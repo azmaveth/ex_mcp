@@ -27,6 +27,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- ACP reference-adapter parity, from the 2026-09-20 drift review of
+  claude-agent-acp and codex-acp (both still on ACP SDK 1.4.0):
+  - Claude SDK adapter: a host may opt a session out of `bypassPermissions`
+    with `_meta.claudeCode.options.allowDangerouslySkipPermissions: false`
+    on `session/new`, `session/load`, or `session/resume`. The mode leaves
+    the catalog, `session/set_mode` refuses it, and an active bypass mode is
+    clamped to `default` through a `set_permission_mode` control. `true`
+    cannot override the adapter's own option. (claude-agent-acp#1129)
+  - Claude SDK adapter: an AskUserQuestion custom answer no longer replaces
+    a selection. It joins a multi-select in the CLI's own quoted form, and
+    for a single-select it rides beside the pick as the tool's per-question
+    `annotations[question].notes`, so a client that presents the box as a
+    notes field cannot make the selection disappear. (#1031, #1131)
+  - Codex adapter: `item/tool/requestUserInput` forms follow codex-acp#299.
+    The elicitation message is always "Codex needs your input to continue.",
+    the question text is the field title and the header its description,
+    every question is required, an `isOther` question with options gains a
+    "None of the above" choice and a separate `<id>_note` field tagged
+    `_meta.codex.role: "user_note"`, and note text returns to Codex as
+    `user_note: <text>` beside the selection instead of replacing it. A
+    whitespace-only answer is dropped. **Wire-visible for clients that read
+    the previous `<id>__other` field or `_meta.codex.isOtherAnswer`.**
+  - Codex adapter: `session/load` pages a thread's older turns through
+    `thread/turns/list` when the resume result carries a backwards cursor,
+    replaying the full history in order instead of only the newest hundred
+    turns; the initial page is now requested newest-first and reversed. A
+    server without the method, or a failed page, still loads with the
+    initial page. (codex-acp#481)
+  - `ExMCP.ACP.Adapter` translations may return
+    `{:messages_and_reply_and_write, messages, result, iodata, state}`, and
+    `session/load` and `session/resume` accept `{:reply_and_write, ...}`.
+  - Deferred with recorded decisions (pre-standard `_meta` extensions, not
+    in ACP SDK 1.4.0): `authStatus`, `recommendedValue`, `asyncTasks`,
+    tool-call `name`, and both compaction mechanisms. Not applicable:
+    codex-acp#471, since ExMCP forwards MCP elicitations without a
+    synthetic tool call. See `docs/POST_1_0_MAINTENANCE_PLAN.md`.
+
 - mint moves to 1.10.1, which fixes `EEF-CVE-2026-82672` (unvalidated
   chunk-size line tail in the HTTP/1 client). `mix hex.audit` fails on 1.10.0
   since the advisory was published on 2026-09-19.

@@ -118,7 +118,11 @@
               "sandbox_workspace_write" => %{"writable_roots" => ["/srv/load/vendor"]}
             },
             "cwd" => "/srv/load",
-            "initialTurnsPage" => %{"itemsView" => "full", "limit" => 100},
+            "initialTurnsPage" => %{
+              "itemsView" => "full",
+              "limit" => 100,
+              "sortDirection" => "desc"
+            },
             "modelProvider" => "openai",
             "sandbox" => "workspace-write",
             "threadId" => "thread-abc"

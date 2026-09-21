@@ -738,15 +738,15 @@
           "method" => "elicitation/create",
           "params" => %{
             "_meta" => %{"codexAcp" => %{"autoResolutionMs" => nil, "isBlocking" => nil}},
-            "message" => "Which color?",
+            "message" => "Codex needs your input to continue.",
             "mode" => "form",
             "requestedSchema" => %{
               "properties" => %{
                 "color" => %{
                   "_meta" => %{"codex" => %{"isOther" => false, "isSecret" => false}},
-                  "description" => "Which color?",
+                  "description" => "Color",
                   "oneOf" => [%{"const" => "Blue", "description" => "Cool", "title" => "Blue"}],
-                  "title" => "Color",
+                  "title" => "Which color?",
                   "type" => "string"
                 }
               },

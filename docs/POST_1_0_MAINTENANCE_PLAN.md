@@ -622,6 +622,47 @@ Record the decision for each item here before the next pin refresh; a pin
 that leads the reviewed behavior must not be advanced again until this list is
 resolved.
 
+### 2026-09-20 drift review and parity decisions
+
+`mix acp.compat.check` reported Claude Agent ACP at
+`d421f56a6c43cde16d9a7531d08a750a5ef2f04a` (0.79.0, 39 commits past the pin)
+and Codex ACP at `d7b07c1b44a28890cdf3d5450f8974a812db5ae2` (1.12.0, 29
+commits), plus two new registry agents and 23 registry version moves. Both
+references still build on ACP SDK 1.4.0, the version ExMCP pins and the
+newest on npm, so none of the new capabilities are schema changes; they are
+extensions negotiated through `_meta`.
+
+Ported, each behind fixture tests (see the 1.5.0 changelog):
+
+- Claude per-session opt-out of `bypassPermissions` (claude-agent-acp#1129);
+- Claude AskUserQuestion custom text kept beside the pick (#1031, #1131);
+- Codex `request_user_input` form shapes (codex-acp#299); and
+- Codex paginated history on `session/load` (codex-acp#481).
+
+Deferred, pre-standard extensions not in SDK 1.4.0, to be revisited when the
+weekly ecosystem workflow reports an SDK release that carries them: the
+`authStatus` push notification (#1080, #467), `recommendedValue` model and
+effort hints (#1111, #491), `asyncTasks` for background terminals (#460),
+the tool-call `name` field from an RFD (#1128, #513), and the compaction
+mechanisms (#991, #1134, #515), which fold into the existing compaction
+decision above.
+
+Not applicable: codex-acp#471 (standalone MCP elicitation finalization),
+because ExMCP forwards MCP elicitations without a synthetic tool call, so
+nothing dangles. Upstream-internal: CI, dependency and Codex CLI version
+bumps, fork-loading performance, TaskList parsing, model display-name
+cosmetics. Kept as ExMCP's own surface: the Claude main-thread agent config
+option, removed upstream in #1112; ExMCP retains it through 1.x.
+
+Still open from the 2026-09-01 list, deferred to a later minor: the Claude
+stable mode catalog with `_meta.kind` and the Auto-mode fallback, per-model
+token usage, deferred steering while input is pending, message-specific
+forks, and Codex session titles with `/rename`. Native subagents and async
+tasks on both sides are covered by the `asyncTasks` deferral above.
+
+The manifest pins now advance to the reviewed heads. The pins lead the
+open items above, so they must not advance again until those are decided.
+
 ## ACP v1 completion and v2 monitoring
 
 The July 2026 stable ACP v1 additions are represented in the runtime and

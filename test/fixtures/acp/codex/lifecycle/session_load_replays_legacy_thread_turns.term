@@ -92,7 +92,11 @@
             "approvalPolicy" => "on-request",
             "config" => %{"projects" => %{"/tmp/project" => %{"trust_level" => "trusted"}}},
             "cwd" => "/tmp/project",
-            "initialTurnsPage" => %{"itemsView" => "full", "limit" => 100},
+            "initialTurnsPage" => %{
+              "itemsView" => "full",
+              "limit" => 100,
+              "sortDirection" => "desc"
+            },
             "modelProvider" => "openai",
             "sandbox" => "workspace-write",
             "threadId" => "thread-abc"
@@ -362,7 +366,11 @@
             "approvalPolicy" => "on-request",
             "config" => %{"projects" => %{"/tmp/project" => %{"trust_level" => "trusted"}}},
             "cwd" => "/tmp/project",
-            "initialTurnsPage" => %{"itemsView" => "full", "limit" => 100},
+            "initialTurnsPage" => %{
+              "itemsView" => "full",
+              "limit" => 100,
+              "sortDirection" => "desc"
+            },
             "modelProvider" => "openai",
             "sandbox" => "workspace-write",
             "threadId" => "thread-abc"

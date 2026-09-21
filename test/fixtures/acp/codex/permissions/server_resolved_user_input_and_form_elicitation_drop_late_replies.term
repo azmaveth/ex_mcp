@@ -340,14 +340,13 @@
           "method" => "elicitation/create",
           "params" => %{
             "_meta" => %{"codexAcp" => %{"autoResolutionMs" => nil, "isBlocking" => nil}},
-            "message" => "Your name?",
+            "message" => "Codex needs your input to continue.",
             "mode" => "form",
             "requestedSchema" => %{
               "properties" => %{
                 "name" => %{
                   "_meta" => %{"codex" => %{"isOther" => false, "isSecret" => false}},
-                  "description" => "Your name?",
-                  "title" => "Input",
+                  "title" => "Your name?",
                   "type" => "string"
                 }
               },

@@ -46,8 +46,8 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
       `permissions` profile granting an empty profile;
     * `item/tool/requestUserInput` form elicitation round trips, including
       secret-field and missing-capability refusals (a boolean `form`
-      capability counts as missing), `__other` id collisions, blank
-      `__other` text falling back to the selected option, an empty-string
+      capability counts as missing), `_note` id collisions, blank
+      note text falling back to the selected option, an empty-string
       answer omitting its question, the request message winning over a
       single question's text, `required` omitted when every question is
       optional, `isOther` without options or with an explicit empty options
@@ -2175,7 +2175,8 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
       steps =
         active_turn_steps(@form_caps) ++
           [
-            {:note, "A single question without a message uses the question text as the prompt"},
+            {:note,
+             "The elicitation message is the fixed Codex prompt; the question text is the property title and the header its description"},
             {:inbound,
              user_input_request(100, %{
                "questions" => [
@@ -2200,8 +2201,10 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
       assert [%{"method" => "elicitation/create", "params" => params}] =
                acp_requests(transcript)
 
-      assert params["message"] == "Which color?"
+      assert params["message"] == "Codex needs your input to continue."
       assert params["requestedSchema"]["required"] == ["color"]
+      assert params["requestedSchema"]["properties"]["color"]["title"] == "Which color?"
+      assert params["requestedSchema"]["properties"]["color"]["description"] == "Color"
 
       assert %{
                writes: [
@@ -2219,7 +2222,7 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
         active_turn_steps(@form_caps) ++
           [
             {:note,
-             "Questions without a usable id are dropped; an isOther question is optional and gets an __other field"},
+             "Questions without a usable id are dropped; an isOther question stays required, gains a 'None of the above' choice, and gets a _note field"},
             {:inbound,
              user_input_request(100, %{
                "message" => "A few details, please",
@@ -2240,14 +2243,14 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
                ]
              })},
             {:note,
-             "Lists keep only their string elements; a whitespace-only string answer is kept; __other text wins over the selected option"},
+             "Lists keep only their string elements; a whitespace-only string answer is dropped, as the reference adapter does; note text joins the selection as user_note"},
             {:outbound,
              elicitation_reply(%{
                "action" => "accept",
                "content" => %{
                  "name" => ["Ada", 42, "Lovelace"],
                  "langs" => "Elixir",
-                 "langs__other" => "Gleam",
+                 "langs_note" => "Gleam",
                  "notes" => "   "
                }
              })}
@@ -2257,15 +2260,21 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
         CodexGolden.assert_golden(@area, "user_input_multiple_questions_and_list_answers", steps)
 
       assert [%{"params" => params}] = acp_requests(transcript)
-      assert params["message"] == "A few details, please"
-      assert params["requestedSchema"]["required"] == ["name", "notes"]
+      assert params["message"] == "Codex needs your input to continue."
+      assert params["requestedSchema"]["required"] == ["name", "langs", "notes"]
 
       assert Map.keys(params["requestedSchema"]["properties"]) == [
                "langs",
-               "langs__other",
+               "langs_note",
                "name",
                "notes"
              ]
+
+      assert Enum.map(params["requestedSchema"]["properties"]["langs"]["oneOf"], & &1["const"]) ==
+               ["Elixir", "Erlang", "None of the above"]
+
+      assert params["requestedSchema"]["properties"]["langs_note"]["_meta"]["codex"]["role"] ==
+               "user_note"
 
       assert %{
                writes: [
@@ -2274,8 +2283,7 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
                    "result" => %{
                      "answers" => %{
                        "name" => %{"answers" => ["Ada", "Lovelace"]},
-                       "langs" => %{"answers" => ["Gleam"]},
-                       "notes" => %{"answers" => ["   "]}
+                       "langs" => %{"answers" => ["Elixir", "user_note: Gleam"]}
                      }
                    }
                  }
@@ -2319,12 +2327,12 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
              } = CodexGolden.last_result(transcript)
     end
 
-    test "user_input_single_question_message_wins_over_question_text" do
+    test "user_input_request_message_is_not_forwarded" do
       steps =
         active_turn_steps(@form_caps) ++
           [
             {:note,
-             "With a single question the request message still wins over the question text as the prompt; the question text stays in the property description"},
+             "The request message is not forwarded: the elicitation message is always the fixed Codex prompt, the question text the title and the header the description"},
             {:inbound,
              user_input_request(100, %{
                "message" => "Codex needs one detail before continuing",
@@ -2337,17 +2345,14 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
           ]
 
       transcript =
-        CodexGolden.assert_golden(
-          @area,
-          "user_input_single_question_message_wins_over_question_text",
-          steps
-        )
+        CodexGolden.assert_golden(@area, "user_input_request_message_is_not_forwarded", steps)
 
       assert [%{"method" => "elicitation/create", "params" => params}] =
                acp_requests(transcript)
 
-      assert params["message"] == "Codex needs one detail before continuing"
-      assert params["requestedSchema"]["properties"]["color"]["description"] == "Which color?"
+      assert params["message"] == "Codex needs your input to continue."
+      assert params["requestedSchema"]["properties"]["color"]["title"] == "Which color?"
+      assert params["requestedSchema"]["properties"]["color"]["description"] == "Color"
 
       assert %{
                writes: [
@@ -2386,12 +2391,12 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
                CodexGolden.last_result(transcript)
     end
 
-    test "user_input_other_field_id_collision" do
+    test "user_input_note_field_id_collision" do
       steps =
         active_turn_steps(@form_caps) ++
           [
             {:note,
-             "A real question already named color__other pushes the synthesized field to color__other1"},
+             "A real question already named color_note pushes the synthesized note field to color_note1"},
             {:inbound,
              user_input_request(100, %{
                "questions" => [
@@ -2401,23 +2406,27 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
                    "isOther" => true,
                    "options" => [%{"label" => "Blue"}]
                  },
-                 %{"id" => "color__other", "question" => "Real second question"}
+                 %{"id" => "color_note", "question" => "Real second question"}
                ]
              })},
             {:outbound,
              elicitation_reply(%{
                "action" => "accept",
-               "content" => %{"color__other1" => "Green", "color__other" => "second"}
+               "content" => %{
+                 "color" => "None of the above",
+                 "color_note1" => "Green",
+                 "color_note" => "second"
+               }
              })}
           ]
 
-      transcript = CodexGolden.assert_golden(@area, "user_input_other_field_id_collision", steps)
+      transcript = CodexGolden.assert_golden(@area, "user_input_note_field_id_collision", steps)
 
       assert [%{"params" => %{"requestedSchema" => %{"properties" => properties}}}] =
                acp_requests(transcript)
 
-      assert properties["color__other"]["description"] == "Real second question"
-      assert properties["color__other1"]["_meta"]["codex"]["isOtherAnswer"] == true
+      assert properties["color_note"]["title"] == "Real second question"
+      assert properties["color_note1"]["_meta"]["codex"]["role"] == "user_note"
 
       assert %{
                writes: [
@@ -2425,8 +2434,8 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
                    "id" => 100,
                    "result" => %{
                      "answers" => %{
-                       "color" => %{"answers" => ["Green"]},
-                       "color__other" => %{"answers" => ["second"]}
+                       "color" => %{"answers" => ["None of the above", "user_note: Green"]},
+                       "color_note" => %{"answers" => ["second"]}
                      }
                    }
                  }
@@ -2448,20 +2457,20 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
       steps =
         active_turn_steps(@form_caps) ++
           [
-            {:note, "Whitespace-only __other text is ignored in favour of the selected option"},
+            {:note, "Whitespace-only note text is ignored; only the selected option answers"},
             {:inbound, user_input_request(100, %{"questions" => questions})},
             {:outbound,
              elicitation_reply(%{
                "action" => "accept",
-               "content" => %{"langs" => "Elixir", "langs__other" => "   "}
+               "content" => %{"langs" => "Elixir", "langs_note" => "   "}
              })},
-            {:note, "So is an empty __other string"},
+            {:note, "So is an empty note string"},
             {:inbound,
              user_input_request(101, %{"itemId" => "tool-2", "questions" => questions})},
             {:outbound,
              elicitation_reply(%{
                "action" => "accept",
-               "content" => %{"langs" => "Elixir", "langs__other" => ""}
+               "content" => %{"langs" => "Elixir", "langs_note" => ""}
              })}
           ]
 
@@ -2480,12 +2489,12 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
              ] = transcript |> CodexGolden.writes() |> Enum.filter(&Map.has_key?(&1, "result"))
     end
 
-    test "user_input_all_other_questions_omit_required" do
+    test "user_input_all_other_questions_stay_required" do
       steps =
         active_turn_steps(@form_caps) ++
           [
             {:note,
-             "Every question is isOther with options, so nothing is required and the key is omitted"},
+             "Every question is isOther with options; each stays a required choice and gets a _note field"},
             {:inbound,
              user_input_request(100, %{
                "questions" => [
@@ -2503,28 +2512,29 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
                  }
                ]
              })},
-            {:note, "A non-string, non-list answer value is dropped"},
+            {:note,
+             "A note without a choice still answers as user_note; a non-string, non-list answer value is dropped"},
             {:outbound,
              elicitation_reply(%{
                "action" => "accept",
-               "content" => %{"langs__other" => "Gleam", "editor" => 42}
+               "content" => %{"langs_note" => "Gleam", "editor" => 42}
              })}
           ]
 
       transcript =
-        CodexGolden.assert_golden(@area, "user_input_all_other_questions_omit_required", steps)
+        CodexGolden.assert_golden(@area, "user_input_all_other_questions_stay_required", steps)
 
       assert [%{"params" => %{"requestedSchema" => schema}}] = acp_requests(transcript)
-      refute Map.has_key?(schema, "required")
+      assert schema["required"] == ["langs", "editor"]
 
       assert Map.keys(schema["properties"]) ==
-               ["editor", "editor__other", "langs", "langs__other"]
+               ["editor", "editor_note", "langs", "langs_note"]
 
       assert %{
                writes: [
                  %{
                    "id" => 100,
-                   "result" => %{"answers" => %{"langs" => %{"answers" => ["Gleam"]}}}
+                   "result" => %{"answers" => %{"langs" => %{"answers" => ["user_note: Gleam"]}}}
                  }
                ]
              } = CodexGolden.last_result(transcript)
@@ -2535,18 +2545,18 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
         active_turn_steps(@form_caps) ++
           [
             {:note,
-             "isOther without options gets no __other field and remains a required free-text question"},
+             "isOther without options gets no note field and remains a required free-text question"},
             {:inbound,
              user_input_request(100, %{
                "questions" => [
                  %{"id" => "notes", "question" => "Anything else?", "isOther" => true}
                ]
              })},
-            {:note, "A stray notes__other value is not an other-field and is ignored"},
+            {:note, "A stray notes_note value is not a note field and is ignored"},
             {:outbound,
              elicitation_reply(%{
                "action" => "accept",
-               "content" => %{"notes" => "Ship it", "notes__other" => "ignored"}
+               "content" => %{"notes" => "Ship it", "notes_note" => "ignored"}
              })}
           ]
 
@@ -2572,7 +2582,7 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
         active_turn_steps(@form_caps) ++
           [
             {:note,
-             "An explicit empty options list is treated like no options: no __other field, and the question stays required"},
+             "An explicit empty options list is treated like no options: no note field, and the question stays required"},
             {:inbound,
              user_input_request(100, %{
                "questions" => [
@@ -2614,7 +2624,7 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
         active_turn_steps(@form_caps) ++
           [
             {:note,
-             "A request with no questions and no message still becomes a form elicitation with an empty object schema and the default prompt"},
+             "A request with no questions still becomes a form elicitation with an empty object schema and the fixed prompt"},
             {:inbound, user_input_request(100, %{})},
             {:outbound, elicitation_reply(%{"action" => "accept", "content" => %{}})}
           ]
@@ -2623,7 +2633,7 @@ defmodule ExMCP.ACP.Adapters.Codex.PermissionsGoldenTest do
         CodexGolden.assert_golden(@area, "user_input_without_questions_round_trip", steps)
 
       assert [%{"method" => "elicitation/create", "params" => params}] = acp_requests(transcript)
-      assert params["message"] == "Input requested"
+      assert params["message"] == "Codex needs your input to continue."
       assert params["requestedSchema"] == %{"type" => "object", "properties" => %{}}
 
       assert %{writes: [%{"id" => 100, "result" => %{"answers" => %{}}}]} =

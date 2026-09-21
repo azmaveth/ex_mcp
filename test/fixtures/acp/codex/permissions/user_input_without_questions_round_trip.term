@@ -321,7 +321,7 @@
   %ExMCP.Test.CodexGolden.Entry{
     step: %{
       kind: :note,
-      text: "A request with no questions and no message still becomes a form elicitation with an empty object schema and the default prompt"
+      text: "A request with no questions still becomes a form elicitation with an empty object schema and the fixed prompt"
     },
     result: %{}
   },
@@ -342,7 +342,7 @@
           "method" => "elicitation/create",
           "params" => %{
             "_meta" => %{"codexAcp" => %{"autoResolutionMs" => nil, "isBlocking" => nil}},
-            "message" => "Input requested",
+            "message" => "Codex needs your input to continue.",
             "mode" => "form",
             "requestedSchema" => %{"properties" => %{}, "type" => "object"},
             "sessionId" => "thread-1",

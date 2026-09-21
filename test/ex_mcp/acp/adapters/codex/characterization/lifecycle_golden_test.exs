@@ -1095,6 +1095,197 @@ defmodule ExMCP.ACP.Adapters.Codex.LifecycleGoldenTest do
 
   # -- session/load and session/resume -----------------------------------------
 
+  test "session_load_paginates_older_turns" do
+    steps =
+      connected_steps() ++
+        [
+          {:outbound,
+           %{
+             "method" => "session/load",
+             "id" => 12,
+             "params" => %{
+               "sessionId" => "thread-abc",
+               "cwd" => "/tmp/project",
+               "mcpServers" => []
+             }
+           }},
+          {:note,
+           "The resume result carries the newest page (newest first) and a backwards cursor, so older turns are paged with thread/turns/list before anything is replayed"},
+          {:inbound,
+           %{
+             "id" => 3,
+             "result" => %{
+               "model" => "gpt-5",
+               "thread" => %{
+                 "id" => "thread-abc",
+                 "cwd" => "/tmp/project",
+                 "historyMode" => "paginated"
+               },
+               "initialTurnsPage" => %{
+                 "data" => [load_turn("turn-2", "newest")],
+                 "nextCursor" => "cur-1"
+               },
+               "turnsBackwardsCursor" => "cur-1"
+             }
+           }},
+          {:inbound,
+           %{
+             "id" => 4,
+             "result" => %{"data" => [load_turn("turn-1", "middle")], "nextCursor" => "cur-0"}
+           }},
+          {:inbound,
+           %{
+             "id" => 5,
+             "result" => %{"data" => [load_turn("turn-0", "oldest")], "nextCursor" => nil}
+           }}
+        ]
+
+    transcript = CodexGolden.assert_golden(@area, "session_load_paginates_older_turns", steps)
+
+    assert [
+             %{
+               "id" => 4,
+               "method" => "thread/turns/list",
+               "params" => %{
+                 "cursor" => "cur-1",
+                 "limit" => 50,
+                 "sortDirection" => "desc",
+                 "itemsView" => "full",
+                 "threadId" => "thread-abc"
+               }
+             },
+             %{"id" => 5, "method" => "thread/turns/list", "params" => %{"cursor" => "cur-0"}}
+           ] =
+             transcript
+             |> CodexGolden.writes()
+             |> Enum.filter(&(&1["method"] == "thread/turns/list"))
+
+    assert [
+             %{
+               "params" => %{
+                 "update" => %{
+                   "sessionUpdate" => "agent_message_chunk",
+                   "content" => %{"text" => "oldest"}
+                 }
+               }
+             },
+             %{
+               "params" => %{
+                 "update" => %{
+                   "sessionUpdate" => "agent_message_chunk",
+                   "content" => %{"text" => "middle"}
+                 }
+               }
+             },
+             %{
+               "params" => %{
+                 "update" => %{
+                   "sessionUpdate" => "agent_message_chunk",
+                   "content" => %{"text" => "newest"}
+                 }
+               }
+             },
+             %{"id" => 12, "result" => %{"sessionId" => "thread-abc"}}
+           ] = CodexGolden.messages(transcript)
+  end
+
+  test "session_load_history_page_error_replays_initial_page" do
+    steps =
+      connected_steps() ++
+        [
+          {:outbound,
+           %{
+             "method" => "session/load",
+             "id" => 12,
+             "params" => %{
+               "sessionId" => "thread-abc",
+               "cwd" => "/tmp/project",
+               "mcpServers" => []
+             }
+           }},
+          {:inbound,
+           %{
+             "id" => 3,
+             "result" => %{
+               "model" => "gpt-5",
+               "thread" => %{"id" => "thread-abc", "cwd" => "/tmp/project"},
+               "initialTurnsPage" => %{
+                 "data" => [load_turn("turn-2", "newest"), load_turn("turn-1", "middle")],
+                 "nextCursor" => "cur-0"
+               }
+             }
+           }},
+          {:note,
+           "An app-server without thread/turns/list answers with an error; the load still succeeds with the initial page, in chronological order"},
+          {:inbound,
+           %{"id" => 4, "error" => %{"code" => -32_601, "message" => "Method not found"}}}
+        ]
+
+    transcript =
+      CodexGolden.assert_golden(
+        @area,
+        "session_load_history_page_error_replays_initial_page",
+        steps
+      )
+
+    assert [
+             %{"params" => %{"update" => %{"content" => %{"text" => "middle"}}}},
+             %{"params" => %{"update" => %{"content" => %{"text" => "newest"}}}},
+             %{"id" => 12, "result" => %{"sessionId" => "thread-abc"}}
+           ] = CodexGolden.messages(transcript)
+  end
+
+  test "session_load_repeated_history_cursor_stops_paging" do
+    steps =
+      connected_steps() ++
+        [
+          {:outbound,
+           %{
+             "method" => "session/load",
+             "id" => 12,
+             "params" => %{
+               "sessionId" => "thread-abc",
+               "cwd" => "/tmp/project",
+               "mcpServers" => []
+             }
+           }},
+          {:inbound,
+           %{
+             "id" => 3,
+             "result" => %{
+               "model" => "gpt-5",
+               "thread" => %{"id" => "thread-abc", "cwd" => "/tmp/project"},
+               "initialTurnsPage" => %{
+                 "data" => [load_turn("turn-2", "newest")],
+                 "nextCursor" => nil
+               },
+               "turnsBackwardsCursor" => "cur-1"
+             }
+           }},
+          {:note,
+           "A page that hands back a cursor already followed ends paging with what was read"},
+          {:inbound,
+           %{
+             "id" => 4,
+             "result" => %{"data" => [load_turn("turn-1", "middle")], "nextCursor" => "cur-1"}
+           }}
+        ]
+
+    transcript =
+      CodexGolden.assert_golden(@area, "session_load_repeated_history_cursor_stops_paging", steps)
+
+    assert [%{"method" => "thread/turns/list"}] =
+             transcript
+             |> CodexGolden.writes()
+             |> Enum.filter(&(&1["method"] == "thread/turns/list"))
+
+    assert [
+             %{"params" => %{"update" => %{"content" => %{"text" => "middle"}}}},
+             %{"params" => %{"update" => %{"content" => %{"text" => "newest"}}}},
+             %{"id" => 12, "result" => %{"sessionId" => "thread-abc"}}
+           ] = CodexGolden.messages(transcript)
+  end
+
   test "session_load_thread_resume_replays_history" do
     steps =
       connected_steps() ++
@@ -1195,6 +1386,54 @@ defmodule ExMCP.ACP.Adapters.Codex.LifecycleGoldenTest do
 
     assert [%{"id" => 13, "result" => %{"modes" => %{"currentModeId" => "read-only"}}}] =
              CodexGolden.messages(transcript)
+  end
+
+  test "session_resume_ignores_history_cursor" do
+    steps =
+      connected_steps() ++
+        [
+          {:outbound,
+           %{
+             "method" => "session/resume",
+             "id" => 13,
+             "params" => %{"sessionId" => "thread-abc", "cwd" => "/tmp/project"}
+           }},
+          {:note,
+           "resume sends excludeTurns, so a backwards cursor on the reply is ignored: only the returned page is replayed and thread/turns/list is never requested"},
+          {:inbound,
+           %{
+             "id" => 3,
+             "result" => %{
+               "model" => "gpt-5",
+               "thread" => %{
+                 "id" => "thread-abc",
+                 "cwd" => "/tmp/project",
+                 "historyMode" => "paginated"
+               },
+               "initialTurnsPage" => %{
+                 "data" => [load_turn("turn-2", "newest")],
+                 "nextCursor" => "cur-1"
+               },
+               "turnsBackwardsCursor" => "cur-1"
+             }
+           }}
+        ]
+
+    transcript = CodexGolden.assert_golden(@area, "session_resume_ignores_history_cursor", steps)
+
+    refute Enum.any?(CodexGolden.writes(transcript), &(&1["method"] == "thread/turns/list"))
+
+    assert [
+             %{
+               "params" => %{
+                 "update" => %{
+                   "sessionUpdate" => "agent_message_chunk",
+                   "content" => %{"text" => "newest"}
+                 }
+               }
+             },
+             %{"id" => 13, "result" => %{"modes" => _}}
+           ] = CodexGolden.messages(transcript)
   end
 
   test "session_resume_replays_returned_history" do
@@ -3822,5 +4061,13 @@ defmodule ExMCP.ACP.Adapters.Codex.LifecycleGoldenTest do
         ]
       }
     ]
+  end
+
+  defp load_turn(id, text) do
+    %{
+      "id" => id,
+      "status" => "completed",
+      "items" => [%{"type" => "agent_message", "id" => id <> "-msg", "text" => text}]
+    }
   end
 end

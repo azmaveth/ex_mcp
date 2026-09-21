@@ -321,7 +321,7 @@
   %ExMCP.Test.CodexGolden.Entry{
     step: %{
       kind: :note,
-      text: "An explicit empty options list is treated like no options: no __other field, and the question stays required"
+      text: "An explicit empty options list is treated like no options: no note field, and the question stays required"
     },
     result: %{}
   },
@@ -349,14 +349,13 @@
           "method" => "elicitation/create",
           "params" => %{
             "_meta" => %{"codexAcp" => %{"autoResolutionMs" => nil, "isBlocking" => nil}},
-            "message" => "Anything else?",
+            "message" => "Codex needs your input to continue.",
             "mode" => "form",
             "requestedSchema" => %{
               "properties" => %{
                 "notes" => %{
                   "_meta" => %{"codex" => %{"isOther" => true, "isSecret" => false}},
-                  "description" => "Anything else?",
-                  "title" => "Input",
+                  "title" => "Anything else?",
                   "type" => "string"
                 }
               },

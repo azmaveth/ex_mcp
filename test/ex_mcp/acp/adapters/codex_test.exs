@@ -1600,7 +1600,14 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert {:messages, [request], state} = Codex.translate_inbound(line, state)
       assert request["method"] == "elicitation/create"
       assert request["params"]["mode"] == "form"
-      assert request["params"]["message"] == "Which color?"
+      assert request["params"]["message"] == "Codex needs your input to continue."
+      assert request["params"]["requestedSchema"]["required"] == ["color"]
+
+      assert request["params"]["requestedSchema"]["properties"]["color"]["title"] ==
+               "Which color?"
+
+      assert request["params"]["requestedSchema"]["properties"]["color"]["description"] ==
+               "Color"
 
       response = %{
         "id" => request["id"],
@@ -1632,7 +1639,7 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert decode(secret_data) == %{"id" => 202, "result" => %{"answers" => %{}}}
     end
 
-    test "requestUserInput gives Other fields collision-safe ids", %{state: state} do
+    test "requestUserInput gives note fields collision-safe ids", %{state: state} do
       state = %{state | client_capabilities: %{"elicitation" => %{"form" => %{}}}}
 
       line =
@@ -1649,29 +1656,38 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
                 "isOther" => true,
                 "options" => [%{"label" => "Blue"}]
               },
-              %{"id" => "color__other", "question" => "Real second question"}
+              %{"id" => "color_note", "question" => "Real second question"}
             ]
           }
         })
 
       assert {:messages, [request], state} = Codex.translate_inbound(line, state)
       properties = request["params"]["requestedSchema"]["properties"]
-      assert properties["color__other"]["description"] == "Real second question"
-      assert properties["color__other1"]["_meta"]["codex"]["isOtherAnswer"] == true
+      assert properties["color_note"]["title"] == "Real second question"
+      assert properties["color_note1"]["_meta"]["codex"]["role"] == "user_note"
+
+      assert Enum.map(properties["color"]["oneOf"], & &1["const"]) == [
+               "Blue",
+               "None of the above"
+             ]
 
       response = %{
         "id" => request["id"],
         "result" => %{
           "action" => "accept",
-          "content" => %{"color__other1" => "Green", "color__other" => "second"}
+          "content" => %{
+            "color" => "None of the above",
+            "color_note1" => "Green",
+            "color_note" => "second"
+          }
         }
       }
 
       assert {:ok, data, _state} = Codex.translate_outbound(response, state)
 
       assert decode(data)["result"]["answers"] == %{
-               "color" => %{"answers" => ["Green"]},
-               "color__other" => %{"answers" => ["second"]}
+               "color" => %{"answers" => ["None of the above", "user_note: Green"]},
+               "color_note" => %{"answers" => ["second"]}
              }
     end
 

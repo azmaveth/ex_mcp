@@ -95,7 +95,13 @@ defmodule ExMCP.ACP.Adapters.Codex.ProtocolTest do
 
       assert envelope["method"] == "thread/resume"
       assert envelope["params"]["threadId"] == "thread-1"
-      assert envelope["params"]["initialTurnsPage"] == %{"limit" => 100, "itemsView" => "full"}
+
+      assert envelope["params"]["initialTurnsPage"] == %{
+               "limit" => 100,
+               "itemsView" => "full",
+               "sortDirection" => "desc"
+             }
+
       assert envelope["params"]["modelProvider"] == "openai"
       assert new_state.pending_requests[1].type == :thread_resume
       assert new_state.pending_requests[1].acp_id == "acp-load"

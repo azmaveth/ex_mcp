@@ -321,7 +321,7 @@
   %ExMCP.Test.CodexGolden.Entry{
     step: %{
       kind: :note,
-      text: "Whitespace-only __other text is ignored in favour of the selected option"
+      text: "Whitespace-only note text is ignored; only the selected option answers"
     },
     result: %{}
   },
@@ -355,33 +355,38 @@
           "method" => "elicitation/create",
           "params" => %{
             "_meta" => %{"codexAcp" => %{"autoResolutionMs" => nil, "isBlocking" => nil}},
-            "message" => "Which languages?",
+            "message" => "Codex needs your input to continue.",
             "mode" => "form",
             "requestedSchema" => %{
               "properties" => %{
                 "langs" => %{
                   "_meta" => %{"codex" => %{"isOther" => true, "isSecret" => false}},
-                  "description" => "Which languages?",
+                  "description" => "Languages",
                   "oneOf" => [
                     %{"const" => "Elixir", "title" => "Elixir"},
-                    %{"const" => "Erlang", "title" => "Erlang"}
+                    %{"const" => "Erlang", "title" => "Erlang"},
+                    %{
+                      "const" => "None of the above",
+                      "description" => "Provide a different answer in the note field.",
+                      "title" => "None of the above"
+                    }
                   ],
-                  "title" => "Languages",
+                  "title" => "Which languages?",
                   "type" => "string"
                 },
-                "langs__other" => %{
+                "langs_note" => %{
                   "_meta" => %{
                     "codex" => %{
-                      "isOtherAnswer" => true,
                       "isSecret" => false,
-                      "questionId" => "langs"
+                      "questionId" => "langs",
+                      "role" => "user_note"
                     }
                   },
-                  "description" => "Type your own answer instead of choosing an option above.",
-                  "title" => "Other",
+                  "title" => "Additional answer or note",
                   "type" => "string"
                 }
               },
+              "required" => ["langs"],
               "type" => "object"
             },
             "sessionId" => "thread-1",
@@ -400,7 +405,7 @@
         "jsonrpc" => "2.0",
         "result" => %{
           "action" => "accept",
-          "content" => %{"langs" => "Elixir", "langs__other" => "   "}
+          "content" => %{"langs" => "Elixir", "langs_note" => "   "}
         }
       }
     },
@@ -412,7 +417,7 @@
     }
   },
   %ExMCP.Test.CodexGolden.Entry{
-    step: %{kind: :note, text: "So is an empty __other string"},
+    step: %{kind: :note, text: "So is an empty note string"},
     result: %{}
   },
   %ExMCP.Test.CodexGolden.Entry{
@@ -445,33 +450,38 @@
           "method" => "elicitation/create",
           "params" => %{
             "_meta" => %{"codexAcp" => %{"autoResolutionMs" => nil, "isBlocking" => nil}},
-            "message" => "Which languages?",
+            "message" => "Codex needs your input to continue.",
             "mode" => "form",
             "requestedSchema" => %{
               "properties" => %{
                 "langs" => %{
                   "_meta" => %{"codex" => %{"isOther" => true, "isSecret" => false}},
-                  "description" => "Which languages?",
+                  "description" => "Languages",
                   "oneOf" => [
                     %{"const" => "Elixir", "title" => "Elixir"},
-                    %{"const" => "Erlang", "title" => "Erlang"}
+                    %{"const" => "Erlang", "title" => "Erlang"},
+                    %{
+                      "const" => "None of the above",
+                      "description" => "Provide a different answer in the note field.",
+                      "title" => "None of the above"
+                    }
                   ],
-                  "title" => "Languages",
+                  "title" => "Which languages?",
                   "type" => "string"
                 },
-                "langs__other" => %{
+                "langs_note" => %{
                   "_meta" => %{
                     "codex" => %{
-                      "isOtherAnswer" => true,
                       "isSecret" => false,
-                      "questionId" => "langs"
+                      "questionId" => "langs",
+                      "role" => "user_note"
                     }
                   },
-                  "description" => "Type your own answer instead of choosing an option above.",
-                  "title" => "Other",
+                  "title" => "Additional answer or note",
                   "type" => "string"
                 }
               },
+              "required" => ["langs"],
               "type" => "object"
             },
             "sessionId" => "thread-1",
@@ -490,7 +500,7 @@
         "jsonrpc" => "2.0",
         "result" => %{
           "action" => "accept",
-          "content" => %{"langs" => "Elixir", "langs__other" => ""}
+          "content" => %{"langs" => "Elixir", "langs_note" => ""}
         }
       }
     },

@@ -321,7 +321,7 @@
   %ExMCP.Test.CodexGolden.Entry{
     step: %{
       kind: :note,
-      text: "A single question without a message uses the question text as the prompt"
+      text: "The elicitation message is the fixed Codex prompt; the question text is the property title and the header its description"
     },
     result: %{}
   },
@@ -354,18 +354,18 @@
           "method" => "elicitation/create",
           "params" => %{
             "_meta" => %{"codexAcp" => %{"autoResolutionMs" => nil, "isBlocking" => nil}},
-            "message" => "Which color?",
+            "message" => "Codex needs your input to continue.",
             "mode" => "form",
             "requestedSchema" => %{
               "properties" => %{
                 "color" => %{
                   "_meta" => %{"codex" => %{"isOther" => false, "isSecret" => false}},
-                  "description" => "Which color?",
+                  "description" => "Color",
                   "oneOf" => [
                     %{"const" => "Blue", "description" => "Cool", "title" => "Blue"},
                     %{"const" => "Red", "title" => "Red"}
                   ],
-                  "title" => "Color",
+                  "title" => "Which color?",
                   "type" => "string"
                 }
               },

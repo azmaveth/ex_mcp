@@ -36,6 +36,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     :pending_prompt_id,
     :active_prompt_session_id,
     :init_response,
+    # False when the host opted this session out of bypassPermissions through
+    # `_meta.claudeCode.options.allowDangerouslySkipPermissions: false`.
+    bypass_allowed?: true,
     opts: [],
     pending_controls: %{},
     pending_client_requests: %{},
@@ -215,7 +218,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
         cwd: params["cwd"] || state.cwd
     }
 
-    {:reply, Mapper.session_result(state, session_id), state}
+    reply_with_bypass_policy(params, state, fn state ->
+      Mapper.session_result(state, session_id)
+    end)
   end
 
   defp handle_request("initialize", %{"params" => params}, state) do
@@ -272,7 +277,15 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     case SessionStore.read_session_messages(session_id, session_store_opts(params, state)) do
       {:ok, events} ->
         {messages, state} = Mapper.replay_messages(events, state)
-        {:messages_and_reply, messages, Mapper.session_result(state, session_id), state}
+
+        case apply_bypass_policy(params, state) do
+          {state, nil} ->
+            {:messages_and_reply, messages, Mapper.session_result(state, session_id), state}
+
+          {state, data} ->
+            {:messages_and_reply_and_write, messages, Mapper.session_result(state, session_id),
+             data, state}
+        end
 
       {:error, reason} ->
         {:error, reason, state}
@@ -289,7 +302,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
         cwd: params["cwd"] || state.cwd
     }
 
-    {:reply, Mapper.session_result(state, session_id), state}
+    reply_with_bypass_policy(params, state, fn state ->
+      Mapper.session_result(state, session_id)
+    end)
   end
 
   defp handle_request("session/close", %{"params" => %{"sessionId" => session_id}}, state) do
@@ -529,6 +544,49 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
   end
 
   defp handle_request(_method, _msg, state), do: {:ok, :skip, state}
+
+  # Mirrors claude-agent-acp#1129: a host that never uses bypassPermissions may
+  # opt a session out by sending `_meta.claudeCode.options.allowDangerouslySkipPermissions:
+  # false` on session/new, and again on session/load or session/resume. It removes
+  # the mode from the catalog and refuses it in session/set_mode. `true` cannot
+  # override the adapter's own `allow_dangerously_skip_permissions` option. The
+  # CLI flag itself is fixed at spawn time, so an active bypass mode is clamped
+  # to default through a set_permission_mode control instead.
+  defp apply_bypass_policy(params, state) do
+    opted_out? =
+      get_in(params, ["_meta", "claudeCode", "options", "allowDangerouslySkipPermissions"]) ==
+        false
+
+    state = %{state | bypass_allowed?: not opted_out?}
+
+    if opted_out? and state.permission_mode == "bypassPermissions" do
+      request_id = control_id("set_permission_mode")
+
+      state = %{
+        state
+        | permission_mode: "default",
+          pending_controls: Map.put(state.pending_controls, request_id, :set_permission_mode)
+      }
+
+      data =
+        ClaudeProtocol.control_request(request_id, %{
+          "subtype" => "set_permission_mode",
+          "mode" => "default"
+        })
+        |> ClaudeProtocol.line()
+
+      {state, data}
+    else
+      {state, nil}
+    end
+  end
+
+  defp reply_with_bypass_policy(params, state, result_fun) do
+    case apply_bypass_policy(params, state) do
+      {state, nil} -> {:reply, result_fun.(state), state}
+      {state, data} -> {:reply_and_write, result_fun.(state), data, state}
+    end
+  end
 
   defp handle_notification("session/cancel", %{"params" => params}, state) do
     session_id = params["sessionId"] || state.active_prompt_session_id || state.session_id

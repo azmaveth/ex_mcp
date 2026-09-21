@@ -321,7 +321,7 @@
   %ExMCP.Test.CodexGolden.Entry{
     step: %{
       kind: :note,
-      text: "Questions without a usable id are dropped; an isOther question is optional and gets an __other field"
+      text: "Questions without a usable id are dropped; an isOther question stays required, gains a 'None of the above' choice, and gets a _note field"
     },
     result: %{}
   },
@@ -362,46 +362,49 @@
           "method" => "elicitation/create",
           "params" => %{
             "_meta" => %{"codexAcp" => %{"autoResolutionMs" => 30000, "isBlocking" => true}},
-            "message" => "A few details, please",
+            "message" => "Codex needs your input to continue.",
             "mode" => "form",
             "requestedSchema" => %{
               "properties" => %{
                 "langs" => %{
                   "_meta" => %{"codex" => %{"isOther" => true, "isSecret" => false}},
-                  "description" => "Which languages?",
+                  "description" => "Languages",
                   "oneOf" => [
                     %{"const" => "Elixir", "title" => "Elixir"},
-                    %{"const" => "Erlang", "title" => "Erlang"}
+                    %{"const" => "Erlang", "title" => "Erlang"},
+                    %{
+                      "const" => "None of the above",
+                      "description" => "Provide a different answer in the note field.",
+                      "title" => "None of the above"
+                    }
                   ],
-                  "title" => "Languages",
+                  "title" => "Which languages?",
                   "type" => "string"
                 },
-                "langs__other" => %{
+                "langs_note" => %{
                   "_meta" => %{
                     "codex" => %{
-                      "isOtherAnswer" => true,
                       "isSecret" => false,
-                      "questionId" => "langs"
+                      "questionId" => "langs",
+                      "role" => "user_note"
                     }
                   },
-                  "description" => "Type your own answer instead of choosing an option above.",
-                  "title" => "Other",
+                  "title" => "Additional answer or note",
                   "type" => "string"
                 },
                 "name" => %{
                   "_meta" => %{"codex" => %{"isOther" => false, "isSecret" => false}},
-                  "description" => "Your name?",
-                  "title" => "Name",
+                  "description" => "Name",
+                  "title" => "Your name?",
                   "type" => "string"
                 },
                 "notes" => %{
                   "_meta" => %{"codex" => %{"isOther" => false, "isSecret" => false}},
-                  "description" => "Anything else?",
-                  "title" => "Input",
+                  "title" => "Anything else?",
                   "type" => "string"
                 }
               },
-              "required" => ["name", "notes"],
+              "required" => ["name", "langs", "notes"],
               "type" => "object"
             },
             "sessionId" => "thread-1",
@@ -415,7 +418,7 @@
   %ExMCP.Test.CodexGolden.Entry{
     step: %{
       kind: :note,
-      text: "Lists keep only their string elements; a whitespace-only string answer is kept; __other text wins over the selected option"
+      text: "Lists keep only their string elements; a whitespace-only string answer is dropped, as the reference adapter does; note text joins the selection as user_note"
     },
     result: %{}
   },
@@ -429,7 +432,7 @@
           "action" => "accept",
           "content" => %{
             "langs" => "Elixir",
-            "langs__other" => "Gleam",
+            "langs_note" => "Gleam",
             "name" => ["Ada", 42, "Lovelace"],
             "notes" => "   "
           }
@@ -443,9 +446,8 @@
           "id" => 100,
           "result" => %{
             "answers" => %{
-              "langs" => %{"answers" => ["Gleam"]},
-              "name" => %{"answers" => ["Ada", "Lovelace"]},
-              "notes" => %{"answers" => ["   "]}
+              "langs" => %{"answers" => ["Elixir", "user_note: Gleam"]},
+              "name" => %{"answers" => ["Ada", "Lovelace"]}
             }
           }
         }

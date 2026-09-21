@@ -343,20 +343,20 @@
           "method" => "elicitation/create",
           "params" => %{
             "_meta" => %{"codexAcp" => %{"autoResolutionMs" => nil, "isBlocking" => nil}},
-            "message" => "Input requested",
+            "message" => "Codex needs your input to continue.",
             "mode" => "form",
             "requestedSchema" => %{
               "properties" => %{
                 "name" => %{
                   "_meta" => %{"codex" => %{"isOther" => false, "isSecret" => false}},
-                  "description" => "Your name?",
-                  "title" => "Name",
+                  "description" => "Name",
+                  "title" => "Your name?",
                   "type" => "string"
                 },
                 "notes" => %{
                   "_meta" => %{"codex" => %{"isOther" => false, "isSecret" => false}},
-                  "description" => "Anything else?",
-                  "title" => "Notes",
+                  "description" => "Notes",
+                  "title" => "Anything else?",
                   "type" => "string"
                 }
               },
