@@ -434,8 +434,17 @@ about 4,519 lines and `ExMCP.ACP.Adapters.Pi` about 2,553, up from the rc.7
 figures quoted above, so the modularization sections below are more pressing,
 not less. The existing `Codex.Sessions` helper covers session lookup and
 update only; the lifecycle-transition boundary in the Codex plan remains.
-Dialyzer reports 27 unnecessary entries in `.dialyzer_ignore.exs` on the CI
-dialyzer version; prune them once verified against the full OTP/Elixir matrix.
+Dialyzer reported 27 unnecessary entries in `.dialyzer_ignore.exs` on the CI
+dialyzer version; 15 were pruned in 1.5.0 and the file now carries 26 entries.
+The count is environment-dependent and that is the trap: the files under
+`test/` are compiled only in the test environment, so a `MIX_ENV=dev` run
+reports every test entry as unused even though the test run needs them.
+Only the intersection was removed, and it was verified on both the current
+toolchain (Elixir 1.19.5 / OTP 28.3.1) and the pinned CI dialyzer toolchain
+(Elixir 1.17.3 / OTP 27.0), in both environments. `MIX_ENV=test` now reports
+zero unnecessary skips; a `MIX_ENV=dev` run still reports the twelve
+test-environment entries, which is expected and not a signal to remove them.
+Record the toolchain and both environments with any future prune.
 
 ## Stdio byte-mode framing and internationalization
 

@@ -1,3 +1,6 @@
+# Entries are verified against both MIX_ENV=dev and MIX_ENV=test, because the
+# files under test/ are only analyzed in the test environment. Check with
+# `mix dialyzer --list-unused-filters` in both before adding or removing one.
 [
   # Ignore warnings in test support files that depend on ExUnit
   {"lib/ex_mcp/testing/assertions.ex"},
@@ -25,24 +28,11 @@
 
   # Test environment specific warnings - these files are only analyzed when MIX_ENV=test
 
-  # Test support files with intentional pattern mismatches for error testing
-  {"test/support/error_test_server.ex", :pattern_match},
-  {"test/support/refactored_test_server.ex", :pattern_match},
-  {"test/support/test_helpers.ex", :pattern_match},
-
-  # Test support files with intentional unreachable clauses for comprehensive error handling
-  {"test/support/error_test_server.ex", :pattern_match_cov},
-  {"test/support/refactored_test_server.ex", :pattern_match_cov},
-  {"test/support/test_helpers.ex", :pattern_match_cov},
-
   # Test support callback type mismatches - these are intentional for testing edge cases
   {"test/support/consent_handler/test.ex", :callback_type_mismatch},
-  {"test/support/refactored_test_server.ex", :callback_type_mismatch},
 
   # Compliance generators and feature modules - generated tests / intentional edge cases
   {"test/ex_mcp/compliance/version_generator.ex", :no_return},
-  {"test/support/test_helpers.ex", :guard_fail},
-  {"test/support/test_helpers.ex", :call},
 
   # Compliance test feature files - generated test functions and intentional mismatches
   {"test/ex_mcp/compliance/features/batch.ex", :no_return},
@@ -58,22 +48,14 @@
   {"test/ex_mcp/compliance/handlers/handler20250326.ex", :callback_type_mismatch},
   {"test/ex_mcp/compliance/handlers/handler20250618.ex", :callback_type_mismatch},
 
-  # Agent test server - DSL-generated pattern match warning from use ExMCP.Server
-  {"test/support/agent_test_server.ex", :pattern_match},
-
   # JWT/OAuth authorization modules - Dialyzer doesn't track rescue clause types correctly,
   # causing false positives for pattern_match and unused_fun in with-chains
   {"lib/ex_mcp/authorization/oauth_flow.ex", :pattern_match},
   {"lib/ex_mcp/authorization/oauth_flow.ex", :unused_fun},
-  {"lib/ex_mcp/authorization/enterprise_flow.ex", :pattern_match},
-  {"lib/ex_mcp/authorization/enterprise_flow.ex", :unused_fun},
-  {"lib/ex_mcp/authorization/token_exchange.ex", :call},
-  {"lib/ex_mcp/authorization/jwt_bearer_assertion.ex", :call},
 
-  # Codex adapter - defensive checks for input format (content is always binary from extract_prompt_text,
-  # but guard is kept for robustness) and params nil check (params always a map)
+  # Codex adapter - defensive check for input format (content is always binary from
+  # extract_prompt_text, but the guard is kept for robustness)
   {"lib/ex_mcp/acp/adapters/codex.ex", :pattern_match},
-  {"lib/ex_mcp/acp/adapters/codex.ex", :guard_fail},
 
   # Token manager refresh_with_jwt_auth - Dialyzer infers ClientAssertion.build_assertion_params
   # always returns error based on the specific keyword args passed, but the function can succeed

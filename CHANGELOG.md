@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged (#44).
 
 ### Changed
+- Internal: `.dialyzer_ignore.exs` drops fifteen filters that no longer match
+  a warning, and documents that entries must be verified in both `MIX_ENV=dev`
+  and `MIX_ENV=test` because the files under `test/` are only analyzed in the
+  test environment. No analysis result changes.
 
 - ACP reference-adapter parity, from the 2026-09-20 drift review of
   claude-agent-acp and codex-acp (both still on ACP SDK 1.4.0):
