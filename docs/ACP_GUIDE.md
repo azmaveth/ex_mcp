@@ -851,11 +851,12 @@ covers Claude Agent ACP, Codex ACP, Gemini CLI, and Pi ACP; every entry is
 version-pinned and runs with an isolated home and scratch working directory.
 
 The same manifest pins the reference revisions used to inform ExMCP's Claude,
-Codex, and Pi protocol adapters:
+Codex, Pi, and ZCode protocol adapters:
 
 - `agentclientprotocol/claude-agent-acp`
 - `agentclientprotocol/codex-acp`
 - `svkozak/pi-acp`
+- `zai-org/ZCode`
 
 Upstream commit drift produces a direct compare URL for adapter review. Catalog
 or registry changes are never executed automatically: maintainers must review

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The scheduled ACP ecosystem drift check now pins and monitors the newly
+  published `zai-org/ZCode` repository alongside the Claude, Codex, and Pi
+  adapter references. Repo-only; nothing ships to Hex.
 - Pi adapter golden-transcript characterization suite:
   `ExMCP.Test.PiGolden` (`test/support/acp/pi_golden.ex`) and seven golden
   areas under `test/ex_mcp/acp/adapters/pi/characterization/` with fixtures
