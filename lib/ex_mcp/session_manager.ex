@@ -424,7 +424,11 @@ defmodule ExMCP.SessionManager do
       event_clock: SessionStore.event_clock(store)
     }
 
-    Logger.info("SessionManager started",
+    # Debug, not info: a library must not write to stdout during application
+    # boot, and a stdio server's protocol stream is stdout. The default Elixir
+    # logger writes there, and the application boots before the stdio
+    # transport can suppress logging.
+    Logger.debug("SessionManager started",
       storage_backend: config.storage_backend,
       storage_path: config.storage_path,
       max_sessions: config.max_sessions,
@@ -1200,7 +1204,7 @@ defmodule ExMCP.SessionManager do
       end)
 
     if length(expired_sessions) > 0 do
-      Logger.info("Cleaned up #{length(expired_sessions)} expired sessions")
+      Logger.debug("Cleaned up #{length(expired_sessions)} expired sessions")
     end
 
     state
