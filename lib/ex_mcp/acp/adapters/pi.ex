@@ -593,11 +593,17 @@ defmodule ExMCP.ACP.Adapters.Pi do
       file_commands = SlashCommands.load(cwd, state.opts)
       settings = Settings.load(cwd, state.opts)
 
+      # Mint in emission order: the rpc counter is shared with control-group ids,
+      # so binding the switch request first keeps the ids identical to the
+      # separate load and resume clauses this replaced.
+      switch_request =
+        {:switch, rpc(RPC.method(:switch_session), %{"sessionPath" => session_file})}
+
       replay_requests =
         if replay?, do: [{:messages, rpc(RPC.method(:get_messages))}], else: []
 
       requests =
-        [{:switch, rpc(RPC.method(:switch_session), %{"sessionPath" => session_file})}] ++
+        [switch_request] ++
           replay_requests ++
           [
             {:state, rpc(RPC.method(:get_state))},

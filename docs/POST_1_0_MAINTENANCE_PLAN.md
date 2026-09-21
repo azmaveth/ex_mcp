@@ -212,6 +212,26 @@ catalog entries that are not maps. All three are fixed in 1.5.0 and pinned
 by golden scenarios in the stream_events and config areas; each scenario
 reproduces the original crash when the fix is reverted.
 
+### Known limit of the Pi golden harness
+
+`ExMCP.Test.PiGolden` normalizes minted `pi-N` correlation ids by order of
+first appearance in the transcript, so two runs that emit the same requests in
+the same order produce identical fixtures even when the underlying ids were
+minted in a different order. The rpc counter is shared with control-group ids,
+so a refactor can silently renumber the wire while all 123 scenarios still
+pass. This was not hypothetical: the `Pi.Sessions` extraction merged the
+`session/load` and `session/resume` clauses and bound the replay request before
+the switch request, which swapped `switch_session` and `get_messages` on the
+wire with every fixture unchanged.
+
+Correlation still works when ids are renumbered, because each response carries
+back the id it was sent, so this is a wire-value change rather than a
+functional break. It is still a change the gate is supposed to catch. Two
+tests in `pi_test.exs` (`session/load` and `session/resume` mint correlation
+ids in emission order) assert the numeric invariant directly, and they fail
+when the minting order is reversed. Add the equivalent assertion to any future
+adapter harness rather than assuming identity normalization covers it.
+
 ### Proposed boundaries
 
 1. **`Pi.RPC`** — RPC envelope construction, correlation ids, and response

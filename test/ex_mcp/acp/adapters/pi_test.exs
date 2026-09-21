@@ -222,6 +222,80 @@ defmodule ExMCP.ACP.Adapters.PiTest do
   end
 
   describe "translate_outbound/2 — session lifecycle" do
+    # The golden harness normalizes minted ids by first appearance in the
+    # transcript, so it cannot see a change in the order the ids are minted as
+    # long as the emission order holds. These assert the raw numbers: the rpc
+    # counter is shared with control-group ids, so a refactor that binds the
+    # requests in a different order silently renumbers the wire.
+    test "session/load mints correlation ids in emission order", %{
+      state: state,
+      tmp_dir: tmp_dir,
+      session_dir: session_dir,
+      session_map_path: session_map_path
+    } do
+      session_file = Path.join(session_dir, "s1.jsonl")
+      File.write!(session_file, "")
+
+      File.write!(
+        session_map_path,
+        Jason.encode!(%{
+          "version" => 1,
+          "sessions" => %{
+            "s1" => %{"sessionId" => "s1", "cwd" => tmp_dir, "sessionFile" => session_file}
+          }
+        })
+      )
+
+      msg = %{"method" => "session/load", "id" => 1, "params" => %{"sessionId" => "s1"}}
+
+      assert {:ok, data, _state} = Pi.translate_outbound(msg, state)
+      requests = decode_many(data)
+
+      assert Enum.map(requests, & &1["type"]) == [
+               "switch_session",
+               "get_messages",
+               "get_state",
+               "get_available_models",
+               "get_commands"
+             ]
+
+      assert consecutive_rpc_ids(requests)
+    end
+
+    test "session/resume mints correlation ids in emission order and skips replay", %{
+      state: state,
+      tmp_dir: tmp_dir,
+      session_dir: session_dir,
+      session_map_path: session_map_path
+    } do
+      session_file = Path.join(session_dir, "s1.jsonl")
+      File.write!(session_file, "")
+
+      File.write!(
+        session_map_path,
+        Jason.encode!(%{
+          "version" => 1,
+          "sessions" => %{
+            "s1" => %{"sessionId" => "s1", "cwd" => tmp_dir, "sessionFile" => session_file}
+          }
+        })
+      )
+
+      msg = %{"method" => "session/resume", "id" => 1, "params" => %{"sessionId" => "s1"}}
+
+      assert {:ok, data, _state} = Pi.translate_outbound(msg, state)
+      requests = decode_many(data)
+
+      assert Enum.map(requests, & &1["type"]) == [
+               "switch_session",
+               "get_state",
+               "get_available_models",
+               "get_commands"
+             ]
+
+      assert consecutive_rpc_ids(requests)
+    end
+
     test "session/new sends Pi control requests and completes from correlated responses", %{
       state: state,
       tmp_dir: tmp_dir
@@ -1148,6 +1222,16 @@ defmodule ExMCP.ACP.Adapters.PiTest do
         assert {:skip, _state} = Pi.translate_inbound(line, state)
       end
     end
+  end
+
+  # The rpc counter is process-global, so absolute values depend on test order.
+  # The invariant that matters is that ids are minted in emission order: each
+  # request carries the next number after the one before it.
+  defp consecutive_rpc_ids(requests) do
+    numbers =
+      Enum.map(requests, fn %{"id" => "pi-" <> n} -> String.to_integer(n) end)
+
+    numbers == Enum.to_list(List.first(numbers)..List.last(numbers)//1)
   end
 
   defp decode_many(data) do
