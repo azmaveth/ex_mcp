@@ -47,9 +47,17 @@ defmodule ExMCP.ComplianceTestHelpers do
   Cleans up test client and server.
   """
   def cleanup_test_client(%{client: client, server: server}) do
-    if Process.alive?(client), do: GenServer.stop(client)
-    if Process.alive?(server), do: GenServer.stop(server)
+    stop_quietly(client)
+    stop_quietly(server)
     :ok
+  end
+
+  # A liveness check cannot make GenServer.stop/1 safe: the process can die
+  # between the two, and the stop then exits with that process's exit reason.
+  defp stop_quietly(pid) when is_pid(pid) do
+    GenServer.stop(pid)
+  catch
+    :exit, _reason -> :ok
   end
 
   @doc """

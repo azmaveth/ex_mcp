@@ -18,6 +18,24 @@ defmodule ExMCP.TestHelpers do
   end
 
   @doc """
+  Stops `pid` on test exit, tolerating a process that is already going away.
+
+  `if Process.alive?(pid), do: GenServer.stop(pid)` looks safe but is not: the
+  process can die between the check and the call, and `GenServer.stop/1` then
+  exits with that process's own exit reason (commonly `:shutdown` when a linked
+  owner is tearing down), failing an otherwise passing test.
+  """
+  def stop_on_exit(pid) when is_pid(pid) do
+    on_exit(fn ->
+      try do
+        GenServer.stop(pid)
+      catch
+        :exit, _reason -> :ok
+      end
+    end)
+  end
+
+  @doc """
   Starts a test HTTP server on an available port.
 
   Returns `{:ok, server_pid, port}` or `{:error, reason}`.
