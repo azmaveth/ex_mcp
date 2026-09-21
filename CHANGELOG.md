@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The Pi ACP adapter is split into `ExMCP.ACP.Adapters.Pi.Config`,
+  `ExMCP.ACP.Adapters.Pi.Events`, `ExMCP.ACP.Adapters.Pi.PromptFlow` and
+  `ExMCP.ACP.Adapters.Pi.Sessions`, alongside the existing `Pi.RPC`,
+  `Pi.SessionStore`, `Pi.Settings`, `Pi.SlashCommands`, `Pi.Startup`,
+  `Pi.Prompt` and `Pi.Tools`. The new modules are pure: they hold the
+  configuration translation, the inbound stream-event folding, the prompt
+  scheduling and the session-lifecycle transition, while
+  `ExMCP.ACP.Adapters.Pi` keeps the Port, the filesystem access and the
+  adapter state. The root drops from 2,586 to 1,795 lines. The public
+  `ExMCP.ACP.Adapters.Pi` API, its struct and its startup options are
+  unchanged, and there is no wire-visible change: the 123 golden Pi
+  transcripts are byte-identical.
+
 ## [1.5.0] - 2026-09-21
 
 ### Added
