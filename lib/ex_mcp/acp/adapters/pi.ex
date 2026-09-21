@@ -20,6 +20,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
     Config,
     Events,
     Prompt,
+    PromptFlow,
     RPC,
     SessionStore,
     Settings,
@@ -29,7 +30,6 @@ defmodule ExMCP.ACP.Adapters.Pi do
   }
 
   alias ExMCP.ACP.{AdapterEvents, Envelope, PromptQueue, Types}
-  alias ExMCP.Internal.Maps
 
   @auth_method_id "pi_terminal_login"
 
@@ -317,9 +317,9 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   def translate_outbound(%{"method" => "session/cancel"}, state) do
     had_queued = not PromptQueue.empty?(state.prompt_queue)
-    {queued_responses, state} = cancel_queued_prompts(state)
-    state = mark_pending_cancel_requested(state)
-    messages = queued_responses ++ queue_cleared_messages(state, had_queued)
+    {queued_responses, state} = PromptFlow.cancel_queued(state)
+    state = PromptFlow.mark_cancel_requested(state)
+    messages = queued_responses ++ PromptFlow.queue_cleared_messages(state, had_queued)
     deliver_messages_and_write(messages, RPC.encode_notification(RPC.method(:abort)), state)
   end
 
@@ -662,24 +662,8 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     cond do
       state.pending_prompt ->
-        queued = %{acp_id: acp_id, message: message, images: images, params: params}
-        queue = PromptQueue.enqueue(state.prompt_queue, queued)
-
-        session_id = params["sessionId"] || state.session_id
-        queue_depth = PromptQueue.len(queue)
-
-        notice =
-          AdapterEvents.agent_message_chunk(
-            session_id,
-            "Queued message (position #{queue_depth})."
-          )
-
-        info =
-          AdapterEvents.session_info_update(session_id, %{
-            "_meta" => %{"ex_mcp" => %{"pi" => %{"queueDepth" => queue_depth, "running" => true}}}
-          })
-
-        {:messages, [notice, info], %{state | prompt_queue: queue}}
+        {messages, state} = PromptFlow.enqueue(acp_id, message, images, params, state)
+        {:messages, messages, state}
 
       match?({:ok, _, _}, slash) ->
         translate_slash_command(slash, acp_id, params, state)
@@ -690,24 +674,8 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp start_prompt(acp_id, message, images, params, state) do
-    {msg_id, next_counter} = RPC.next_prompt_id(state.msg_counter)
-
-    rpc_msg =
-      msg_id
-      |> RPC.request(RPC.method(:prompt), %{"message" => message})
-      |> Maps.put_non_empty("images", images)
-      |> Maps.put_present("streamingBehavior", params["streamingBehavior"])
-
-    state = %{
-      state
-      | session_id: params["sessionId"] || state.session_id,
-        pending_prompt: %{acp_id: acp_id, msg_id: msg_id, cancel_requested: false},
-        text_acc: [],
-        last_usage: %{},
-        msg_counter: next_counter
-    }
-
-    deliver_pending(RPC.line(rpc_msg), state)
+    {data, state} = PromptFlow.start_plan(acp_id, message, images, params, state)
+    deliver_pending(data, state)
   end
 
   defp start_session_new(acp_id, cwd, state) do
@@ -1001,7 +969,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp process_event(%{"type" => "response", "id" => id} = event, state) when is_binary(id) do
-    if prompt_response_error?(id, event, state) do
+    if PromptFlow.response_error?(id, event, state) do
       finish_prompt_error(event, state)
     else
       case Map.pop(state.pending_controls, id) do
@@ -1115,23 +1083,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp process_event(%{"type" => "agent_settled"}, state) do
-    text = state.text_acc |> Enum.reverse() |> Enum.join("")
-
-    stop_reason =
-      if state.pending_prompt && state.pending_prompt.cancel_requested,
-        do: "cancelled",
-        else: "end_turn"
-
-    acp_id = get_in(state.pending_prompt, [:acp_id])
-
-    response =
-      Envelope.response(acp_id, %{
-        "stopReason" => stop_reason,
-        "usage" => state.last_usage,
-        "_meta" => %{"ex_mcp" => %{"text" => text, "sessionId" => state.session_id || "default"}}
-      })
-
-    state = %{state | pending_prompt: nil, text_acc: [], last_usage: %{}}
+    {response, state} = PromptFlow.settle(state)
 
     case start_next_queued_prompt(state) do
       {:ok, messages, nil, state} ->
@@ -1505,11 +1457,6 @@ defmodule ExMCP.ACP.Adapters.Pi do
     {:messages, [error], state}
   end
 
-  defp prompt_response_error?(id, %{"success" => false}, %{pending_prompt: %{msg_id: id}}),
-    do: true
-
-  defp prompt_response_error?(_id, _event, _state), do: false
-
   defp finish_prompt_error(event, state) do
     acp_id = state.pending_prompt.acp_id
 
@@ -1581,65 +1528,17 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp start_next_queued_prompt(state) do
-    case PromptQueue.pop(state.prompt_queue) do
-      {:value, queued, rest} ->
-        state = %{state | prompt_queue: rest}
-
+    case PromptFlow.next_queued(state) do
+      {:ok, queued, state} ->
         {:ok, data, state} =
           start_prompt(queued.acp_id, queued.message, queued.images, queued.params, state)
 
         write_data = if data == :pending, do: nil, else: data
 
-        queue_depth = PromptQueue.len(rest)
-
-        messages = [
-          AdapterEvents.agent_message_chunk(
-            state.session_id,
-            "Starting queued message. (#{queue_depth} remaining)"
-          ),
-          AdapterEvents.session_info_update(state.session_id, %{
-            "_meta" => %{"ex_mcp" => %{"pi" => %{"queueDepth" => queue_depth, "running" => true}}}
-          })
-        ]
-
-        {:ok, messages, write_data, state}
+        {:ok, PromptFlow.queue_started_messages(state), write_data, state}
 
       :empty ->
         :empty
-    end
-  end
-
-  defp cancel_queued_prompts(state) do
-    {queued, queue} = PromptQueue.drain(state.prompt_queue)
-
-    responses =
-      Enum.map(queued, fn queued ->
-        Envelope.response(queued.acp_id, %{"stopReason" => "cancelled"})
-      end)
-
-    {responses, %{state | prompt_queue: queue}}
-  end
-
-  defp mark_pending_cancel_requested(%{pending_prompt: nil} = state), do: state
-
-  defp mark_pending_cancel_requested(state) do
-    put_in(state.pending_prompt[:cancel_requested], true)
-  end
-
-  defp queue_cleared_messages(state, had_queued) do
-    if had_queued do
-      [
-        AdapterEvents.agent_message_chunk(state.session_id, "Cleared queued prompts."),
-        AdapterEvents.session_info_update(state.session_id, %{
-          "_meta" => %{
-            "ex_mcp" => %{
-              "pi" => %{"queueDepth" => 0, "running" => not is_nil(state.pending_prompt)}
-            }
-          }
-        })
-      ]
-    else
-      []
     end
   end
 
