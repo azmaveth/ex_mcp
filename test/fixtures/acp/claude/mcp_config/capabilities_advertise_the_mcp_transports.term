@@ -1,0 +1,41 @@
+[
+  %ExMCP.Test.ClaudeGolden.Entry{
+    step: %{
+      kind: :init,
+      opts: [
+        cwd: "<sandbox>/project",
+        claude_config_dir: "<sandbox>/claude",
+        cli_path: "<sandbox>/bin/claude"
+      ]
+    },
+    result: %{tag: :ok}
+  },
+  %ExMCP.Test.ClaudeGolden.Entry{
+    step: %{kind: :capabilities},
+    result: %{
+      reply: %{
+        "_meta" => %{
+          "ex_mcp" => %{"claude_sdk" => %{"controlProtocol" => true, "streaming" => true}}
+        },
+        "auth" => %{"logout" => %{}},
+        "loadSession" => true,
+        "mcpCapabilities" => %{
+          "_meta" => %{"ex_mcp.mcpCapabilities" => %{"beam" => true}},
+          "acp" => true,
+          "http" => true,
+          "sse" => true
+        },
+        "promptCapabilities" => %{"embeddedContext" => true, "image" => true},
+        "sessionCapabilities" => %{
+          "additionalDirectories" => %{},
+          "close" => %{},
+          "delete" => %{},
+          "fork" => %{},
+          "list" => %{},
+          "resume" => %{}
+        }
+      },
+      tag: :ok
+    }
+  }
+]
