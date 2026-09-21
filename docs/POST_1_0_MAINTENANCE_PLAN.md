@@ -198,15 +198,19 @@ across runs.
 Every area was mutation-tested (a single-edit behavior change to `pi.ex` or
 `pi/slash_commands.ex` must fail at least one scenario); the edit and the
 scenario that catches it are recorded in each area's moduledoc so the check
-can be repeated. Three inputs make the adapter raise instead of producing a
-transcript and are therefore recorded as deliberately uncharacterized: a
-`get_available_models` payload whose `models` is not a list, catalog entries
-that are not maps, and a streamed tool-call event that carries the call under
-`partial.content[contentIndex]` (`get_in/2` with an integer index on a list).
-Pi's startup banner (`Startup.build/3`, which inventories `~/.pi` and
-`~/.agents`) and the final `File.cwd!/0` fallback for a missing `cwd` are not
-characterized because they depend on the developer's machine. See
-`docs/DEVELOPMENT.md` for the regeneration workflow.
+can be repeated. Pi's startup banner (`Startup.build/3`, which inventories
+`~/.pi` and `~/.agents`) and the final `File.cwd!/0` fallback for a missing
+`cwd` are not characterized because they depend on the developer's machine.
+See `docs/DEVELOPMENT.md` for the regeneration workflow.
+
+Building the gate surfaced three agent-controlled payloads that made the
+adapter raise instead of producing a transcript: a streamed tool-call event
+carrying the call under `partial.content[contentIndex]` (`get_in/2` with an
+integer index on a list, in the clause written to support exactly that
+shape), a `get_available_models` payload whose `models` is not a list, and
+catalog entries that are not maps. All three are fixed in 1.5.0 and pinned
+by golden scenarios in the stream_events and config areas; each scenario
+reproduces the original crash when the fix is reverted.
 
 ### Proposed boundaries
 
