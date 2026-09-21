@@ -15,15 +15,24 @@ defmodule ExMCP.ACP.Adapters.Pi do
   require Logger
 
   alias ExMCP.ACP.AdapterBridge.PortRunner
-  alias ExMCP.ACP.Adapters.Pi.{Prompt, RPC, SessionStore, Settings, SlashCommands, Startup, Tools}
-  alias ExMCP.ACP.{AdapterEvents, Envelope, PromptQueue, Types}
-  alias ExMCP.Internal.Maps
 
-  @thinking_levels ~w(off minimal low medium high xhigh)
+  alias ExMCP.ACP.Adapters.Pi.{
+    Config,
+    Events,
+    Prompt,
+    PromptFlow,
+    RPC,
+    Sessions,
+    SessionStore,
+    Settings,
+    SlashCommands,
+    Startup,
+    Tools
+  }
+
+  alias ExMCP.ACP.{AdapterEvents, Envelope, PromptQueue, Types}
+
   @auth_method_id "pi_terminal_login"
-  @model_config_id "model"
-  @thought_level_config_id "thought_level"
-  @default_thinking_level "medium"
 
   defstruct [
     :session_id,
@@ -65,7 +74,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
        opts: opts,
        managed?: Keyword.get(opts, :managed, true),
        delete_session_files?: Keyword.get(opts, :delete_session_files, false),
-       thinking_level: Keyword.get(opts, :thinking_level, @default_thinking_level),
+       thinking_level: Keyword.get(opts, :thinking_level, Config.default_thinking_level()),
        session_dir: Keyword.get(opts, :session_dir),
        session_map_path: Keyword.get(opts, :session_map_path, SessionStore.default_map_path()),
        cwd: Keyword.get(opts, :cwd),
@@ -102,7 +111,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
         "ex_mcp" => %{
           "pi" => %{
             "sessionStore" => SessionStore.default_map_path(),
-            "thinkingLevels" => @thinking_levels,
+            "thinkingLevels" => Config.thinking_levels(),
             "features" => %{
               "slashCommands" => true,
               "terminalAuth" => true,
@@ -150,80 +159,27 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   @impl true
-  def modes do
-    Enum.map(@thinking_levels, fn level ->
-      %{"id" => level, "name" => "Thinking: #{level}", "description" => nil}
-    end)
-  end
+  def modes, do: Config.modes()
 
   @impl true
   def config_options do
-    session_config_options(nil, thinking_state(%{}))
-  end
-
-  defp runtime_config_options do
-    [
-      %{
-        "id" => "auto_compaction",
-        "name" => "Auto Compaction",
-        "category" => "other",
-        "description" => "Automatically compact context when nearly full",
-        "type" => "select",
-        "currentValue" => "true",
-        "options" => boolean_options()
-      },
-      %{
-        "id" => "auto_retry",
-        "name" => "Auto Retry",
-        "category" => "other",
-        "description" => "Automatically retry on transient errors",
-        "type" => "select",
-        "currentValue" => "true",
-        "options" => boolean_options()
-      },
-      %{
-        "id" => "steering_mode",
-        "name" => "Steering Mode",
-        "category" => "other",
-        "description" => "How steering messages are delivered",
-        "type" => "select",
-        "currentValue" => "all",
-        "options" => mode_options()
-      },
-      %{
-        "id" => "follow_up_mode",
-        "name" => "Follow-up Mode",
-        "category" => "other",
-        "description" => "How follow-up messages are delivered",
-        "type" => "select",
-        "currentValue" => "all",
-        "options" => mode_options()
-      }
-    ]
+    Config.session_config_options(nil, Config.thinking_state(%{}))
   end
 
   @impl true
   def list_sessions(params, state) do
-    cursor = params["cursor"] || "0"
-    offset = parse_cursor(cursor)
-    page_size = 50
-    cwd = params["cwd"] || state.last_session_cwd
-
     all_sessions =
-      [
+      SessionStore.list_pi_sessions(
         session_dir: state.session_dir,
         agent_dir: Keyword.get(state.opts, :agent_dir)
-      ]
-      |> SessionStore.list_pi_sessions()
-      |> filter_sessions_by_cwd(cwd)
+      )
 
-    sessions =
-      all_sessions
-      |> Enum.slice(offset, page_size)
-      |> Enum.map(&Map.drop(&1, ["sessionFile"]))
-
-    next_cursor =
-      if offset + page_size < length(all_sessions), do: Integer.to_string(offset + page_size)
+    {sessions, next_cursor} =
+      Sessions.page(
+        all_sessions,
+        params["cwd"] || state.last_session_cwd,
+        params["cursor"] || "0"
+      )
 
     {:ok, RPC.compact(%{"sessions" => sessions, "nextCursor" => next_cursor, "_meta" => %{}}),
      state}
@@ -237,111 +193,21 @@ defmodule ExMCP.ACP.Adapters.Pi do
   def translate_outbound(%{"method" => "session/new", "id" => acp_id, "params" => params}, state) do
     cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd) || File.cwd!()
 
-    case require_absolute_cwd(cwd) do
+    case Sessions.require_absolute_cwd(cwd) do
       :ok -> start_session_new(acp_id, cwd, state)
       {:error, reason} -> {:error, reason, state}
     end
   end
 
   def translate_outbound(%{"method" => "session/load", "id" => acp_id, "params" => params}, state) do
-    session_id = params["sessionId"]
-    cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd) || File.cwd!()
-
-    with :ok <- require_absolute_cwd(cwd),
-         session_file when is_binary(session_file) <- find_session_file(session_id, state),
-         {:ok, state} <- prepare_session_process(cwd, session_file, state) do
-      file_commands = SlashCommands.load(cwd, state.opts)
-      settings = Settings.load(cwd, state.opts)
-
-      {switch_id, switch_session} =
-        rpc(RPC.method(:switch_session), %{"sessionPath" => session_file})
-
-      {messages_id, get_messages} = rpc(RPC.method(:get_messages))
-      {state_id, get_state} = rpc(RPC.method(:get_state))
-      {models_id, get_models} = rpc(RPC.method(:get_available_models))
-      {commands_id, get_commands} = rpc(RPC.method(:get_commands))
-
-      group = %{
-        type: :session_load,
-        acp_id: acp_id,
-        session_id: session_id,
-        cwd: cwd,
-        session_file: session_file,
-        file_commands: file_commands,
-        settings: settings,
-        replay?: true,
-        refs: MapSet.new([switch_id, messages_id, state_id, models_id, commands_id]),
-        responses: %{}
-      }
-
-      state =
-        state
-        |> put_group(group)
-        |> put_control(switch_id, :switch, group)
-        |> put_control(messages_id, :messages, group)
-        |> put_control(state_id, :state, group)
-        |> put_control(models_id, :models, group)
-        |> put_control(commands_id, :commands, group)
-
-      deliver_pending(
-        RPC.encode_many([switch_session, get_messages, get_state, get_models, get_commands]),
-        state
-      )
-    else
-      {:error, reason} -> {:error, reason, state}
-      _ -> {:error, "Unknown sessionId: #{session_id}", state}
-    end
+    start_session_switch(acp_id, params, true, state)
   end
 
   def translate_outbound(
         %{"method" => "session/resume", "id" => acp_id, "params" => params},
         state
       ) do
-    session_id = params["sessionId"]
-    cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd) || File.cwd!()
-
-    with :ok <- require_absolute_cwd(cwd),
-         session_file when is_binary(session_file) <- find_session_file(session_id, state),
-         {:ok, state} <- prepare_session_process(cwd, session_file, state) do
-      file_commands = SlashCommands.load(cwd, state.opts)
-      settings = Settings.load(cwd, state.opts)
-
-      {switch_id, switch_session} =
-        rpc(RPC.method(:switch_session), %{"sessionPath" => session_file})
-
-      {state_id, get_state} = rpc(RPC.method(:get_state))
-      {models_id, get_models} = rpc(RPC.method(:get_available_models))
-      {commands_id, get_commands} = rpc(RPC.method(:get_commands))
-
-      group = %{
-        type: :session_load,
-        acp_id: acp_id,
-        session_id: session_id,
-        cwd: cwd,
-        session_file: session_file,
-        file_commands: file_commands,
-        settings: settings,
-        replay?: false,
-        refs: MapSet.new([switch_id, state_id, models_id, commands_id]),
-        responses: %{}
-      }
-
-      state =
-        state
-        |> put_group(group)
-        |> put_control(switch_id, :switch, group)
-        |> put_control(state_id, :state, group)
-        |> put_control(models_id, :models, group)
-        |> put_control(commands_id, :commands, group)
-
-      deliver_pending(
-        RPC.encode_many([switch_session, get_state, get_models, get_commands]),
-        state
-      )
-    else
-      {:error, reason} -> {:error, reason, state}
-      _ -> {:error, "Unknown sessionId: #{session_id}", state}
-    end
+    start_session_switch(acp_id, params, false, state)
   end
 
   def translate_outbound(
@@ -354,9 +220,9 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   def translate_outbound(%{"method" => "session/cancel"}, state) do
     had_queued = not PromptQueue.empty?(state.prompt_queue)
-    {queued_responses, state} = cancel_queued_prompts(state)
-    state = mark_pending_cancel_requested(state)
-    messages = queued_responses ++ queue_cleared_messages(state, had_queued)
+    {queued_responses, state} = PromptFlow.cancel_queued(state)
+    state = PromptFlow.mark_cancel_requested(state)
+    messages = queued_responses ++ PromptFlow.queue_cleared_messages(state, had_queued)
     deliver_messages_and_write(messages, RPC.encode_notification(RPC.method(:abort)), state)
   end
 
@@ -392,42 +258,16 @@ defmodule ExMCP.ACP.Adapters.Pi do
   def translate_outbound(%{"method" => "session/set_mode", "params" => params}, state) do
     mode = params["modeId"]
 
-    if mode in @thinking_levels do
-      state = %{state | thinking_level: mode}
-      session_id = params["sessionId"] || state.session_id
-
-      messages = [
-        AdapterEvents.current_mode_update(session_id, mode),
-        config_options_update(session_id, state)
-      ]
-
-      deliver_messages_and_ack(
-        messages,
-        RPC.encode_notification(RPC.method(:set_thinking_level), %{"level" => mode}),
-        state
-      )
-    else
-      {:error, "Unknown modeId: #{inspect(mode)}", state}
+    case Config.set_thinking_plan(mode, params["sessionId"], state) do
+      {:ok, messages, data, state} -> deliver_messages_and_ack(messages, data, state)
+      :error -> {:error, "Unknown modeId: #{inspect(mode)}", state}
     end
   end
 
   def translate_outbound(%{"method" => "session/set_model", "params" => params}, state) do
-    case resolve_model(params["modelId"], state.available_models) do
-      {:ok, provider, model_id, current_model_id} ->
-        rpc_msg =
-          RPC.notification(RPC.method(:set_model), %{
-            "provider" => provider,
-            "modelId" => model_id
-          })
-
-        state = %{state | current_model_id: current_model_id}
-        session_id = params["sessionId"] || state.session_id
-
-        deliver_messages_and_config_result(
-          [config_options_update(session_id, state)],
-          RPC.line(rpc_msg),
-          state
-        )
+    case Config.set_model_plan(params["modelId"], params["sessionId"], state) do
+      {:ok, messages, data, state} ->
+        deliver_messages_and_config_result(messages, data, state)
 
       {:error, reason} ->
         {:error, reason, state}
@@ -634,7 +474,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
     case write_managed(data, state) do
       :ok ->
         {:messages_and_reply, messages,
-         %{"configOptions" => confirmation_config_options_for_state(state)}, state}
+         %{"configOptions" => Config.confirmation_config_options_for_state(state)}, state}
 
       {:error, reason} ->
         {:error, inspect(reason), state}
@@ -725,24 +565,8 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     cond do
       state.pending_prompt ->
-        queued = %{acp_id: acp_id, message: message, images: images, params: params}
-        queue = PromptQueue.enqueue(state.prompt_queue, queued)
-
-        session_id = params["sessionId"] || state.session_id
-        queue_depth = PromptQueue.len(queue)
-
-        notice =
-          AdapterEvents.agent_message_chunk(
-            session_id,
-            "Queued message (position #{queue_depth})."
-          )
-
-        info =
-          AdapterEvents.session_info_update(session_id, %{
-            "_meta" => %{"ex_mcp" => %{"pi" => %{"queueDepth" => queue_depth, "running" => true}}}
-          })
-
-        {:messages, [notice, info], %{state | prompt_queue: queue}}
+        {messages, state} = PromptFlow.enqueue(acp_id, message, images, params, state)
+        {:messages, messages, state}
 
       match?({:ok, _, _}, slash) ->
         translate_slash_command(slash, acp_id, params, state)
@@ -753,24 +577,66 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp start_prompt(acp_id, message, images, params, state) do
-    {msg_id, next_counter} = RPC.next_prompt_id(state.msg_counter)
+    {data, state} = PromptFlow.start_plan(acp_id, message, images, params, state)
+    deliver_pending(data, state)
+  end
 
-    rpc_msg =
-      msg_id
-      |> RPC.request(RPC.method(:prompt), %{"message" => message})
-      |> Maps.put_non_empty("images", images)
-      |> Maps.put_present("streamingBehavior", params["streamingBehavior"])
+  # session/load and session/resume differ only in whether the transcript is
+  # replayed, which also decides whether `get_messages` joins the control group.
+  defp start_session_switch(acp_id, params, replay?, state) do
+    session_id = params["sessionId"]
+    cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd) || File.cwd!()
 
-    state = %{
-      state
-      | session_id: params["sessionId"] || state.session_id,
-        pending_prompt: %{acp_id: acp_id, msg_id: msg_id, cancel_requested: false},
-        text_acc: [],
-        last_usage: %{},
-        msg_counter: next_counter
-    }
+    with :ok <- Sessions.require_absolute_cwd(cwd),
+         session_file when is_binary(session_file) <- find_session_file(session_id, state),
+         {:ok, state} <- prepare_session_process(cwd, session_file, state) do
+      file_commands = SlashCommands.load(cwd, state.opts)
+      settings = Settings.load(cwd, state.opts)
 
-    deliver_pending(RPC.line(rpc_msg), state)
+      # Mint in emission order: the rpc counter is shared with control-group ids,
+      # so binding the switch request first keeps the ids identical to the
+      # separate load and resume clauses this replaced.
+      switch_request =
+        {:switch, rpc(RPC.method(:switch_session), %{"sessionPath" => session_file})}
+
+      replay_requests =
+        if replay?, do: [{:messages, rpc(RPC.method(:get_messages))}], else: []
+
+      requests =
+        [switch_request] ++
+          replay_requests ++
+          [
+            {:state, rpc(RPC.method(:get_state))},
+            {:models, rpc(RPC.method(:get_available_models))},
+            {:commands, rpc(RPC.method(:get_commands))}
+          ]
+
+      group = %{
+        type: :session_load,
+        acp_id: acp_id,
+        session_id: session_id,
+        cwd: cwd,
+        session_file: session_file,
+        file_commands: file_commands,
+        settings: settings,
+        replay?: replay?,
+        refs: MapSet.new(Enum.map(requests, fn {_kind, {rpc_id, _msg}} -> rpc_id end)),
+        responses: %{}
+      }
+
+      state =
+        Enum.reduce(requests, put_group(state, group), fn {kind, {rpc_id, _msg}}, acc ->
+          put_control(acc, rpc_id, kind, group)
+        end)
+
+      deliver_pending(
+        RPC.encode_many(Enum.map(requests, fn {_kind, {_rpc_id, msg}} -> msg end)),
+        state
+      )
+    else
+      {:error, reason} -> {:error, reason, state}
+      _ -> {:error, "Unknown sessionId: #{session_id}", state}
+    end
   end
 
   defp start_session_new(acp_id, cwd, state) do
@@ -1064,7 +930,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp process_event(%{"type" => "response", "id" => id} = event, state) when is_binary(id) do
-    if prompt_response_error?(id, event, state) do
+    if PromptFlow.response_error?(id, event, state) do
       finish_prompt_error(event, state)
     else
       case Map.pop(state.pending_controls, id) do
@@ -1112,7 +978,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
          state
        )
        when type in ["toolcall_start", "toolcall_delta", "toolcall_end", "tool_call"] do
-    {notification, state} = tool_call_stream_update(tool_event, state)
+    {notification, state} = Events.tool_call_stream_update(tool_event, state)
 
     if notification do
       {:messages, [notification], state}
@@ -1131,32 +997,9 @@ defmodule ExMCP.ACP.Adapters.Pi do
        ) do
     args = event["args"] || %{}
     {line, state} = maybe_snapshot_edit(tool_call_id, tool_name, args, state)
-    locations = Tools.locations(args, state.cwd, line)
 
-    update = %{
-      "toolCallId" => tool_call_id,
-      "title" => tool_name,
-      "kind" => Tools.kind(tool_name),
-      "status" => "in_progress",
-      "locations" => locations,
-      "rawInput" => args
-    }
-
-    {notification, current_tool_calls} =
-      if Map.has_key?(state.current_tool_calls, tool_call_id) do
-        {AdapterEvents.tool_call_update(state.session_id, RPC.compact(update)),
-         Map.put(state.current_tool_calls, tool_call_id, "in_progress")}
-      else
-        {AdapterEvents.tool_call(state.session_id, RPC.compact(update)),
-         Map.put(state.current_tool_calls, tool_call_id, "in_progress")}
-      end
-
-    state = %{
-      state
-      | active_tool_executions:
-          Map.put(state.active_tool_executions, tool_call_id, %{name: tool_name, args: args}),
-        current_tool_calls: current_tool_calls
-    }
+    {notification, state} =
+      Events.tool_execution_start(tool_call_id, tool_name, args, line, state)
 
     {:messages, [notification], state}
   end
@@ -1168,17 +1011,10 @@ defmodule ExMCP.ACP.Adapters.Pi do
          } = event,
          state
        ) do
-    text = Tools.result_text(event["partialResult"])
-
     notification =
-      AdapterEvents.tool_call_update(state.session_id, %{
-        "toolCallId" => tool_call_id,
-        "status" => "in_progress",
-        "content" => Tools.text_content(text),
-        "rawOutput" => event["partialResult"]
-      })
+      Events.tool_execution_update(state.session_id, tool_call_id, event["partialResult"])
 
-    {:messages, [RPC.compact(notification)], state}
+    {:messages, [notification], state}
   end
 
   defp process_event(
@@ -1193,25 +1029,14 @@ defmodule ExMCP.ACP.Adapters.Pi do
     text = Tools.result_text(result)
     {content, state} = tool_result_content(tool_call_id, text, is_error, state)
 
-    notification =
-      AdapterEvents.tool_call_update(state.session_id, %{
-        "toolCallId" => tool_call_id,
-        "status" => if(is_error, do: "failed", else: "completed"),
-        "content" => content,
-        "rawOutput" => result
-      })
+    {notification, state} =
+      Events.tool_execution_end(tool_call_id, result, is_error, content, state)
 
-    state = %{
-      state
-      | active_tool_executions: Map.delete(state.active_tool_executions, tool_call_id),
-        current_tool_calls: Map.delete(state.current_tool_calls, tool_call_id)
-    }
-
-    {:messages, [RPC.compact(notification)], state}
+    {:messages, [notification], state}
   end
 
   defp process_event(%{"type" => "agent_end"} = event, state) do
-    {:skip, %{state | last_usage: usage_from_agent_end(event)}}
+    {:skip, %{state | last_usage: Events.usage_from_agent_end(event)}}
   end
 
   defp process_event(%{"type" => "agent_settled"}, %{pending_prompt: nil} = state) do
@@ -1219,23 +1044,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   end
 
   defp process_event(%{"type" => "agent_settled"}, state) do
-    text = state.text_acc |> Enum.reverse() |> Enum.join("")
-
-    stop_reason =
-      if state.pending_prompt && state.pending_prompt.cancel_requested,
-        do: "cancelled",
-        else: "end_turn"
-
-    acp_id = get_in(state.pending_prompt, [:acp_id])
-
-    response =
-      Envelope.response(acp_id, %{
-        "stopReason" => stop_reason,
-        "usage" => state.last_usage,
-        "_meta" => %{"ex_mcp" => %{"text" => text, "sessionId" => state.session_id || "default"}}
-      })
-
-    state = %{state | pending_prompt: nil, text_acc: [], last_usage: %{}}
+    {response, state} = PromptFlow.settle(state)
 
     case start_next_queued_prompt(state) do
       {:ok, messages, nil, state} ->
@@ -1256,24 +1065,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
               "auto_retry_start",
               "auto_retry_end"
             ] do
-    info =
-      AdapterEvents.session_info_update(state.session_id, %{
-        "_meta" => %{"ex_mcp" => %{"pi" => event}}
-      })
-
-    messages =
-      case auto_status_text(type) do
-        nil ->
-          [info]
-
-        text ->
-          [
-            AdapterEvents.agent_message_chunk(state.session_id, text),
-            info
-          ]
-      end
-
-    {:messages, messages, state}
+    {:messages, Events.auto_status_messages(state.session_id, type, event), state}
   end
 
   defp process_event(%{"type" => "extension_ui_request"} = event, state) do
@@ -1487,45 +1279,12 @@ defmodule ExMCP.ACP.Adapters.Pi do
     models_data = group.responses[:models] || %{}
     session_file = state_data["sessionFile"]
 
-    if empty_models?(models_data) do
+    if Sessions.empty_models?(models_data) do
       state = maybe_cleanup_failed_session(session_file, state)
       {:messages, [auth_required_error(group.acp_id, state)], state}
     else
       session_id = state_data["sessionId"] || "pi-#{System.unique_integer([:positive])}"
-      cwd = state_data["cwd"] || group.cwd
-      models = model_state(models_data, state_data)
-      modes = thinking_state(state_data)
-      settings = group[:settings] || state.settings || %{}
-      commands = command_state(group.responses[:commands], group.file_commands, settings)
-
-      maybe_store_session(state.session_map_path, session_id, cwd, session_file)
-
-      state = %{
-        state
-        | session_id: session_id,
-          session_file: session_file,
-          cwd: cwd,
-          thinking_level: modes["currentModeId"],
-          current_model_id: get_in(models, ["currentModelId"]),
-          available_models: Map.get(models || %{}, "availableModels", []),
-          file_commands: group.file_commands,
-          available_commands: commands,
-          settings: settings,
-          last_session_cwd: cwd
-      }
-
-      response =
-        Envelope.response(group.acp_id, %{
-          "sessionId" => session_id,
-          "models" => models,
-          "modes" => modes,
-          "configOptions" => session_config_options(models, modes),
-          "_meta" => %{"ex_mcp" => %{"pi" => RPC.compact(%{"sessionFile" => session_file})}}
-        })
-
-      {startup_messages, state} = startup_messages(session_id, cwd, state, settings)
-      commands_update = available_commands_update(session_id, commands)
-      {:messages, [response] ++ startup_messages ++ [commands_update], state}
+      finish_established_session(group, state, state_data, models_data, session_id)
     end
   end
 
@@ -1534,11 +1293,11 @@ defmodule ExMCP.ACP.Adapters.Pi do
     state_data = group.responses[:state] || %{}
     models_data = group.responses[:models] || %{}
 
-    if empty_models?(models_data) do
+    if Sessions.empty_models?(models_data) do
       state = maybe_cleanup_failed_session(group.session_file, state)
       {:messages, [auth_required_error(group.acp_id, state)], state}
     else
-      finish_successful_session_load(group, state, state_data, models_data)
+      finish_established_session(group, state, state_data, models_data, group.session_id)
     end
   end
 
@@ -1571,47 +1330,32 @@ defmodule ExMCP.ACP.Adapters.Pi do
     {:messages, messages ++ [response], state}
   end
 
-  defp finish_successful_session_load(group, state, state_data, models_data) do
-    session_id = group.session_id
+  # session/new and a settled session switch produce the same state transition
+  # and the same response; only the session id and the optional replay differ.
+  defp finish_established_session(group, state, state_data, models_data, session_id) do
     cwd = state_data["cwd"] || group.cwd
-    session_file = state_data["sessionFile"] || group.session_file
-    models = model_state(models_data, state_data)
-    modes = thinking_state(state_data)
+    session_file = state_data["sessionFile"] || group[:session_file]
+    models = Config.model_state(models_data, state_data)
+    modes = Config.thinking_state(state_data)
     settings = group[:settings] || state.settings || %{}
     commands = command_state(group.responses[:commands], group.file_commands, settings)
 
     maybe_store_session(state.session_map_path, session_id, cwd, session_file)
 
-    state = %{
-      state
-      | session_id: session_id,
+    state =
+      Sessions.establish(state, %{
+        session_id: session_id,
         session_file: session_file,
         cwd: cwd,
-        thinking_level: modes["currentModeId"],
-        current_model_id: get_in(models, ["currentModelId"]),
-        available_models: Map.get(models || %{}, "availableModels", []),
+        models: models,
+        modes: modes,
+        commands: commands,
         file_commands: group.file_commands,
-        available_commands: commands,
-        settings: settings,
-        last_session_cwd: cwd
-    }
-
-    replay =
-      if group[:replay?] == false do
-        []
-      else
-        replay_messages(group.responses[:messages], session_id)
-      end
-
-    response =
-      Envelope.response(group.acp_id, %{
-        "sessionId" => session_id,
-        "models" => models,
-        "modes" => modes,
-        "configOptions" => session_config_options(models, modes),
-        "_meta" => %{"ex_mcp" => %{"pi" => RPC.compact(%{"sessionFile" => session_file})}}
+        settings: settings
       })
 
+    replay = replay_messages_for(group, session_id)
+    response = Sessions.session_response(group.acp_id, session_id, session_file, models, modes)
     {startup_messages, state} = startup_messages(session_id, cwd, state, settings)
 
     messages =
@@ -1621,15 +1365,17 @@ defmodule ExMCP.ACP.Adapters.Pi do
     {:messages, messages, state}
   end
 
+  defp replay_messages_for(%{type: :session_load, replay?: false}, _session_id), do: []
+
+  defp replay_messages_for(%{type: :session_load} = group, session_id),
+    do: Events.replay_messages(group.responses[:messages], session_id)
+
+  defp replay_messages_for(_group, _session_id), do: []
+
   defp finish_control_error(group, error, state) do
     state = delete_group(state, group)
     {:messages, [error], state}
   end
-
-  defp prompt_response_error?(id, %{"success" => false}, %{pending_prompt: %{msg_id: id}}),
-    do: true
-
-  defp prompt_response_error?(_id, _event, _state), do: false
 
   defp finish_prompt_error(event, state) do
     acp_id = state.pending_prompt.acp_id
@@ -1646,89 +1392,10 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   defp process_untracked_response(%{"command" => "get_state", "data" => data}, state)
        when is_map(data) do
-    {:skip, update_session_state_from_pi(data, state)}
+    {:skip, Sessions.update_session_state_from_pi(data, state)}
   end
 
   defp process_untracked_response(_event, state), do: {:skip, state}
-
-  defp auto_status_text("auto_compaction_start"), do: "Context nearing limit, compacting."
-  defp auto_status_text("auto_compaction_end"), do: "Compaction finished, resuming."
-  defp auto_status_text("auto_retry_start"), do: "Retrying after transient failure."
-  defp auto_status_text("auto_retry_end"), do: "Retry finished, resuming."
-  defp auto_status_text(_type), do: nil
-
-  defp tool_call_stream_update(tool_event, state) do
-    tool_call =
-      tool_event["toolCall"] ||
-        partial_content_at(tool_event) ||
-        tool_event
-
-    tool_call_id = tool_call["id"] || tool_event["id"]
-    tool_name = tool_call["name"] || tool_event["name"] || "tool"
-
-    if is_binary(tool_call_id) and tool_call_id != "" do
-      raw_input = tool_raw_input(tool_call)
-      locations = Tools.locations(raw_input, state.cwd)
-      existing_status = state.current_tool_calls[tool_call_id]
-      status = existing_status || "pending"
-
-      update =
-        %{
-          "toolCallId" => tool_call_id,
-          "title" => tool_name,
-          "kind" => Tools.kind(tool_name),
-          "status" => status,
-          "locations" => locations,
-          "rawInput" => raw_input
-        }
-        |> RPC.compact()
-
-      if existing_status do
-        {AdapterEvents.tool_call_update(state.session_id, update), state}
-      else
-        state = %{
-          state
-          | current_tool_calls: Map.put(state.current_tool_calls, tool_call_id, "pending")
-        }
-
-        {AdapterEvents.tool_call(state.session_id, update), state}
-      end
-    else
-      {nil, state}
-    end
-  end
-
-  defp tool_raw_input(%{"arguments" => args}) when is_map(args), do: args
-  defp tool_raw_input(%{"args" => args}) when is_map(args), do: args
-
-  defp tool_raw_input(%{"partialArgs" => partial}) when is_binary(partial) do
-    case Jason.decode(partial) do
-      {:ok, args} when is_map(args) -> args
-      _ -> %{"partialArgs" => partial}
-    end
-  end
-
-  defp tool_raw_input(_tool_call), do: %{}
-
-  # Pi streams a tool call either under `toolCall` or as one entry of the
-  # partial content list addressed by `contentIndex`. `Access` cannot index a
-  # list, so the previous `get_in/2` raised on exactly the shape this clause
-  # exists to support.
-  defp partial_content_at(%{"partial" => %{"content" => content}} = tool_event)
-       when is_list(content) do
-    case tool_event["contentIndex"] || 0 do
-      index when is_integer(index) and index >= 0 ->
-        case Enum.at(content, index) do
-          entry when is_map(entry) -> entry
-          _other -> nil
-        end
-
-      _index ->
-        nil
-    end
-  end
-
-  defp partial_content_at(_tool_event), do: nil
 
   defp maybe_snapshot_edit(tool_call_id, "edit", %{"path" => path} = args, state)
        when is_binary(path) do
@@ -1780,157 +1447,19 @@ defmodule ExMCP.ACP.Adapters.Pi do
     {content, state}
   end
 
-  defp replay_messages(data, session_id) do
-    messages = if is_map(data) and is_list(data["messages"]), do: data["messages"], else: []
-
-    Enum.flat_map(messages, fn message ->
-      case message["role"] do
-        "user" ->
-          replay_text_update(
-            session_id,
-            "user_message_chunk",
-            normalize_message_text(message["content"])
-          )
-
-        "assistant" ->
-          replay_text_update(
-            session_id,
-            "agent_message_chunk",
-            normalize_message_text(message["content"])
-          )
-
-        "toolResult" ->
-          tool_name = message["toolName"] || "tool"
-          tool_call_id = message["toolCallId"] || "tool-#{System.unique_integer([:positive])}"
-          text = Tools.result_text(message)
-
-          [
-            AdapterEvents.tool_call(session_id, %{
-              "toolCallId" => tool_call_id,
-              "title" => tool_name,
-              "kind" => Tools.kind(tool_name),
-              "status" => "completed",
-              "rawOutput" => message
-            }),
-            AdapterEvents.tool_call_update(session_id, %{
-              "toolCallId" => tool_call_id,
-              "status" => if(message["isError"], do: "failed", else: "completed"),
-              "content" => Tools.text_content(text),
-              "rawOutput" => message
-            })
-            |> RPC.compact()
-          ]
-
-        _ ->
-          []
-      end
-    end)
-  end
-
-  defp replay_text_update(_session_id, _type, ""), do: []
-
-  defp replay_text_update(session_id, type, text) do
-    [
-      AdapterEvents.session_update_type(session_id, type, %{
-        "content" => %{"type" => "text", "text" => text}
-      })
-    ]
-  end
-
-  defp normalize_message_text(content) when is_binary(content), do: content
-
-  defp normalize_message_text(content) when is_list(content) do
-    content
-    |> Enum.flat_map(fn
-      %{"type" => "text", "text" => text} when is_binary(text) -> [text]
-      _ -> []
-    end)
-    |> Enum.join("")
-  end
-
-  defp normalize_message_text(_content), do: ""
-
   defp start_next_queued_prompt(state) do
-    case PromptQueue.pop(state.prompt_queue) do
-      {:value, queued, rest} ->
-        state = %{state | prompt_queue: rest}
-
+    case PromptFlow.next_queued(state) do
+      {:ok, queued, state} ->
         {:ok, data, state} =
           start_prompt(queued.acp_id, queued.message, queued.images, queued.params, state)
 
         write_data = if data == :pending, do: nil, else: data
 
-        queue_depth = PromptQueue.len(rest)
-
-        messages = [
-          AdapterEvents.agent_message_chunk(
-            state.session_id,
-            "Starting queued message. (#{queue_depth} remaining)"
-          ),
-          AdapterEvents.session_info_update(state.session_id, %{
-            "_meta" => %{"ex_mcp" => %{"pi" => %{"queueDepth" => queue_depth, "running" => true}}}
-          })
-        ]
-
-        {:ok, messages, write_data, state}
+        {:ok, PromptFlow.queue_started_messages(state), write_data, state}
 
       :empty ->
         :empty
     end
-  end
-
-  defp cancel_queued_prompts(state) do
-    {queued, queue} = PromptQueue.drain(state.prompt_queue)
-
-    responses =
-      Enum.map(queued, fn queued ->
-        Envelope.response(queued.acp_id, %{"stopReason" => "cancelled"})
-      end)
-
-    {responses, %{state | prompt_queue: queue}}
-  end
-
-  defp mark_pending_cancel_requested(%{pending_prompt: nil} = state), do: state
-
-  defp mark_pending_cancel_requested(state) do
-    put_in(state.pending_prompt[:cancel_requested], true)
-  end
-
-  defp queue_cleared_messages(state, had_queued) do
-    if had_queued do
-      [
-        AdapterEvents.agent_message_chunk(state.session_id, "Cleared queued prompts."),
-        AdapterEvents.session_info_update(state.session_id, %{
-          "_meta" => %{
-            "ex_mcp" => %{
-              "pi" => %{"queueDepth" => 0, "running" => not is_nil(state.pending_prompt)}
-            }
-          }
-        })
-      ]
-    else
-      []
-    end
-  end
-
-  defp usage_from_agent_end(event) do
-    usage =
-      event
-      |> Map.get("messages", [])
-      |> Enum.filter(&(&1["role"] == "assistant"))
-      |> List.last()
-      |> case do
-        %{"usage" => usage} -> usage
-        _ -> %{}
-      end
-
-    %{
-      "inputTokens" => usage["input"] || 0,
-      "outputTokens" => usage["output"] || 0,
-      "cacheReadTokens" => usage["cacheRead"] || 0,
-      "cacheWriteTokens" => usage["cacheWrite"] || 0,
-      "cost" => get_in(usage, ["cost", "total"])
-    }
   end
 
   defp slash_result_messages(%{type: :slash_export, session_id: session_id} = group, _state) do
@@ -2040,161 +1569,6 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   defp maybe_add_name_update(messages, _group, _state), do: messages
 
-  defp model_state(data, state_data) do
-    available =
-      data
-      |> catalog_models()
-      |> Enum.flat_map(fn model ->
-        provider = model["provider"] |> to_string_or_nil()
-        id = model["id"] |> to_string_or_nil()
-
-        if provider && id do
-          name = model["name"] || id
-
-          [
-            %{
-              "modelId" => "#{provider}/#{id}",
-              "name" => "#{provider}/#{name}",
-              "description" => nil
-            }
-          ]
-        else
-          []
-        end
-      end)
-
-    current =
-      case state_data["model"] do
-        %{"provider" => provider, "id" => id} when is_binary(provider) and is_binary(id) ->
-          "#{provider}/#{id}"
-
-        _ ->
-          get_in(available, [Access.at(0), "modelId"])
-      end
-
-    if available == [] and is_nil(current) do
-      nil
-    else
-      %{"availableModels" => available, "currentModelId" => current || "default"}
-    end
-  end
-
-  # A `get_available_models` payload is agent-controlled: `models` may be absent,
-  # not a list, or hold entries that are not maps. Anything unusable is dropped
-  # rather than raised on, so one malformed catalog entry cannot take down the
-  # session that requested the catalog.
-  defp catalog_models(data) when is_map(data) do
-    case Map.get(data, "models") do
-      models when is_list(models) -> Enum.filter(models, &is_map/1)
-      _other -> []
-    end
-  end
-
-  defp catalog_models(_data), do: []
-
-  defp thinking_state(state_data) do
-    current = normalize_thinking_level(state_data["thinkingLevel"])
-    %{"availableModes" => modes(), "currentModeId" => current}
-  end
-
-  defp normalize_thinking_level(level) when level in @thinking_levels, do: level
-  defp normalize_thinking_level(_level), do: @default_thinking_level
-
-  defp session_config_options(models, modes) do
-    model_options =
-      case model_config_option(models) do
-        nil -> []
-        option -> [option]
-      end
-
-    model_options ++ [thinking_config_option(modes)] ++ runtime_config_options()
-  end
-
-  defp config_options_for_state(state) do
-    models =
-      case state.available_models do
-        [] ->
-          nil
-
-        available when is_list(available) ->
-          %{
-            "availableModels" => available,
-            "currentModelId" =>
-              state.current_model_id || get_in(available, [Access.at(0), "modelId"]) ||
-                "default"
-          }
-      end
-
-    modes = %{
-      "availableModes" => modes(),
-      "currentModeId" => normalize_thinking_level(state.thinking_level)
-    }
-
-    session_config_options(models, modes)
-  end
-
-  # Model catalogs are advertised by session/new and config-option updates.
-  # A synchronous set_config_option result only needs to confirm currentValue;
-  # repeating Pi's full multi-provider catalog can exceed bounded ACP clients.
-  defp confirmation_config_options_for_state(state) do
-    state
-    |> config_options_for_state()
-    |> Enum.map(fn
-      %{"id" => @model_config_id} = option -> Map.delete(option, "options")
-      option -> option
-    end)
-  end
-
-  defp config_options_update(session_id, state) do
-    AdapterEvents.config_option_update(session_id, config_options_for_state(state))
-  end
-
-  defp model_config_option(%{"availableModels" => models} = state) when is_list(models) do
-    if models == [] do
-      nil
-    else
-      %{
-        "id" => @model_config_id,
-        "name" => "Model",
-        "category" => "model",
-        "description" => "Select the model for this session",
-        "type" => "select",
-        "currentValue" => state["currentModelId"],
-        "options" =>
-          Enum.map(models, fn model ->
-            %{
-              "value" => model["modelId"],
-              "name" => model["name"],
-              "description" => model["description"]
-            }
-          end)
-      }
-    end
-  end
-
-  defp model_config_option(_models), do: nil
-
-  defp thinking_config_option(modes) do
-    available = modes["availableModes"] || modes()
-
-    %{
-      "id" => @thought_level_config_id,
-      "name" => "Thinking",
-      "category" => "thought_level",
-      "description" => "Set the reasoning effort for this session",
-      "type" => "select",
-      "currentValue" => normalize_thinking_level(modes["currentModeId"]),
-      "options" =>
-        Enum.map(available, fn mode ->
-          %{
-            "value" => mode["id"],
-            "name" => mode["name"],
-            "description" => mode["description"]
-          }
-        end)
-    }
-  end
-
   defp command_state(data, file_commands, settings) do
     pi_commands =
       data
@@ -2258,61 +1632,6 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp available_commands_update(session_id, commands) do
     AdapterEvents.available_commands_update(session_id, commands)
   end
-
-  defp empty_models?(%{"models" => models}) when is_list(models), do: models == []
-  defp empty_models?(_data), do: false
-
-  defp update_session_state_from_pi(data, state) do
-    state
-    |> maybe_set(:session_id, data["sessionId"])
-    |> maybe_set(:session_file, data["sessionFile"])
-    |> maybe_set(:thinking_level, data["thinkingLevel"])
-  end
-
-  defp resolve_model(model_id, _available_models)
-       when not is_binary(model_id) or model_id == "" do
-    {:error, "session/set_model requires modelId"}
-  end
-
-  defp resolve_model(model_id, available_models) when is_binary(model_id) do
-    if String.contains?(model_id, "/") do
-      [provider | rest] = String.split(model_id, "/")
-      model = Enum.join(rest, "/")
-      {:ok, provider, model, model_id}
-    else
-      case find_available_model(model_id, available_models) do
-        {:ok, current_model_id} -> resolve_model(current_model_id, available_models)
-        :error -> {:error, "Unknown modelId: #{model_id}"}
-      end
-    end
-  end
-
-  defp find_available_model(model_id, available_models) when is_list(available_models) do
-    Enum.find_value(available_models, :error, fn model ->
-      advertised_id = model["modelId"]
-
-      cond do
-        advertised_id == model_id ->
-          {:ok, advertised_id}
-
-        is_binary(advertised_id) and List.last(String.split(advertised_id, "/")) == model_id ->
-          {:ok, advertised_id}
-
-        true ->
-          false
-      end
-    end)
-  end
-
-  defp find_available_model(_model_id, _available_models), do: :error
-
-  defp require_absolute_cwd(cwd) when is_binary(cwd) do
-    if Path.type(cwd) == :absolute,
-      do: :ok,
-      else: {:error, "cwd must be an absolute path: #{cwd}"}
-  end
-
-  defp require_absolute_cwd(_cwd), do: {:error, "cwd is required"}
 
   defp find_session_file(session_id, state) when is_binary(session_id) do
     case SessionStore.get(state.session_map_path, session_id) do
@@ -2432,112 +1751,12 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp maybe_keyword_put(keyword, _key, nil), do: keyword
   defp maybe_keyword_put(keyword, key, value), do: Keyword.put(keyword, key, value)
 
-  defp translate_config_option("auto_compaction", value, state) when is_boolean(value) do
-    deliver_ack(
-      RPC.encode_notification(RPC.method(:set_auto_compaction), %{"enabled" => value}),
-      state
-    )
-  end
-
-  defp translate_config_option("auto_compaction", value, state) when value in ["true", "false"],
-    do: translate_config_option("auto_compaction", value == "true", state)
-
-  defp translate_config_option("auto_retry", value, state) when is_boolean(value) do
-    deliver_ack(
-      RPC.encode_notification(RPC.method(:set_auto_retry), %{"enabled" => value}),
-      state
-    )
-  end
-
-  defp translate_config_option("auto_retry", value, state) when value in ["true", "false"],
-    do: translate_config_option("auto_retry", value == "true", state)
-
-  defp translate_config_option(@model_config_id, value, state) do
-    case resolve_model(value, state.available_models) do
-      {:ok, provider, model_id, current_model_id} ->
-        rpc_msg =
-          RPC.notification(RPC.method(:set_model), %{
-            "provider" => provider,
-            "modelId" => model_id
-          })
-
-        state = %{state | current_model_id: current_model_id}
-        session_id = state.session_id
-
-        deliver_messages_and_config_result(
-          [config_options_update(session_id, state)],
-          RPC.line(rpc_msg),
-          state
-        )
-
-      {:error, reason} ->
-        {:error, reason, state}
+  defp translate_config_option(config_id, value, state) do
+    case Config.update_plan(config_id, value, state) do
+      {:ack, data} -> deliver_ack(data, state)
+      {:ok, messages, data, state} -> deliver_messages_and_config_result(messages, data, state)
+      {:error, reason} -> {:error, reason, state}
     end
-  end
-
-  defp translate_config_option(@thought_level_config_id, value, state)
-       when value in @thinking_levels do
-    state = %{state | thinking_level: value}
-    session_id = state.session_id
-
-    messages = [
-      AdapterEvents.current_mode_update(session_id, value),
-      config_options_update(session_id, state)
-    ]
-
-    deliver_messages_and_config_result(
-      messages,
-      RPC.encode_notification(RPC.method(:set_thinking_level), %{"level" => value}),
-      state
-    )
-  end
-
-  defp translate_config_option(@thought_level_config_id, value, state),
-    do: {:error, "Unknown thinking level: #{value}", state}
-
-  defp translate_config_option("steering_mode", value, state)
-       when value in ["all", "one-at-a-time"] do
-    deliver_ack(
-      RPC.encode_notification(RPC.method(:set_steering_mode), %{"mode" => value}),
-      state
-    )
-  end
-
-  defp translate_config_option("follow_up_mode", value, state)
-       when value in ["all", "one-at-a-time"] do
-    deliver_ack(
-      RPC.encode_notification(RPC.method(:set_follow_up_mode), %{"mode" => value}),
-      state
-    )
-  end
-
-  defp translate_config_option(config_id, _value, state),
-    do: {:error, "Unknown Pi config option: #{config_id}", state}
-
-  defp filter_sessions_by_cwd(sessions, nil), do: sessions
-  defp filter_sessions_by_cwd(sessions, cwd), do: Enum.filter(sessions, &(&1["cwd"] == cwd))
-
-  defp parse_cursor(cursor) when is_binary(cursor) do
-    case Integer.parse(cursor) do
-      {offset, ""} when offset > 0 -> offset
-      _ -> 0
-    end
-  end
-
-  defp parse_cursor(_cursor), do: 0
-
-  defp maybe_set(state, _key, nil), do: state
-  defp maybe_set(state, key, value), do: Map.put(state, key, value)
-
-  defp boolean_options do
-    [%{"value" => "true", "name" => "On"}, %{"value" => "false", "name" => "Off"}]
-  end
-
-  defp mode_options do
-    [
-      %{"value" => "all", "name" => "All"},
-      %{"value" => "one-at-a-time", "name" => "One at a time"}
-    ]
   end
 
   defp auth_required_error(id, state) do
@@ -2579,8 +1798,4 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   defp maybe_line(_label, nil), do: nil
   defp maybe_line(label, value), do: "#{label}: #{value}"
-
-  defp to_string_or_nil(nil), do: nil
-  defp to_string_or_nil(""), do: nil
-  defp to_string_or_nil(value), do: to_string(value)
 end

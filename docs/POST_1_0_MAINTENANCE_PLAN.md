@@ -212,6 +212,26 @@ catalog entries that are not maps. All three are fixed in 1.5.0 and pinned
 by golden scenarios in the stream_events and config areas; each scenario
 reproduces the original crash when the fix is reverted.
 
+### Known limit of the Pi golden harness
+
+`ExMCP.Test.PiGolden` normalizes minted `pi-N` correlation ids by order of
+first appearance in the transcript, so two runs that emit the same requests in
+the same order produce identical fixtures even when the underlying ids were
+minted in a different order. The rpc counter is shared with control-group ids,
+so a refactor can silently renumber the wire while all 123 scenarios still
+pass. This was not hypothetical: the `Pi.Sessions` extraction merged the
+`session/load` and `session/resume` clauses and bound the replay request before
+the switch request, which swapped `switch_session` and `get_messages` on the
+wire with every fixture unchanged.
+
+Correlation still works when ids are renumbered, because each response carries
+back the id it was sent, so this is a wire-value change rather than a
+functional break. It is still a change the gate is supposed to catch. Two
+tests in `pi_test.exs` (`session/load` and `session/resume` mint correlation
+ids in emission order) assert the numeric invariant directly, and they fail
+when the minting order is reversed. Add the equivalent assertion to any future
+adapter harness rather than assuming identity normalization covers it.
+
 ### Proposed boundaries
 
 1. **`Pi.RPC`** — RPC envelope construction, correlation ids, and response
@@ -228,6 +248,48 @@ reproduces the original crash when the fix is reverted.
 Keep `Pi.Settings`, `Pi.Startup`, `Pi.SlashCommands`, `Pi.Tools`, and
 `Pi.Version` separate unless an extraction exposes a concrete duplicate. Do
 not merge modules solely to reduce the file count.
+
+### Status as of 2026-09-21 (boundary extractions)
+
+All five proposed boundaries are extracted. `ExMCP.ACP.Adapters.Pi` is now
+**1,795 lines**, down from 2,586 at the 1.5.0 release commit:
+
+| Module | Lines | What it owns |
+|---|---|---|
+| `Pi.RPC` | 136 | NDJSON envelopes, command names, inbound classification, id correlation (extracted before 1.5.0) |
+| `Pi.Config` | 402 | thinking-level vocabulary and modes, model catalog projection and modelId resolution, session/runtime config options, set_model / set_thinking / set_config_option update plans |
+| `Pi.Events` | 307 | streamed tool-call folding, tool_execution start/update/end notifications, auto-compaction and auto-retry status, agent_end usage, session/load history replay |
+| `Pi.PromptFlow` | 177 | queueing, the native prompt request and its pending state, queue announcements, cancellation drain, agent_settled terminal completion |
+| `Pi.Sessions` | 144 | the settled-session state transition and response, the untracked get_state fold, the empty-catalog auth check, the absolute-cwd rule, session/list paging |
+
+Each boundary is pure: no module above opens or writes a Port, and none reads
+the filesystem. The planners return an NDJSON payload plus the updated state
+and the root decides how to deliver it, so the root keeps `prepare_session_process`,
+the `Pi.SessionStore` reads and writes, the `Pi.Settings` / `Pi.SlashCommands` /
+`Pi.Startup` loads, the edit snapshots that `tool_execution_end` needs, and
+every `PortRunner` call.
+
+Two duplications the extractions exposed were also collapsed, which is where
+most of the `Pi.Sessions` saving comes from: `session/load` and `session/resume`
+became one `start_session_switch/4` that differs only in whether `get_messages`
+joins the control group, and the `session_new` and `session_load` finishers
+became one `finish_established_session/5`. The native request order, the minted
+`pi-N` ids and the emitted message order are unchanged.
+
+What deliberately stayed in the root:
+
+- `maybe_snapshot_edit/4` and `tool_result_content/4` read the edited file
+  before and after the tool runs, so they are effects, not conversions.
+  `Pi.Events` receives the resolved line number and diff content instead.
+- The steering and follow-up slash handlers the plan listed under
+  `PromptFlow`. They are `start_control_command/7` calls that write to the
+  Port, and their result text belongs with the other slash results rather
+  than split across two modules; the whole slash surface remains a separate
+  future question for `Pi.SlashCommands`.
+- `command_state/3` and the control-group bookkeeping (`put_group/2`,
+  `put_control/4`, `delete_group/2`), which are pure but belong to the
+  slash-command catalog and the control-group machinery rather than to any
+  of the five boundaries.
 
 ### Pi completion criteria
 
@@ -921,8 +983,14 @@ existing, disabled-by-default Codex legacy compatibility option.
    event-folding and prompt-flow cores. This is behavior-preserving internal
    work: it lands on `master` behind golden tests and ships with the next
    user-visible release rather than forcing a release of its own.
-7. Modularize Pi one characterized boundary at a time. `Pi.RPC` is extracted;
-   `Sessions`, `Events`, `PromptFlow`, and `Config` remain.
+7. Modularize Pi one characterized boundary at a time. **Complete.** All five
+   proposed boundaries — `Pi.RPC`, `Pi.Config`, `Pi.Events`, `Pi.PromptFlow`
+   and `Pi.Sessions` — are extracted and the root is 1,795 lines (see the
+   status subsection above). What remains is optional and outside the
+   proposed boundaries: the slash-command surface (the steering and follow-up
+   handlers, `command_state/3` and the `slash_result_*` text) could move to
+   `Pi.SlashCommands`, and the control-group bookkeeping could become its own
+   boundary. Neither is required by the completion criteria.
 8. Reduce dependency cycles without changing public or lifecycle semantics.
 9. Re-evaluate shared app-server pieces while preparing the post-1.0 ZCode
    adapter; keep vendor-specific protocol semantics separate by default.
