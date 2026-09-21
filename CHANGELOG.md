@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Pi adapter golden-transcript characterization suite:
+  `ExMCP.Test.PiGolden` (`test/support/acp/pi_golden.ex`) and seven golden
+  areas under `test/ex_mcp/acp/adapters/pi/characterization/` with fixtures
+  under `test/fixtures/acp/pi/`, pinning the adapter's RPC envelopes,
+  control-group ordering, stream-event conversion, prompt scheduling,
+  configuration updates, slash commands and session-store safety rules
+  before the `Pi.*` boundary extractions. Repo-only; nothing ships to Hex.
 - `ExMCP.Client.subscribe_notifications/3` and
   `ExMCP.Client.unsubscribe_notifications/2`, a public delivery path for
   legacy-era (MCP 2024-11-05 through 2025-11-25) list-change and
