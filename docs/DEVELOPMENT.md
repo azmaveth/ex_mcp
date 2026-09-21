@@ -297,6 +297,31 @@ PI_GOLDEN=update mix test test/ex_mcp/acp/adapters/pi/characterization/config_go
 mix test test/ex_mcp/acp/adapters/pi/characterization/config_golden_test.exs
 ```
 
+#### Golden Transcript Tests (ACP Claude adapter)
+- Same model for `ExMCP.ACP.Adapters.ClaudeSDK`: one file per gate area
+  (lifecycle, prompt_content, permissions, session_updates, mcp_config,
+  faults, catalog) under
+  `test/ex_mcp/acp/adapters/claude_sdk/characterization/`, fixtures under
+  `test/fixtures/acp/claude/<area>/<scenario>.term`
+- Driven by `ExMCP.Test.ClaudeGolden` (`test/support/acp/claude_golden.ex`)
+  with shared step builders in `ExMCP.Test.ClaudeGolden.Flows`; every run gets
+  a private sandbox (Claude config dir, cwd, fake `claude`) referenced from
+  steps as `"<sandbox>"` and `"<sandbox-key>"`, so no scenario can touch
+  `~/.claude`; a fixture containing the home directory fails the run
+- `{:respond_control, subtype, response}` answers the most recent SDK control
+  request of that subtype; a step function receives the raw transcript, so
+  `ClaudeGolden.request_ids/1` answers a real `session/request_permission` or
+  `elicitation/create` id
+- Scenario-supplied ACP request ids must be strings: the adapter mints bare
+  monotonic integers starting at 1, and the harness refuses an integer id it
+  did not mint
+- Regenerate with `CLAUDE_GOLDEN=update`, exactly like the other two suites:
+
+```bash
+CLAUDE_GOLDEN=update mix test test/ex_mcp/acp/adapters/claude_sdk/characterization/catalog_golden_test.exs:42
+mix test test/ex_mcp/acp/adapters/claude_sdk/characterization/catalog_golden_test.exs
+```
+
 ### Writing Tests
 
 Follow these patterns when writing tests:
