@@ -487,5 +487,45 @@
       ],
       tag: :messages
     }
+  },
+  %ExMCP.Test.PiGolden.Entry{
+    step: %{
+      kind: :note,
+      text: "a content entry that is not a map is ignored rather than read with Access"
+    },
+    result: %{}
+  },
+  %ExMCP.Test.PiGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "assistantMessageEvent" => %{
+          "id" => "tc-entry-not-a-map",
+          "partial" => %{"content" => ["just-a-string"]},
+          "type" => "toolcall_start"
+        },
+        "type" => "message_update"
+      }
+    },
+    result: %{
+      messages: [
+        %{
+          "jsonrpc" => "2.0",
+          "method" => "session/update",
+          "params" => %{
+            "sessionId" => "pi-session",
+            "update" => %{
+              "kind" => "other",
+              "rawInput" => %{},
+              "sessionUpdate" => "tool_call",
+              "status" => "pending",
+              "title" => "tool",
+              "toolCallId" => "tc-entry-not-a-map"
+            }
+          }
+        }
+      ],
+      tag: :messages
+    }
   }
 ]

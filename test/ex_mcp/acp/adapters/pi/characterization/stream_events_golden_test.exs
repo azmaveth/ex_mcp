@@ -271,6 +271,12 @@ defmodule ExMCP.ACP.Adapters.Pi.StreamEventsGoldenTest do
               "type" => "toolcall_start",
               "partial" => %{"content" => "not-a-list"},
               "id" => "tc-content-not-a-list"
+            }),
+            {:note, "a content entry that is not a map is ignored rather than read with Access"},
+            Flows.message_update(%{
+              "type" => "toolcall_start",
+              "partial" => %{"content" => ["just-a-string"]},
+              "id" => "tc-entry-not-a-map"
             })
           ]
 
@@ -287,7 +293,8 @@ defmodule ExMCP.ACP.Adapters.Pi.StreamEventsGoldenTest do
                %{"toolCallId" => "tc-out-of-range"},
                %{"toolCallId" => "tc-negative"},
                %{"toolCallId" => "tc-non-integer"},
-               %{"toolCallId" => "tc-content-not-a-list"}
+               %{"toolCallId" => "tc-content-not-a-list"},
+               %{"toolCallId" => "tc-entry-not-a-map"}
              ] = transcript |> updates() |> Enum.drop(1)
     end
 

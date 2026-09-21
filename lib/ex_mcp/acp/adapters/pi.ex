@@ -1717,8 +1717,14 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp partial_content_at(%{"partial" => %{"content" => content}} = tool_event)
        when is_list(content) do
     case tool_event["contentIndex"] || 0 do
-      index when is_integer(index) and index >= 0 -> Enum.at(content, index)
-      _index -> nil
+      index when is_integer(index) and index >= 0 ->
+        case Enum.at(content, index) do
+          entry when is_map(entry) -> entry
+          _other -> nil
+        end
+
+      _index ->
+        nil
     end
   end
 
