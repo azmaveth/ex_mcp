@@ -1,6 +1,7 @@
 defmodule ExMCP.Transport.HTTP.BoundedClient do
   @moduledoc false
 
+  alias ExMCP.Internal.HTTPResponseReducer, as: Reducer
   alias ExMCP.Transport.HTTP.TargetPolicy
 
   @type response :: {
@@ -33,14 +34,14 @@ defmodule ExMCP.Transport.HTTP.BoundedClient do
 
   defp connect(uri, address, opts) do
     scheme = String.to_existing_atom(uri.scheme)
-    port = uri.port || default_port(scheme)
+    port = uri.port || Reducer.default_port(scheme)
     pinned_address = address |> :inet.ntoa() |> to_string()
 
     transport_opts =
       opts
       |> Keyword.fetch!(:transport_opts)
       |> Keyword.put(:timeout, Keyword.fetch!(opts, :connect_timeout))
-      |> Keyword.merge(address_family_options(address))
+      |> Keyword.merge(Reducer.address_family_options(address))
 
     Mint.HTTP1.connect(scheme, pinned_address, port,
       hostname: uri.host,
@@ -54,23 +55,20 @@ defmodule ExMCP.Transport.HTTP.BoundedClient do
   defp do_request(conn, method, uri, headers, content_type, body, opts) do
     headers =
       headers
-      |> normalize_headers()
+      |> Reducer.normalize_headers()
       |> delete_header("host")
       |> put_header("content-type", content_type)
       |> put_header("accept-encoding", "identity")
 
+    target = Reducer.request_target(uri)
+
     result =
-      case Mint.HTTP1.request(conn, method_name(method), request_target(uri), headers, body) do
+      case Mint.HTTP1.request(conn, Reducer.method_name(method), target, headers, body) do
         {:ok, next_conn, request_ref} ->
           deadline = System.monotonic_time(:millisecond) + Keyword.fetch!(opts, :request_timeout)
-
-          receive_response(
-            next_conn,
-            request_ref,
-            empty_response(),
-            deadline,
-            Keyword.fetch!(opts, :max_response_bytes)
-          )
+          max_bytes = Keyword.fetch!(opts, :max_response_bytes)
+          limits = [max_bytes: max_bytes, validate_headers: header_policy(max_bytes)]
+          receive_response(next_conn, request_ref, Reducer.empty_response(), deadline, limits)
 
         {:error, next_conn, reason} ->
           {{:error, {:http_request_failed, reason}}, next_conn}
@@ -81,17 +79,17 @@ defmodule ExMCP.Transport.HTTP.BoundedClient do
     reply
   end
 
-  defp receive_response(conn, request_ref, response, deadline, max_bytes) do
-    timeout = max(deadline - System.monotonic_time(:millisecond), 0)
+  defp receive_response(conn, request_ref, response, deadline, limits) do
+    timeout = Reducer.remaining_ms(deadline, System.monotonic_time(:millisecond))
 
     case Mint.HTTP1.recv(conn, 0, timeout) do
       {:ok, next_conn, events} ->
-        case consume_events(events, request_ref, response, max_bytes) do
+        case Reducer.reduce(events, request_ref, response, limits) do
           {:done, completed} ->
             {{:ok, format_response(completed)}, next_conn}
 
-          {:more, updated} ->
-            receive_response(next_conn, request_ref, updated, deadline, max_bytes)
+          {:cont, updated} ->
+            receive_response(next_conn, request_ref, updated, deadline, limits)
 
           {:error, reason} ->
             {{:error, reason}, next_conn}
@@ -102,53 +100,30 @@ defmodule ExMCP.Transport.HTTP.BoundedClient do
     end
   end
 
-  defp consume_events(events, request_ref, response, max_bytes) do
-    Enum.reduce_while(events, {:more, response}, fn
-      {:status, ^request_ref, status}, {:more, acc} ->
-        {:cont, {:more, %{acc | status: status}}}
+  # Applied to the accumulated header list, trailers included: compression
+  # and conflicting framing are refused, and the strict single-value
+  # content-length rule decides the size limit.
+  defp header_policy(max_bytes) do
+    fn _batch, accumulated ->
+      cond do
+        Reducer.compressed?(accumulated) ->
+          {:error, :compressed_response}
 
-      {:status_reason, ^request_ref, reason}, {:more, acc} ->
-        {:cont, {:more, %{acc | reason: reason}}}
+        Reducer.conflicting_framing?(accumulated) ->
+          {:error, :invalid_response_framing}
 
-      {:headers, ^request_ref, headers}, {:more, acc} ->
-        headers = normalize_headers(headers)
-        all_headers = acc.headers ++ headers
+        Reducer.invalid_or_oversized_content_length?(accumulated, max_bytes) ->
+          {:error, :response_too_large}
 
-        case validate_headers(all_headers, max_bytes) do
-          :ok -> {:cont, {:more, %{acc | headers: all_headers}}}
-          {:error, reason} -> {:halt, {:error, reason}}
-        end
-
-      {:data, ^request_ref, data}, {:more, acc} ->
-        size = acc.size + byte_size(data)
-
-        if size > max_bytes do
-          {:halt, {:error, :response_too_large}}
-        else
-          {:cont, {:more, %{acc | chunks: [data | acc.chunks], size: size}}}
-        end
-
-      {:done, ^request_ref}, {:more, acc} ->
-        {:halt, {:done, acc}}
-
-      _event, result ->
-        {:cont, result}
-    end)
+        true ->
+          :ok
+      end
+    end
   end
 
   defp format_response(response) do
-    status_line = {~c"HTTP/1.1", response.status, to_charlist(response.reason || "")}
-    body = response.chunks |> Enum.reverse() |> IO.iodata_to_binary()
-    {status_line, response.headers, body}
-  end
-
-  defp empty_response,
-    do: %{status: nil, reason: "", headers: [], chunks: [], size: 0}
-
-  defp normalize_headers(headers) do
-    Enum.map(headers, fn {name, value} ->
-      {name |> to_string() |> String.downcase(), to_string(value)}
-    end)
+    status_line = {~c"HTTP/1.1", response.status, to_charlist(response.reason)}
+    {status_line, response.headers, Reducer.body(response)}
   end
 
   defp put_header(headers, name, value) do
@@ -156,57 +131,4 @@ defmodule ExMCP.Transport.HTTP.BoundedClient do
   end
 
   defp delete_header(headers, name), do: Enum.reject(headers, &(elem(&1, 0) == name))
-
-  defp validate_headers(headers, max_bytes) do
-    cond do
-      compressed?(headers) -> {:error, :compressed_response}
-      conflicting_framing?(headers) -> {:error, :invalid_response_framing}
-      invalid_or_oversized_content_length?(headers, max_bytes) -> {:error, :response_too_large}
-      true -> :ok
-    end
-  end
-
-  defp invalid_or_oversized_content_length?(headers, max_bytes) do
-    values = for {"content-length", value} <- headers, do: String.trim(value)
-
-    case values do
-      [] ->
-        false
-
-      [value] ->
-        case Integer.parse(value) do
-          {length, ""} when length >= 0 -> length > max_bytes
-          _invalid -> true
-        end
-
-      _multiple ->
-        true
-    end
-  end
-
-  defp conflicting_framing?(headers) do
-    Enum.any?(headers, &(elem(&1, 0) == "content-length")) and
-      Enum.any?(headers, &(elem(&1, 0) == "transfer-encoding"))
-  end
-
-  defp compressed?(headers) do
-    Enum.any?(headers, fn
-      {"content-encoding", value} -> String.downcase(String.trim(value)) not in ["", "identity"]
-      _header -> false
-    end)
-  end
-
-  defp request_target(%URI{path: path, query: nil}), do: path_or_root(path)
-  defp request_target(%URI{path: path, query: query}), do: path_or_root(path) <> "?" <> query
-  defp path_or_root(path) when path in [nil, ""], do: "/"
-  defp path_or_root(path), do: path
-
-  defp method_name(method), do: method |> Atom.to_string() |> String.upcase()
-
-  defp address_family_options(address) when tuple_size(address) == 8,
-    do: [inet4: false, inet6: true]
-
-  defp address_family_options(_address), do: [inet4: true, inet6: false]
-  defp default_port(:http), do: 80
-  defp default_port(:https), do: 443
 end
