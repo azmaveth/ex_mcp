@@ -383,6 +383,16 @@ is a separate reviewed commit that must update that fixture.
 
 See `docs/DEVELOPMENT.md` for the regeneration workflow.
 
+Portability note: the session store reads mtime through
+`File.stat(path, time: :posix)`, which is whole-second granularity, so two
+session files written in the same second carry the same `lastModified`.
+`Enum.sort_by/3` is stable, which leaves the tie broken by directory listing
+order, and that differs between filesystems. Fixtures generated on macOS
+therefore failed on the Linux CI runners. The `:write_file` step accepts
+`mtime:` and the two ordering-dependent `session/list` scenarios pin distinct
+values, so the sort is asserted rather than inherited from the platform. Any
+new scenario whose expected output depends on session order must do the same.
+
 ## Functional-core and effect-boundary follow-up
 
 These extractions are candidates for the supported 1.x line after stable 1.0,

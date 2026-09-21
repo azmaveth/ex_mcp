@@ -53,6 +53,13 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.LifecycleGoldenTest do
 
   @area "lifecycle"
 
+  # The session store reads mtime at whole-second granularity, so files written
+  # in the same second tie on lastModified and the tie is broken by directory
+  # listing order, which differs between filesystems. Scenarios that assert an
+  # order pin these explicitly instead.
+  @older_mtime 1_756_000_000
+  @newer_mtime 1_757_000_000
+
   describe "post_connect" do
     test "post_connect_writes_default_initialize_control_request" do
       transcript =
@@ -461,8 +468,12 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.LifecycleGoldenTest do
 
     test "session_list_sorts_by_last_modified" do
       steps = [
-        Flows.session_jsonl(Flows.session_uuid(1), Flows.summary_entries("first")),
-        Flows.session_jsonl(Flows.session_uuid(2), Flows.summary_entries("second")),
+        Flows.session_jsonl(Flows.session_uuid(1), Flows.summary_entries("first"),
+          mtime: @older_mtime
+        ),
+        Flows.session_jsonl(Flows.session_uuid(2), Flows.summary_entries("second"),
+          mtime: @newer_mtime
+        ),
         {:list_sessions, %{"cwd" => Flows.cwd()}}
       ]
 
@@ -470,12 +481,20 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.LifecycleGoldenTest do
 
       assert %{reply: sessions} = ClaudeGolden.last_result(transcript)
       assert length(sessions) == 2
+
+      # Newest first: the sort is what this scenario exists to pin.
+      assert Enum.map(sessions, & &1["sessionId"]) ==
+               [Flows.session_uuid(2), Flows.session_uuid(1)]
     end
 
     test "session_list_paginates_with_limit_and_offset" do
       steps = [
-        Flows.session_jsonl(Flows.session_uuid(1), Flows.summary_entries("first")),
-        Flows.session_jsonl(Flows.session_uuid(2), Flows.summary_entries("second")),
+        Flows.session_jsonl(Flows.session_uuid(1), Flows.summary_entries("first"),
+          mtime: @older_mtime
+        ),
+        Flows.session_jsonl(Flows.session_uuid(2), Flows.summary_entries("second"),
+          mtime: @newer_mtime
+        ),
         {:list_sessions, %{"cwd" => Flows.cwd(), "limit" => 1}},
         {:list_sessions, %{"cwd" => Flows.cwd(), "limit" => 1, "offset" => 1}},
         {:list_sessions, %{"cwd" => Flows.cwd(), "cursor" => "1"}},

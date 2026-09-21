@@ -377,9 +377,12 @@ defmodule ExMCP.Test.ClaudeGolden.Flows do
   `entries` are written verbatim as JSONL; `summary_entries/1` builds the
   minimal shape the store accepts.
   """
-  @spec session_jsonl(String.t(), [map()]) :: ClaudeGolden.step()
-  def session_jsonl(session_id, entries) do
-    {:write_file, session_path(session_id), entries}
+  @spec session_jsonl(String.t(), [map()], keyword()) :: ClaudeGolden.step()
+  def session_jsonl(session_id, entries, opts \\ []) do
+    case Keyword.fetch(opts, :mtime) do
+      {:ok, mtime} -> {:write_file, session_path(session_id), entries, [mtime: mtime]}
+      :error -> {:write_file, session_path(session_id), entries}
+    end
   end
 
   @doc "The minimal store entry list for a session whose first prompt is `prompt`."

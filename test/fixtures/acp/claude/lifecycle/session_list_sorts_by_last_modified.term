@@ -23,6 +23,7 @@
         }
       ],
       kind: :write_file,
+      mtime: 1756000000,
       path: "<sandbox>/claude/projects/<sandbox-key>-project/00000001-0000-4000-8000-000000000001.jsonl"
     },
     result: %{}
@@ -40,6 +41,7 @@
         }
       ],
       kind: :write_file,
+      mtime: 1757000000,
       path: "<sandbox>/claude/projects/<sandbox-key>-project/00000002-0000-4000-8000-000000000002.jsonl"
     },
     result: %{}
@@ -54,22 +56,6 @@
               "claude_sdk" => %{
                 "createdAt" => "2026-01-01T00:00:00Z",
                 "fileSize" => "<bytes>",
-                "firstPrompt" => "first",
-                "gitBranch" => "main"
-              }
-            }
-          },
-          "cwd" => "<sandbox>/project",
-          "sessionId" => "00000001-0000-4000-8000-000000000001",
-          "title" => "first",
-          "updatedAt" => "<now>"
-        },
-        %{
-          "_meta" => %{
-            "ex_mcp" => %{
-              "claude_sdk" => %{
-                "createdAt" => "2026-01-01T00:00:00Z",
-                "fileSize" => "<bytes>",
                 "firstPrompt" => "second",
                 "gitBranch" => "main"
               }
@@ -78,7 +64,23 @@
           "cwd" => "<sandbox>/project",
           "sessionId" => "00000002-0000-4000-8000-000000000002",
           "title" => "second",
-          "updatedAt" => "<now>"
+          "updatedAt" => "2025-09-04T15:33:20.000Z"
+        },
+        %{
+          "_meta" => %{
+            "ex_mcp" => %{
+              "claude_sdk" => %{
+                "createdAt" => "2026-01-01T00:00:00Z",
+                "fileSize" => "<bytes>",
+                "firstPrompt" => "first",
+                "gitBranch" => "main"
+              }
+            }
+          },
+          "cwd" => "<sandbox>/project",
+          "sessionId" => "00000001-0000-4000-8000-000000000001",
+          "title" => "first",
+          "updatedAt" => "2025-08-24T01:46:40.000Z"
         }
       ],
       tag: :ok

@@ -679,12 +679,33 @@ defmodule ExMCP.Test.ClaudeGolden do
   end
 
   defp execute({:write_file, path, content}, state, transcript, ctx) do
+    execute({:write_file, path, content, []}, state, transcript, ctx)
+  end
+
+  # `mtime:` pins the file's modification time. The session store reads mtime at
+  # posix (whole second) granularity, so files written in the same second tie on
+  # `lastModified`; the sort is stable, which leaves the tie broken by directory
+  # listing order, and that differs between filesystems. Any scenario whose
+  # expected output depends on session ordering must set distinct mtimes or it
+  # will pass on one platform and fail on another.
+  defp execute({:write_file, path, content, opts}, state, transcript, ctx) do
     path = resolve(path, transcript, ctx)
     content = substitute(content, ctx)
     ensure_inside_sandbox!(path, ctx, "path of a :write_file step")
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, render_file(content))
-    {%{kind: :write_file, path: path, content: content}, %{}, state}
+
+    step =
+      case Keyword.fetch(opts, :mtime) do
+        {:ok, mtime} when is_integer(mtime) ->
+          File.touch!(path, mtime)
+          %{kind: :write_file, path: path, content: content, mtime: mtime}
+
+        :error ->
+          %{kind: :write_file, path: path, content: content}
+      end
+
+    {step, %{}, state}
   end
 
   defp execute({:read_file, path}, state, transcript, ctx) do
