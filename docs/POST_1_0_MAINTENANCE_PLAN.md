@@ -840,6 +840,30 @@ tasks on both sides are covered by the `asyncTasks` deferral above.
 The manifest pins now advance to the reviewed heads. The pins lead the
 open items above, so they must not advance again until those are decided.
 
+### 2026-09-21 Claude parity sequencing
+
+The four open Claude items from the 2026-09-01 list (the stable mode catalog
+with `_meta.kind` and the Auto-mode fallback, per-model token usage, deferred
+steering while user input is pending, and message-specific session forks) were
+considered for 1.5.0 and deliberately held.
+
+The reason is coverage, not scope. `ExMCP.ACP.Adapters.Claude*` is about 4,390
+lines across five modules, the largest of the three adapters, and it is the one
+without a characterization gate: 58 unit tests against 629 golden scenarios for
+Codex and 123 for Pi. Every parity port in this release leaned on that
+substrate, and the Pi gate surfaced three real crashes the moment it existed.
+Porting steering and fork behavior, which touch prompt-flow ordering and
+session identity, against unit tests alone would land changes that no test can
+prove safe. That is the risk §8.1 condition 4 exists to prevent.
+
+The sequence is therefore: build a Claude golden-transcript gate matching
+`ExMCP.Test.CodexGolden` and `ExMCP.Test.PiGolden`, then port the four items
+behind it, both in 1.6.0. Two notes for whoever picks this up. Per-model usage
+is already forwarded as `modelUsage` inside `_meta.ex_mcp.claude_sdk`, so that
+item is a decision about presentation shape rather than new plumbing, and
+`modes/1` already advertises Auto when the model supports it, so the mode-catalog
+gap is `_meta.kind` plus the fallback warning.
+
 ### 2026-09-21 ZCode source baseline
 
 ZCode's newly published source repository is tracked from its first public
