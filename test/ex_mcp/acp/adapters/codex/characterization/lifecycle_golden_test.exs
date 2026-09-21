@@ -1095,6 +1095,62 @@ defmodule ExMCP.ACP.Adapters.Codex.LifecycleGoldenTest do
 
   # -- session/load and session/resume -----------------------------------------
 
+  test "session_load_replays_camel_case_agent_message" do
+    steps =
+      connected_steps() ++
+        [
+          {:outbound,
+           %{
+             "method" => "session/load",
+             "id" => 12,
+             "params" => %{
+               "sessionId" => "thread-abc",
+               "cwd" => "/tmp/project",
+               "mcpServers" => []
+             }
+           }},
+          {:note,
+           "app-server v2 history items are camelCase (agentMessage); they replay as agent_message_chunk exactly like the legacy agent_message spelling"},
+          {:inbound,
+           %{
+             "id" => 3,
+             "result" => %{
+               "model" => "gpt-5",
+               "thread" => %{"id" => "thread-abc", "cwd" => "/tmp/project"},
+               "initialTurnsPage" => %{
+                 "data" => [
+                   %{
+                     "id" => "turn-0",
+                     "status" => "completed",
+                     "items" => [
+                       %{"type" => "userMessage", "id" => "item-0", "content" => []},
+                       %{"type" => "agentMessage", "id" => "item-1", "text" => "previous answer"}
+                     ]
+                   }
+                 ],
+                 "nextCursor" => nil
+               }
+             }
+           }}
+        ]
+
+    transcript =
+      CodexGolden.assert_golden(@area, "session_load_replays_camel_case_agent_message", steps)
+
+    assert [
+             %{
+               "params" => %{
+                 "update" => %{
+                   "sessionUpdate" => "agent_message_chunk",
+                   "content" => %{"text" => "previous answer"},
+                   "_meta" => %{"ex_mcp" => %{"replay" => true}}
+                 }
+               }
+             },
+             %{"id" => 12, "result" => _}
+           ] = CodexGolden.messages(transcript)
+  end
+
   test "session_load_paginates_older_turns" do
     steps =
       connected_steps() ++

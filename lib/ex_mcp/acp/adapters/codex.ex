@@ -22,7 +22,18 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   require Logger
 
-  alias ExMCP.ACP.Adapters.Codex.{Config, Events, FileChanges, Protocol, Sessions, SlashCommands}
+  alias ExMCP.ACP.Adapters.Codex.{
+    Config,
+    Content,
+    Events,
+    FileChanges,
+    MCP,
+    Permissions,
+    Protocol,
+    Sessions,
+    SlashCommands
+  }
+
   alias ExMCP.ACP.{AdapterEvents, Envelope, PendingRequests}
   alias ExMCP.Internal.{LogSummary, Maps, NameValue, WorkspacePath}
 
@@ -475,7 +486,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
       ) do
     with {:ok, session_id} <- Sessions.fetch_id(params),
          {:ok, session} <- Sessions.fetch(state, session_id) do
-      input_items = extract_input_items(params["prompt"])
+      input_items = Content.extract_input_items(params["prompt"])
 
       case SlashCommands.parse(input_items) do
         {:ok, command} ->
@@ -600,7 +611,10 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
     native_responses =
       Enum.map(cancelled, fn {_acp_id, entry} ->
-        Protocol.encode_response(entry.codex_id, cancelled_client_request_result(entry))
+        Protocol.encode_response(
+          entry.codex_id,
+          Permissions.cancelled_client_request_result(entry)
+        )
       end)
 
     {closed_elicitations, open_elicitations} =
@@ -625,10 +639,6 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
     {prompt_messages ++ completion_messages, native_responses, state}
   end
-
-  defp cancelled_client_request_result(%{kind: :user_input}), do: %{"answers" => %{}}
-  defp cancelled_client_request_result(%{kind: :elicitation}), do: %{"action" => "cancel"}
-  defp cancelled_client_request_result(%{method: method}), do: codex_cancel_response(method)
 
   defp closed_session_params?(params, state) do
     session_id = params["threadId"] || params["sessionId"] || get_in(params, ["turn", "threadId"])
@@ -968,7 +978,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
     else
       replay_messages =
         if type == :thread_resume do
-          replay_turns(session_id, initial_turns(result))
+          Content.replay_turns(session_id, initial_turns(result))
         else
           []
         end
@@ -1166,7 +1176,11 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp handle_notification("item/started", %{"item" => item} = params, state) do
     session_id = Sessions.id_from_params(params, state)
-    handle_item_started(session_id, item, params, mark_prompt_activity(state, session_id))
+
+    item_messages(
+      Content.item_started(session_id, item, params),
+      mark_prompt_activity(state, session_id)
+    )
   end
 
   defp handle_notification(
@@ -1709,8 +1723,8 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
   defp handle_server_request(codex_id, method, %{"threadId" => session_id}, state)
        when is_map_key(state.closed_sessions, session_id) do
-    {:skip_and_write, Protocol.encode_response(codex_id, late_server_request_result(method)),
-     state}
+    {:skip_and_write,
+     Protocol.encode_response(codex_id, Permissions.late_server_request_result(method)), state}
   end
 
   defp handle_server_request(codex_id, method, params, state)
@@ -1776,7 +1790,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
          params,
          state
        ) do
-    case command_decision_options(params) do
+    case Permissions.command_decision_options(params) do
       {:ok, pairs} ->
         emit_permission_request(
           codex_id,
@@ -1792,7 +1806,13 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   defp request_permission_from_client(codex_id, method, params, state) do
-    emit_permission_request(codex_id, method, params, permission_options(method, params), state)
+    emit_permission_request(
+      codex_id,
+      method,
+      params,
+      Permissions.permission_options(method, params),
+      state
+    )
   end
 
   defp emit_permission_request(codex_id, method, params, options, state) do
@@ -1804,9 +1824,9 @@ defmodule ExMCP.ACP.Adapters.Codex do
         "session/request_permission",
         %{
           "sessionId" => session_id,
-          "toolCall" => permission_tool_call(method, params),
+          "toolCall" => Permissions.permission_tool_call(method, params),
           "options" => options,
-          "_meta" => permission_request_meta(method, params)
+          "_meta" => Permissions.permission_request_meta(method, params)
         },
         acp_id
       )
@@ -1825,51 +1845,6 @@ defmodule ExMCP.ACP.Adapters.Codex do
 
     {:messages, [request], state}
   end
-
-  defp permission_request_meta(method, params) do
-    %{
-      "ex_mcp" => %{"codex" => %{"method" => method, "params" => params}}
-    }
-    |> maybe_put_permission_meta(permission_prompt_meta(method, params))
-  end
-
-  defp maybe_put_permission_meta(meta, nil), do: meta
-  defp maybe_put_permission_meta(meta, permission), do: Map.put(meta, "permission", permission)
-
-  defp permission_prompt_meta(method, params)
-       when method in ["item/commandExecution/requestApproval", "execCommandApproval"] do
-    title =
-      if is_map(params["networkApprovalContext"]),
-        do: "Allow network access?",
-        else: "Run command?"
-
-    permission_title_meta(title, params["reason"])
-  end
-
-  defp permission_prompt_meta(method, params)
-       when method in ["item/fileChange/requestApproval", "applyPatchApproval"] do
-    permission_title_meta("Make edits?", params["reason"])
-  end
-
-  defp permission_prompt_meta("item/permissions/requestApproval", params) do
-    permission_title_meta("Grant permissions?", params["reason"])
-  end
-
-  defp permission_prompt_meta(_method, _params), do: nil
-
-  defp permission_title_meta(title, reason) do
-    %{"version" => 1, "title" => title}
-    |> maybe_put("description", trimmed_permission_text(reason))
-  end
-
-  defp trimmed_permission_text(value) when is_binary(value) do
-    case String.trim(value) do
-      "" -> nil
-      text -> text
-    end
-  end
-
-  defp trimmed_permission_text(_value), do: nil
 
   defp normalize_elicitation_mode("form"), do: "form"
   defp normalize_elicitation_mode("url"), do: "url"
@@ -1970,7 +1945,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
         is_map(question) and is_binary(question["id"]) and question["id"] != ""
       end)
 
-    {properties, required, note_fields} = user_input_schema(questions)
+    {properties, required, note_fields} = Permissions.user_input_schema(questions)
     session_id = Sessions.id_from_params(params, state)
     acp_id = "codex-user-input-#{System.unique_integer([:positive])}"
 
@@ -2008,111 +1983,12 @@ defmodule ExMCP.ACP.Adapters.Codex do
     {:messages, [Envelope.request("elicitation/create", request_params, acp_id)], state}
   end
 
-  # Mirrors codex-acp's `request_user_input` form (agentclientprotocol/codex-acp#299):
-  # the full question is the field title and the short header its description,
-  # every primary question is required, an `isOther` question with options gets
-  # a "None of the above" choice, and its free text lives in a separate note
-  # field tagged `_meta.codex.role: "user_note"`. The note travels back to
-  # Codex as `user_note: <text>` beside the selection rather than replacing it.
-  @user_input_other_option "None of the above"
-  @user_input_note_prefix "user_note: "
-
-  defp user_input_schema(questions) do
-    question_ids = MapSet.new(questions, & &1["id"])
-
-    Enum.reduce(questions, {%{}, [], %{}}, fn question, {properties, required, note_fields} ->
-      id = question["id"]
-
-      if is_binary(id) and id != "" do
-        has_other_answer = question["isOther"] == true and List.wrap(question["options"]) != []
-        properties = Map.put(properties, id, user_input_property(question, has_other_answer))
-
-        {properties, note_fields} =
-          if has_other_answer do
-            note_id = user_input_note_field_id(id, question_ids)
-
-            note = %{
-              "type" => "string",
-              "title" => "Additional answer or note",
-              "_meta" => %{
-                "codex" => %{
-                  "questionId" => id,
-                  "role" => "user_note",
-                  "isSecret" => question["isSecret"] == true
-                }
-              }
-            }
-
-            {Map.put(properties, note_id, note), Map.put(note_fields, id, note_id)}
-          else
-            {properties, note_fields}
-          end
-
-        {properties, required ++ [id], note_fields}
-      else
-        {properties, required, note_fields}
-      end
-    end)
-  end
-
-  defp user_input_note_field_id(question_id, question_ids, index \\ 0) do
-    candidate = question_id <> "_note" <> if(index == 0, do: "", else: Integer.to_string(index))
-
-    if MapSet.member?(question_ids, candidate),
-      do: user_input_note_field_id(question_id, question_ids, index + 1),
-      else: candidate
-  end
-
-  defp user_input_property(question, has_other_answer) do
-    base =
-      %{
-        "type" => "string",
-        "title" => question["question"] || question["header"] || question["id"],
-        "_meta" => %{
-          "codex" => %{
-            "isOther" => question["isOther"] == true,
-            "isSecret" => question["isSecret"] == true
-          }
-        }
-      }
-      |> maybe_put("description", question["header"])
-
-    case question["options"] do
-      options when is_list(options) and options != [] ->
-        choices = Enum.map(options, &user_input_option/1)
-
-        choices =
-          if has_other_answer and
-               not Enum.any?(options, &(&1["label"] == @user_input_other_option)),
-             do:
-               choices ++
-                 [
-                   %{
-                     "const" => @user_input_other_option,
-                     "title" => @user_input_other_option,
-                     "description" => "Provide a different answer in the note field."
-                   }
-                 ],
-             else: choices
-
-        Map.put(base, "oneOf", choices)
-
-      _no_options ->
-        base
-    end
-  end
-
-  defp user_input_option(option) do
-    %{"const" => option["label"], "title" => option["label"]}
-    |> maybe_put("description", option["description"])
-  end
-
   defp client_request_result(%{kind: :user_input} = entry, response, state) do
-    {:native, user_input_response(entry, response), state}
+    {:native, Permissions.user_input_response(entry, response), state}
   end
 
   defp client_request_result(%{kind: :elicitation} = entry, response, state) do
-    {result, accepted?} = elicitation_response(response)
+    {result, accepted?} = Permissions.elicitation_response(response)
 
     state =
       if accepted? and entry.mode == "url" and is_binary(entry.elicitation_id) do
@@ -2130,7 +2006,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   defp client_request_result(%{kind: :auth_url} = entry, response, state) do
-    case elicitation_response(response) do
+    case Permissions.elicitation_response(response) do
       {_result, true} ->
         {:defer, put_in(state.pending_auth[:consented], true)}
 
@@ -2150,167 +2026,10 @@ defmodule ExMCP.ACP.Adapters.Codex do
   end
 
   defp client_request_result(entry, response, state) do
-    {:native, permission_response(entry, response), state}
+    {:native, Permissions.permission_response(entry, response), state}
   end
-
-  defp elicitation_response(%{"result" => %{"action" => "accept"} = result}) do
-    content = result["content"]
-
-    if is_nil(content) or is_map(content) do
-      {result, true}
-    else
-      {%{"action" => "cancel"}, false}
-    end
-  end
-
-  defp elicitation_response(%{"result" => %{"action" => action} = result})
-       when action in ["decline", "cancel"],
-       do: {result, false}
-
-  defp elicitation_response(_response), do: {%{"action" => "cancel"}, false}
-
-  defp user_input_response(entry, %{"result" => %{"action" => "accept", "content" => content}})
-       when is_map(content) do
-    answers =
-      Enum.reduce(entry.questions, %{}, fn question, answers ->
-        id = question["id"]
-        values = user_input_values(content[id])
-
-        notes =
-          case Map.get(entry, :note_fields, %{})[id] do
-            nil ->
-              []
-
-            note_id ->
-              Enum.map(
-                user_input_values(content[note_id]),
-                &(@user_input_note_prefix <> String.trim(&1))
-              )
-          end
-
-        case values ++ notes do
-          [] -> answers
-          all -> Map.put(answers, id, %{"answers" => all})
-        end
-      end)
-
-    %{"answers" => answers}
-  end
-
-  defp user_input_response(_entry, _response), do: %{"answers" => %{}}
-
-  defp user_input_values(value) when is_binary(value),
-    do: if(String.trim(value) == "", do: [], else: [value])
-
-  defp user_input_values(values) when is_list(values),
-    do: Enum.filter(values, &(is_binary(&1) and String.trim(&1) != ""))
-
-  defp user_input_values(_value), do: []
-
-  defp late_server_request_result("item/tool/requestUserInput"), do: %{"answers" => %{}}
-  defp late_server_request_result("mcpServer/elicitation/request"), do: %{"action" => "cancel"}
-  defp late_server_request_result(method), do: codex_cancel_response(method)
 
   # Item completion / replay helpers
-
-  defp handle_item_started(session_id, item, params, state) do
-    case Events.item_type(item) do
-      type when type in ["function_call", "functionCall"] ->
-        {:messages, [Events.tool_call_started(session_id, item)], state}
-
-      "commandExecution" ->
-        tool_call_id = Events.item_id(params, item)
-
-        notification =
-          AdapterEvents.tool_call(session_id, %{
-            "toolCallId" => tool_call_id,
-            "title" => Events.command_title(item["command"]),
-            "kind" => "execute",
-            "status" => Events.normalize_tool_status(item["status"], "in_progress"),
-            "rawInput" => %{"command" => item["command"], "cwd" => item["cwd"]},
-            "content" => [%{"type" => "terminal", "terminalId" => tool_call_id}],
-            "_meta" => Events.terminal_info(tool_call_id, item["cwd"])
-          })
-
-        {:messages, [notification], state}
-
-      "fileChange" ->
-        {:messages, [FileChanges.started(session_id, params, item)], state}
-
-      "mcpToolCall" ->
-        notification =
-          AdapterEvents.tool_call(session_id, %{
-            "toolCallId" => Events.item_id(params, item),
-            "title" => Events.mcp_tool_title(item),
-            "kind" => "execute",
-            "status" => Events.normalize_tool_status(item["status"], "in_progress"),
-            "rawInput" => Events.mcp_raw_input(item),
-            "_meta" => %{"is_mcp_tool_call" => true}
-          })
-
-        {:messages, [notification], state}
-
-      "dynamicToolCall" ->
-        notification =
-          AdapterEvents.tool_call(session_id, %{
-            "toolCallId" => Events.item_id(params, item),
-            "title" => Events.dynamic_tool_title(item),
-            "kind" => Events.tool_kind(item["tool"]),
-            "status" => Events.normalize_tool_status(item["status"], "in_progress"),
-            "rawInput" => item["arguments"]
-          })
-
-        {:messages, [notification], state}
-
-      "webSearch" ->
-        notification =
-          AdapterEvents.tool_call(session_id, %{
-            "toolCallId" => Events.item_id(params, item),
-            "title" => Events.web_search_title(item),
-            "kind" => "search",
-            "status" => "in_progress",
-            "rawInput" => item
-          })
-
-        {:messages, [notification], state}
-
-      "imageView" ->
-        path = item["path"] || ""
-
-        notification =
-          AdapterEvents.tool_call(session_id, %{
-            "toolCallId" => Events.item_id(params, item),
-            "title" => "View Image #{path}",
-            "kind" => "read",
-            "status" => "completed",
-            "content" => [
-              %{
-                "type" => "content",
-                "content" => %{"type" => "resource_link", "name" => path, "uri" => path}
-              }
-            ],
-            "locations" => [%{"path" => path}],
-            "rawInput" => %{"path" => path}
-          })
-
-        {:messages, [notification], state}
-
-      "imageGeneration" ->
-        notification =
-          AdapterEvents.tool_call(session_id, %{
-            "toolCallId" => Events.item_id(params, item),
-            "title" => "Image generation",
-            "kind" => "other",
-            "status" => Events.normalize_tool_status(item["status"], "in_progress"),
-            "rawInput" => %{"revisedPrompt" => item["revisedPrompt"]}
-          })
-
-        {:messages, [notification], state}
-
-      _ ->
-        {:skip, state}
-    end
-  end
 
   defp handle_item_completed(session_id, %{"type" => "agent_message"} = item, state) do
     text = item["text"] || item["message"] || ""
@@ -2331,7 +2050,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
     # streamed yet so chunk consumers do not see the text twice, and fold that
     # remainder into the accumulator so the prompt's `_meta.text` matches the
     # stream even when no deltas were sent at all.
-    remainder = unstreamed_text(text, streamed)
+    remainder = Content.unstreamed_text(text, streamed)
 
     state =
       Sessions.update(state, session_id, fn session ->
@@ -2356,184 +2075,12 @@ defmodule ExMCP.ACP.Adapters.Codex do
     handle_item_completed(session_id, Map.put(item, "type", "agent_message"), state)
   end
 
-  defp handle_item_completed(session_id, %{"type" => "reasoning"} = item, state) do
-    text =
-      (item["content"] || item["summary"] || [])
-      |> List.wrap()
-      |> Enum.join("\n")
-
-    notification =
-      AdapterEvents.agent_thought_chunk(session_id, text, meta: %{"ex_mcp" => %{"final" => true}})
-
-    {:messages, [notification], state}
+  defp handle_item_completed(session_id, item, state) do
+    item_messages(Content.item_completed(session_id, item), state)
   end
 
-  defp handle_item_completed(session_id, %{"type" => "function_call"} = item, state) do
-    notification =
-      AdapterEvents.tool_call_update(session_id, %{
-        "toolCallId" => item["callId"] || item["id"],
-        "status" => "completed",
-        "kind" => Events.tool_kind(item["name"]),
-        "rawInput" => item["arguments"]
-      })
-
-    {:messages, [notification], state}
-  end
-
-  defp handle_item_completed(session_id, %{"type" => "functionCall"} = item, state) do
-    handle_item_completed(session_id, Map.put(item, "type", "function_call"), state)
-  end
-
-  defp handle_item_completed(session_id, %{"type" => "function_call_output"} = item, state) do
-    notification =
-      AdapterEvents.tool_call_update(session_id, %{
-        "toolCallId" => item["callId"] || item["id"],
-        "status" => if(item["isError"], do: "failed", else: "completed"),
-        "content" => [Events.tool_text_content(item["output"] || item["text"] || "")],
-        "rawOutput" => item["output"] || item["text"] || ""
-      })
-
-    {:messages, [notification], state}
-  end
-
-  defp handle_item_completed(session_id, %{"type" => "commandExecution"} = item, state) do
-    tool_call_id = item["id"]
-
-    notification =
-      AdapterEvents.tool_call_update(session_id, %{
-        "toolCallId" => tool_call_id,
-        "status" => Events.normalize_tool_status(item["status"], "completed"),
-        "rawOutput" => %{
-          "exit_code" => item["exitCode"],
-          "formatted_output" => item["aggregatedOutput"] || ""
-        },
-        "_meta" => Events.terminal_exit(tool_call_id, item["exitCode"])
-      })
-
-    {:messages, [notification], state}
-  end
-
-  defp handle_item_completed(session_id, %{"type" => "patch"} = item, state) do
-    notification =
-      AdapterEvents.tool_call_update(session_id, %{
-        "toolCallId" => item["callId"] || item["id"],
-        "kind" => "edit",
-        "status" => "completed",
-        "content" => [Events.tool_diff_content(item["path"], item["diff"] || item["text"] || "")]
-      })
-
-    {:messages, [notification], state}
-  end
-
-  defp handle_item_completed(session_id, %{"type" => "fileChange"} = item, state) do
-    {:messages, [FileChanges.completed(session_id, item)], state}
-  end
-
-  defp handle_item_completed(session_id, %{"type" => "mcpToolCall"} = item, state) do
-    output = item["result"] || item["error"] || %{}
-
-    notification =
-      AdapterEvents.tool_call_update(session_id, %{
-        "toolCallId" => item["id"],
-        "status" =>
-          Events.normalize_tool_status(
-            item["status"],
-            if(item["error"], do: "failed", else: "completed")
-          ),
-        "rawInput" => Events.mcp_raw_input(item),
-        "rawOutput" => Events.mcp_raw_output(item) || output
-      })
-
-    {:messages, [notification], state}
-  end
-
-  defp handle_item_completed(session_id, %{"type" => "dynamicToolCall"} = item, state) do
-    output = item["contentItems"] || []
-
-    notification =
-      AdapterEvents.tool_call_update(session_id, %{
-        "toolCallId" => item["id"],
-        "status" =>
-          Events.normalize_tool_status(
-            item["status"],
-            if(item["success"] == false, do: "failed", else: "completed")
-          ),
-        "content" => Events.dynamic_tool_content(output),
-        "rawOutput" => output
-      })
-
-    {:messages, [notification], state}
-  end
-
-  defp handle_item_completed(session_id, %{"type" => "webSearch"} = item, state) do
-    notification =
-      AdapterEvents.tool_call_update(session_id, %{
-        "toolCallId" => item["id"],
-        "title" => Events.web_search_title(item),
-        "status" => "completed",
-        "rawInput" => item
-      })
-
-    {:messages, [notification], state}
-  end
-
-  defp handle_item_completed(session_id, %{"type" => "imageView"} = item, state) do
-    handle_item_started(session_id, item, %{}, state)
-  end
-
-  defp handle_item_completed(session_id, %{"type" => "imageGeneration"} = item, state) do
-    content =
-      []
-      |> maybe_add_image_revised_prompt(item["revisedPrompt"])
-      |> maybe_add_generated_image(item)
-
-    notification =
-      AdapterEvents.tool_call_update(session_id, %{
-        "toolCallId" => item["id"],
-        "status" => Events.normalize_tool_status(item["status"], "completed"),
-        "content" => content,
-        "rawOutput" => item
-      })
-
-    {:messages, [notification], state}
-  end
-
-  defp handle_item_completed(session_id, %{"type" => "contextCompaction"} = _item, state) do
-    {:messages, [AdapterEvents.agent_message_chunk(session_id, "Context compacted\n")], state}
-  end
-
-  defp handle_item_completed(_session_id, _item, state), do: {:skip, state}
-
-  defp unstreamed_text(text, ""), do: text
-  defp unstreamed_text(text, streamed) when text == streamed, do: ""
-
-  # When deltas were streamed but the completed text is not an extension of
-  # them, trust the stream: repeating the whole message is the duplication this
-  # guards against, and the accumulator already holds what the client saw.
-  defp unstreamed_text(text, streamed) do
-    if String.starts_with?(text, streamed) do
-      binary_part(text, byte_size(streamed), byte_size(text) - byte_size(streamed))
-    else
-      ""
-    end
-  end
-
-  defp maybe_add_image_revised_prompt(content, prompt) when is_binary(prompt) and prompt != "" do
-    content ++ [Events.tool_text_content("Revised prompt: #{prompt}")]
-  end
-
-  defp maybe_add_image_revised_prompt(content, _prompt), do: content
-
-  defp maybe_add_generated_image(content, %{"result" => result} = item)
-       when is_binary(result) and result != "" do
-    image =
-      %{"type" => "image", "data" => result, "mimeType" => "image/png"}
-      |> maybe_put("uri", item["savedPath"])
-
-    content ++ [%{"type" => "content", "content" => image}]
-  end
-
-  defp maybe_add_generated_image(content, _item), do: content
+  defp item_messages([], state), do: {:skip, state}
+  defp item_messages(messages, state), do: {:messages, messages, state}
 
   # The initial page is requested newest-first, so it is reversed here; a
   # legacy full `thread.turns` history is already chronological.
@@ -2569,7 +2116,7 @@ defmodule ExMCP.ACP.Adapters.Codex do
   # Pages arrive newest-first; reversed, they precede the initial page.
   defp finish_older_turns(acp_id, meta, state) do
     turns = Enum.reverse(meta.older_turns) ++ initial_turns(meta.result)
-    replay_messages = replay_turns(meta.session_id, turns)
+    replay_messages = Content.replay_turns(meta.session_id, turns)
 
     response =
       Envelope.response(
@@ -2578,37 +2125,6 @@ defmodule ExMCP.ACP.Adapters.Codex do
       )
 
     {:messages, replay_messages ++ [response], state}
-  end
-
-  defp replay_turns(session_id, turns) do
-    Enum.flat_map(turns, fn turn ->
-      turn
-      |> Map.get("items", [])
-      |> Enum.flat_map(&replay_item(session_id, &1))
-    end)
-  end
-
-  defp replay_item(session_id, %{"type" => "agent_message"} = item) do
-    [
-      AdapterEvents.agent_message_chunk(session_id, item["text"] || item["message"] || "",
-        meta: %{"ex_mcp" => %{"replay" => true}}
-      )
-    ]
-  end
-
-  defp replay_item(session_id, %{"type" => "reasoning"} = item) do
-    [
-      AdapterEvents.agent_thought_chunk(session_id, item["text"] || item["summary"] || "",
-        meta: %{"ex_mcp" => %{"replay" => true}}
-      )
-    ]
-  end
-
-  defp replay_item(session_id, item) do
-    case handle_item_completed(session_id, item, nil) do
-      {:messages, messages, _state} -> Enum.map(messages, &Events.mark_replay/1)
-      {:skip, _state} -> []
-    end
   end
 
   # State helpers
@@ -3508,22 +3024,15 @@ defmodule ExMCP.ACP.Adapters.Codex do
          :ok <- authorize_additional_directories(additional_directories, cwd, state),
          {:ok, mcp_config} <- mcp_config(params["mcpServers"], cwd, state) do
       config =
-        state.opts
-        |> codex_config()
-        |> merge_gateway_config(state.gateway_config)
-        |> maybe_merge_trusted_projects(cwd, additional_directories, state.opts)
-        |> merge_sandbox_workspace_roots(additional_directories)
-        |> merge_config(mcp_config)
+        MCP.native_config(codex_config(state.opts), mcp_config, %{
+          cwd: cwd,
+          additional_directories: additional_directories,
+          gateway_config: state.gateway_config,
+          trust_authorized_workspaces:
+            Keyword.get(state.opts, :trust_authorized_workspaces, false)
+        })
 
-      {:ok, empty_to_nil(config), additional_directories}
-    end
-  end
-
-  defp maybe_merge_trusted_projects(config, cwd, additional_directories, opts) do
-    if Keyword.get(opts, :trust_authorized_workspaces, false) do
-      merge_trusted_projects(config, cwd, additional_directories)
-    else
-      config
+      {:ok, config, additional_directories}
     end
   end
 
@@ -3542,74 +3051,6 @@ defmodule ExMCP.ACP.Adapters.Codex do
         %{}
     end
   end
-
-  defp merge_gateway_config(config, nil), do: config
-
-  defp merge_gateway_config(config, %{
-         model_provider: model_provider,
-         provider_config: provider_config
-       }) do
-    providers =
-      config
-      |> Map.get("model_providers", %{})
-      |> case do
-        providers when is_map(providers) -> providers
-        _ -> %{}
-      end
-      |> Map.put(model_provider, provider_config)
-
-    Map.put(config, "model_providers", providers)
-  end
-
-  defp merge_trusted_projects(config, cwd, additional_directories) do
-    roots =
-      [cwd | additional_directories]
-      |> Enum.filter(&(is_binary(&1) and &1 != ""))
-      |> Enum.uniq()
-
-    if roots == [] do
-      config
-    else
-      projects =
-        config
-        |> Map.get("projects", %{})
-        |> case do
-          projects when is_map(projects) -> projects
-          _ -> %{}
-        end
-        |> Map.merge(Map.new(roots, &{&1, %{"trust_level" => "trusted"}}))
-
-      Map.put(config, "projects", projects)
-    end
-  end
-
-  defp merge_sandbox_workspace_roots(config, []), do: config
-
-  defp merge_sandbox_workspace_roots(config, additional_directories) do
-    sandbox =
-      config
-      |> Map.get("sandbox_workspace_write", %{})
-      |> case do
-        sandbox when is_map(sandbox) -> sandbox
-        _ -> %{}
-      end
-
-    roots =
-      sandbox
-      |> Map.get("writable_roots", [])
-      |> List.wrap()
-      |> Enum.filter(&is_binary/1)
-      |> Enum.concat(additional_directories)
-      |> Enum.uniq()
-
-    Map.put(config, "sandbox_workspace_write", Map.put(sandbox, "writable_roots", roots))
-  end
-
-  defp merge_config(config, nil), do: config
-  defp merge_config(config, mcp_config), do: Map.merge(config, mcp_config)
-
-  defp empty_to_nil(config) when map_size(config) == 0, do: nil
-  defp empty_to_nil(config), do: config
 
   defp additional_directories(params, cwd) do
     raw = params["additionalDirectories"] || get_in(params, ["_meta", "additionalRoots"])
@@ -3765,752 +3206,33 @@ defmodule ExMCP.ACP.Adapters.Codex do
   defp authorization_result({:ok, _value}, _message), do: :ok
   defp authorization_result(_result, message), do: {:error, message}
 
-  defp validate_http_mcp_server(server) do
-    uri = if is_binary(server["url"]), do: URI.parse(server["url"]), else: %URI{}
-
-    if valid_mcp_name?(server["name"]) and uri.scheme in ["http", "https"] and
-         is_binary(uri.host) and uri.host != "" and valid_name_value_list?(server["headers"]) do
-      :ok
-    else
-      {:error, "Invalid HTTP MCP server configuration"}
-    end
-  end
-
-  defp validate_stdio_mcp_server(server) do
-    if valid_mcp_name?(server["name"]) and is_binary(server["command"]) and
-         server["command"] != "" and Path.type(server["command"]) == :absolute and
-         is_list(server["args"]) and Enum.all?(server["args"], &is_binary/1) and
-         valid_name_value_list?(server["env"]) do
-      :ok
-    else
-      {:error, "Invalid stdio MCP server configuration"}
-    end
-  end
-
-  defp valid_mcp_name?(name), do: is_binary(name) and String.trim(name) != ""
-
-  defp valid_name_value_list?(values) when is_list(values) do
-    Enum.all?(values, fn
-      %{"name" => name, "value" => value} -> is_binary(name) and is_binary(value)
-      {name, value} -> is_binary(name) and is_binary(value)
-      _other -> false
-    end)
-  end
-
-  defp valid_name_value_list?(_values), do: false
-
   defp mcp_config(nil, _cwd, _state), do: {:ok, nil}
   defp mcp_config([], _cwd, _state), do: {:ok, nil}
 
+  # Each server is normalized, then authorized by the adapter's policy, then
+  # emitted, in list order; the first failure rejects the whole list.
   defp mcp_config(servers, cwd, state) when is_list(servers) do
     Enum.reduce_while(servers, {:ok, %{}}, fn server, {:ok, acc} ->
-      case mcp_server_config(server, cwd, state) do
-        {:ok, {name, _config}} when is_map_key(acc, name) ->
-          {:halt, {:error, "MCP server names must be unique"}}
+      with {:ok, server} <- MCP.normalize_server(server),
+           :ok <- authorize_mcp_server(server, cwd, state) do
+        {name, config} = MCP.server_config(server)
 
-        {:ok, {name, config}} ->
-          {:cont, {:ok, Map.put(acc, name, config)}}
-
-        {:error, reason} ->
-          {:halt, {:error, reason}}
+        if is_map_key(acc, name),
+          do: {:halt, {:error, "MCP server names must be unique"}},
+          else: {:cont, {:ok, Map.put(acc, name, config)}}
+      else
+        {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
     |> case do
-      {:ok, config} when map_size(config) == 0 -> {:ok, nil}
-      {:ok, config} -> {:ok, %{"mcp_servers" => config}}
+      {:ok, entries} -> {:ok, MCP.servers_config(entries)}
       {:error, reason} -> {:error, reason}
     end
   end
 
   defp mcp_config(_servers, _cwd, _state), do: {:error, "mcpServers must be a list"}
 
-  defp mcp_server_config(%{"type" => "http"} = server, cwd, state) do
-    with :ok <- validate_http_mcp_server(server),
-         :ok <- authorize_mcp_server(server, cwd, state) do
-      name = sanitize_mcp_server_name(server["name"])
-
-      {:ok,
-       {name,
-        %{}
-        |> Map.put("url", server["url"])
-        |> maybe_put("http_headers", headers_to_map(server["headers"]))}}
-    end
-  end
-
-  defp mcp_server_config(%{"type" => "stdio"} = server, cwd, state) do
-    with :ok <- validate_stdio_mcp_server(server),
-         :ok <- authorize_mcp_server(server, cwd, state) do
-      name = sanitize_mcp_server_name(server["name"])
-
-      {:ok,
-       {name,
-        %{}
-        |> Map.put("command", server["command"])
-        |> maybe_put("args", server["args"])
-        |> maybe_put("env", env_to_map(server["env"]))}}
-    end
-  end
-
-  defp mcp_server_config(%{"type" => "sse"}, _cwd, _state),
-    do: {:error, "Codex doesn't support MCP SSE transport protocol"}
-
-  defp mcp_server_config(%{"type" => "acp"}, _cwd, _state),
-    do: {:error, "Codex doesn't support MCP ACP transport protocol"}
-
-  defp mcp_server_config(server, cwd, state) when is_map(server) do
-    if Map.has_key?(server, "command") do
-      mcp_server_config(Map.put(server, "type", "stdio"), cwd, state)
-    else
-      {:error, "Unsupported MCP server transport"}
-    end
-  end
-
-  defp mcp_server_config(_server, _cwd, _state), do: {:error, "Invalid MCP server"}
-
-  defp sanitize_mcp_server_name(nil), do: "mcp_server"
-
-  defp sanitize_mcp_server_name(name) do
-    name
-    |> to_string()
-    |> String.trim()
-    |> String.replace(~r/\s+/, "_")
-    |> case do
-      "" -> "mcp_server"
-      sanitized -> sanitized
-    end
-  end
-
-  defp headers_to_map(headers), do: name_value_list_to_map(headers)
-  defp env_to_map(env), do: name_value_list_to_map(env)
-
-  defp name_value_list_to_map(values) when is_list(values) do
-    Map.new(values, fn
-      %{"name" => name, "value" => value} -> {name, value}
-      {name, value} -> {to_string(name), to_string(value)}
-    end)
-  end
-
-  defp name_value_list_to_map(_values), do: nil
-
-  # Permission mapping
-
-  defp permission_tool_call(method, params) do
-    %{
-      "toolCallId" => params["itemId"] || params["callId"] || params["approvalId"] || method,
-      "toolName" => permission_tool_name(method, params),
-      "kind" => permission_tool_kind(method),
-      "title" => permission_title(method, params),
-      "status" => "pending",
-      "rawInput" => params
-    }
-  end
-
-  defp permission_tool_name("item/commandExecution/requestApproval", _params), do: "execute"
-  defp permission_tool_name("execCommandApproval", _params), do: "execute"
-  defp permission_tool_name("item/fileChange/requestApproval", _params), do: "edit"
-  defp permission_tool_name("applyPatchApproval", _params), do: "edit"
-  defp permission_tool_name("item/permissions/requestApproval", _params), do: "permissions"
-
-  defp permission_tool_name("mcpServer/elicitation/request", params),
-    do: "mcp:#{params["serverName"]}"
-
-  defp permission_tool_name(_method, _params), do: "codex"
-
-  defp permission_tool_kind(method)
-       when method in ["item/commandExecution/requestApproval", "execCommandApproval"],
-       do: "execute"
-
-  defp permission_tool_kind("item/fileChange/requestApproval"), do: "edit"
-  defp permission_tool_kind("applyPatchApproval"), do: "edit"
-
-  defp permission_tool_kind("mcpServer/elicitation/request"), do: "other"
-  defp permission_tool_kind(_method), do: "other"
-
-  defp permission_title(method, params)
-       when method in ["item/commandExecution/requestApproval", "execCommandApproval"] do
-    Events.command_title(params["command"])
-  end
-
-  defp permission_title(method, _params)
-       when method in ["item/fileChange/requestApproval", "applyPatchApproval"],
-       do: "Approve File Changes"
-
-  defp permission_title("item/permissions/requestApproval", _params), do: "Approve Permissions"
-
-  defp permission_title("mcpServer/elicitation/request", params),
-    do: params["message"] || "MCP Elicitation"
-
-  defp permission_title(_method, _params), do: "Codex Permission"
-
-  defp permission_options("item/fileChange/requestApproval", _params),
-    do: file_change_permission_options()
-
-  defp permission_options("item/permissions/requestApproval", _params),
-    do: permission_profile_options()
-
-  defp permission_options("mcpServer/elicitation/request", params),
-    do: mcp_permission_options(params)
-
-  defp permission_options(_method, _params) do
-    [
-      permission_option("allow_once", "Allow Once", "allow_once"),
-      permission_option("allow_always", "Allow for Session", "allow_always"),
-      permission_option("reject_once", "Reject", "reject_once")
-    ]
-  end
-
-  defp permission_option(option_id, name, kind) do
-    %{"optionId" => option_id, "name" => name, "kind" => kind}
-  end
-
-  defp file_change_permission_options do
-    [
-      permission_option("allow_once", "Yes, proceed", "allow_once"),
-      permission_option(
-        "allow_for_session",
-        "Yes, and don't ask again for these files",
-        "allow_always"
-      ),
-      permission_option("cancel", "No, and tell Codex what to do differently", "reject_once")
-    ]
-  end
-
-  defp permission_profile_options do
-    [
-      permission_option(
-        "allow_permissions_turn",
-        "Yes, grant these permissions for this turn",
-        "allow_once"
-      ),
-      permission_option(
-        "allow_permissions_turn_strict_auto_review",
-        "Yes, grant for this turn with strict auto review",
-        "allow_once"
-      ),
-      permission_option(
-        "allow_permissions_session",
-        "Yes, grant these permissions for this session",
-        "allow_always"
-      ),
-      permission_option("reject_permissions", "No, continue without permissions", "reject_once")
-    ]
-  end
-
-  defp mcp_permission_options(params) do
-    meta = params["_meta"] || %{}
-    persist = persist_options(meta)
-    tool_approval? = mcp_tool_approval?(meta)
-
-    allow_once =
-      if tool_approval? do
-        mcp_option("allow_once", "Allow", "allow_once", "Run the tool and continue.")
-      else
-        mcp_option("accept", "Allow", "allow_once", "Allow this request and continue.")
-      end
-
-    options = [allow_once]
-
-    options =
-      if "session" in persist do
-        options ++
-          [
-            mcp_option(
-              "allow_session",
-              "Allow for this session",
-              "allow_always",
-              if(tool_approval?,
-                do: "Run the tool and remember this choice for this session.",
-                else: "Allow this request and remember this choice for this session."
-              )
-            )
-          ]
-      else
-        options
-      end
-
-    options =
-      if "always" in persist do
-        options ++
-          [
-            mcp_option(
-              "allow_always",
-              "Always allow",
-              "allow_always",
-              if(tool_approval?,
-                do: "Run the tool and remember this choice for future tool calls.",
-                else: "Allow this request and remember this choice for future requests."
-              )
-            )
-          ]
-      else
-        options
-      end
-
-    if tool_approval? do
-      options ++ [mcp_option("cancel", "Cancel", "reject_once", "Cancel this tool call")]
-    else
-      options ++
-        [
-          mcp_option("decline", "Deny", "reject_once", "Decline this request and continue."),
-          mcp_option("cancel", "Cancel", "reject_once", "Cancel this request")
-        ]
-    end
-  end
-
-  defp mcp_option(option_id, name, kind, description) do
-    %{
-      "optionId" => option_id,
-      "name" => name,
-      "kind" => kind,
-      "_meta" => %{"permission" => %{"version" => 1, "description" => description}}
-    }
-  end
-
-  defp persist_options(%{"persist" => "session"}), do: ["session"]
-  defp persist_options(%{"persist" => "always"}), do: ["always"]
-
-  defp persist_options(%{"persist" => persist}) when is_list(persist) do
-    Enum.filter(persist, &(&1 in ["session", "always"]))
-  end
-
-  defp persist_options(_meta), do: []
-
-  defp mcp_tool_approval?(%{"codex_approval_kind" => "mcp_tool_call"}), do: true
-  defp mcp_tool_approval?(_meta), do: false
-
-  defp command_decision_options(params) do
-    with {:ok, decisions} <- parse_available_command_decisions(params) do
-      {pairs, _network_index} =
-        Enum.reduce(decisions, {[], 0}, fn decision, {pairs, network_index} ->
-          case command_decision_option(decision, params, network_index) do
-            {:skip, network_index} ->
-              {pairs, network_index}
-
-            {option, mapped, network_index} ->
-              {pairs ++ [{option, mapped}], network_index}
-          end
-        end)
-
-      pairs = sort_command_decision_options(pairs)
-
-      if valid_command_option_set?(pairs) do
-        {:ok, pairs}
-      else
-        :error
-      end
-    end
-  end
-
-  defp parse_available_command_decisions(params) do
-    case Map.fetch(params, "availableDecisions") do
-      :error ->
-        {:ok, default_command_decisions(params)}
-
-      {:ok, nil} ->
-        {:ok, default_command_decisions(params)}
-
-      {:ok, decisions} when is_list(decisions) and decisions != [] ->
-        Enum.reduce_while(decisions, {:ok, []}, fn candidate, {:ok, acc} ->
-          case parse_command_decision(candidate, params) do
-            {:ok, decision} -> {:cont, {:ok, acc ++ [decision]}}
-            :error -> {:halt, :error}
-          end
-        end)
-
-      {:ok, _other} ->
-        :error
-    end
-  end
-
-  defp default_command_decisions(%{"networkApprovalContext" => network} = params)
-       when is_map(network) do
-    amendments =
-      params
-      |> Map.get("proposedNetworkPolicyAmendments")
-      |> List.wrap()
-      |> Enum.filter(&is_map/1)
-      |> Enum.map(fn amendment ->
-        %{"applyNetworkPolicyAmendment" => %{"network_policy_amendment" => amendment}}
-      end)
-
-    ["accept", "acceptForSession"] ++ amendments ++ ["decline", "cancel"]
-  end
-
-  defp default_command_decisions(%{"additionalPermissions" => permissions})
-       when is_map(permissions) do
-    ["accept", "cancel"]
-  end
-
-  defp default_command_decisions(params) do
-    decisions = ["accept", "acceptForSession"]
-
-    decisions =
-      case params["proposedExecpolicyAmendment"] do
-        amendment when is_list(amendment) and amendment != [] ->
-          decisions ++
-            [
-              %{
-                "acceptWithExecpolicyAmendment" => %{"execpolicy_amendment" => amendment}
-              }
-            ]
-
-        _ ->
-          decisions
-      end
-
-    decisions ++ ["decline", "cancel"]
-  end
-
-  defp parse_command_decision(candidate, _params)
-       when candidate in ["accept", "acceptForSession", "decline", "cancel"] do
-    {:ok, candidate}
-  end
-
-  defp parse_command_decision(
-         %{"acceptWithExecpolicyAmendment" => %{"execpolicy_amendment" => amendment}} = decision,
-         params
-       )
-       when is_list(amendment) and amendment != [] do
-    if same_string_list?(amendment, params["proposedExecpolicyAmendment"]) do
-      {:ok, decision}
-    else
-      :error
-    end
-  end
-
-  defp parse_command_decision(
-         %{"applyNetworkPolicyAmendment" => %{"network_policy_amendment" => amendment}} =
-           decision,
-         params
-       ) do
-    host = amendment["host"]
-    action = amendment["action"]
-    network = params["networkApprovalContext"]
-
-    valid? =
-      is_binary(host) and action in ["allow", "deny"] and is_map(network) and
-        network["host"] == host and
-        Enum.any?(List.wrap(params["proposedNetworkPolicyAmendments"]), fn proposed ->
-          is_map(proposed) and proposed["host"] == host and proposed["action"] == action
-        end)
-
-    if valid?, do: {:ok, decision}, else: :error
-  end
-
-  defp parse_command_decision(_candidate, _params), do: :error
-
-  defp same_string_list?(left, right) when is_list(left) and is_list(right) do
-    length(left) == length(right) and Enum.all?(left, &is_binary/1) and left == right
-  end
-
-  defp same_string_list?(_left, _right), do: false
-
-  defp command_decision_option("accept", params, network_index) do
-    name =
-      if is_map(params["networkApprovalContext"]),
-        do: "Yes, just this once",
-        else: "Yes, proceed"
-
-    {permission_option("allow_once", name, "allow_once"), "accept", network_index}
-  end
-
-  defp command_decision_option("acceptForSession", params, network_index) do
-    name =
-      cond do
-        is_map(params["networkApprovalContext"]) ->
-          "Yes, and allow this host for this conversation"
-
-        is_map(params["additionalPermissions"]) ->
-          "Yes, and allow these permissions for this session"
-
-        true ->
-          "Yes, and don't ask again for this command in this session"
-      end
-
-    {permission_option("allow_for_session", name, "allow_always"), "acceptForSession",
-     network_index}
-  end
-
-  defp command_decision_option("decline", _params, network_index) do
-    {permission_option("decline", "No, continue without running it", "reject_once"), "decline",
-     network_index}
-  end
-
-  defp command_decision_option("cancel", _params, network_index) do
-    {permission_option("cancel", "No, and tell Codex what to do differently", "reject_once"),
-     "cancel", network_index}
-  end
-
-  defp command_decision_option(
-         %{"acceptWithExecpolicyAmendment" => %{"execpolicy_amendment" => amendment}} = decision,
-         _params,
-         network_index
-       ) do
-    prefix = Enum.join(amendment, " ")
-
-    if String.contains?(prefix, ["\n", "\r"]) do
-      {:skip, network_index}
-    else
-      {permission_option(
-         "accept_execpolicy_amendment",
-         "Yes, and don't ask again for commands that start with `#{prefix}`",
-         "allow_always"
-       ), decision, network_index}
-    end
-  end
-
-  defp command_decision_option(
-         %{"applyNetworkPolicyAmendment" => %{"network_policy_amendment" => amendment}} =
-           decision,
-         _params,
-         network_index
-       ) do
-    {name, kind} =
-      if amendment["action"] == "allow" do
-        {"Yes, and allow this host in the future", "allow_always"}
-      else
-        {"No, and block this host in the future", "reject_always"}
-      end
-
-    {permission_option("apply_network_policy_amendment:#{network_index}", name, kind), decision,
-     network_index + 1}
-  end
-
-  defp command_decision_option(_decision, _params, network_index), do: {:skip, network_index}
-
-  defp sort_command_decision_options(pairs) do
-    Enum.sort_by(pairs, fn {option, _decision} ->
-      case option["kind"] do
-        "allow_once" -> 0
-        "allow_always" -> 1
-        _ -> 2
-      end
-    end)
-  end
-
-  defp valid_command_option_set?(pairs) do
-    kinds = Enum.map(pairs, fn {option, _decision} -> option["kind"] end)
-    ids = Enum.map(pairs, fn {option, _decision} -> option["optionId"] end)
-
-    has_allow = Enum.any?(kinds, &(&1 in ["allow_once", "allow_always"]))
-    has_reject = Enum.any?(kinds, &(&1 in ["reject_once", "reject_always"]))
-    unique_ids? = length(Enum.uniq(ids)) == length(ids)
-
-    pairs != [] and has_allow and has_reject and unique_ids?
-  end
-
-  defp permission_response(
-         %{method: "item/commandExecution/requestApproval", params: params},
-         response
-       ) do
-    command_permission_response(params, response)
-  end
-
-  defp permission_response(%{method: "item/fileChange/requestApproval"}, response) do
-    file_change_permission_response(response)
-  end
-
-  defp permission_response(
-         %{method: "item/permissions/requestApproval", params: params},
-         response
-       ) do
-    permissions_approval_response(params, response)
-  end
-
-  defp permission_response(%{method: "mcpServer/elicitation/request", params: params}, response) do
-    mcp_permission_response(params, response)
-  end
-
-  defp permission_response(%{method: method}, %{
-         "result" => %{"outcome" => %{"outcome" => "cancelled"}}
-       }) do
-    codex_cancel_response(method)
-  end
-
-  defp permission_response(%{method: method}, %{
-         "result" => %{"outcome" => %{"optionId" => option_id}}
-       }) do
-    codex_decision_response(method, option_id)
-  end
-
-  defp permission_response(%{method: method}, %{"error" => _error}) do
-    codex_cancel_response(method)
-  end
-
-  defp permission_response(%{method: method}, _response), do: codex_cancel_response(method)
-
-  defp command_permission_response(_params, %{
-         "result" => %{"outcome" => %{"outcome" => "cancelled"}}
-       }) do
-    %{"decision" => "cancel"}
-  end
-
-  defp command_permission_response(params, %{
-         "result" => %{"outcome" => %{"optionId" => option_id}}
-       }) do
-    case command_decision_options(params) do
-      {:ok, pairs} ->
-        case Enum.find(pairs, fn {option, _decision} -> option["optionId"] == option_id end) do
-          {_option, decision} when is_binary(decision) -> %{"decision" => decision}
-          {_option, decision} when is_map(decision) -> %{"decision" => decision}
-          nil -> %{"decision" => "cancel"}
-        end
-
-      :error ->
-        %{"decision" => "cancel"}
-    end
-  end
-
-  defp command_permission_response(_params, _response), do: %{"decision" => "cancel"}
-
-  defp file_change_permission_response(%{
-         "result" => %{"outcome" => %{"outcome" => "cancelled"}}
-       }) do
-    %{"decision" => "cancel"}
-  end
-
-  defp file_change_permission_response(%{"result" => %{"outcome" => %{"optionId" => option_id}}}) do
-    decision =
-      case option_id do
-        "allow_once" -> "accept"
-        "allow_for_session" -> "acceptForSession"
-        "cancel" -> "cancel"
-        _ -> "cancel"
-      end
-
-    %{"decision" => decision}
-  end
-
-  defp file_change_permission_response(_response), do: %{"decision" => "cancel"}
-
-  defp permissions_approval_response(_params, %{
-         "result" => %{"outcome" => %{"outcome" => "cancelled"}}
-       }) do
-    reject_permissions_response()
-  end
-
-  defp permissions_approval_response(params, %{
-         "result" => %{"outcome" => %{"optionId" => option_id}}
-       }) do
-    requested = params["permissions"] || %{}
-
-    case option_id do
-      "allow_permissions_turn" ->
-        granted_permissions_response(requested, "turn", false)
-
-      "allow_permissions_turn_strict_auto_review" ->
-        granted_permissions_response(requested, "turn", true)
-
-      "allow_permissions_session" ->
-        granted_permissions_response(requested, "session", false)
-
-      _ ->
-        reject_permissions_response()
-    end
-  end
-
-  defp permissions_approval_response(_params, _response), do: reject_permissions_response()
-
-  defp granted_permissions_response(permissions, scope, strict_auto_review) do
-    %{
-      "permissions" => granted_permissions(permissions),
-      "scope" => scope,
-      "strictAutoReview" => strict_auto_review
-    }
-  end
-
-  defp reject_permissions_response do
-    %{"permissions" => %{}, "scope" => "turn", "strictAutoReview" => false}
-  end
-
-  defp granted_permissions(permissions) when is_map(permissions) do
-    Map.take(permissions, ["network", "fileSystem"])
-  end
-
-  defp granted_permissions(_permissions), do: %{}
-
-  defp mcp_permission_response(_params, %{
-         "result" => %{"outcome" => %{"outcome" => "cancelled"}}
-       }) do
-    %{"action" => "cancel"}
-  end
-
-  defp mcp_permission_response(params, %{"result" => %{"outcome" => %{"optionId" => option_id}}}) do
-    meta = params["_meta"] || %{}
-    mcp_option_response(option_id, persist_options(meta), mcp_tool_approval?(meta))
-  end
-
-  defp mcp_permission_response(_params, _response), do: %{"action" => "cancel"}
-
-  defp mcp_option_response("allow_session", persist, _tool_approval?) do
-    mcp_persist_accept(persist, "session")
-  end
-
-  defp mcp_option_response("allow_always", persist, _tool_approval?) do
-    mcp_persist_accept(persist, "always")
-  end
-
-  defp mcp_option_response("allow_once", _persist, true), do: %{"action" => "accept"}
-  defp mcp_option_response("accept", _persist, false), do: %{"action" => "accept"}
-  defp mcp_option_response("decline", _persist, false), do: %{"action" => "decline"}
-  defp mcp_option_response(_option_id, _persist, _tool_approval?), do: %{"action" => "cancel"}
-
-  defp mcp_persist_accept(persist, scope) do
-    if scope in persist do
-      %{"action" => "accept", "_meta" => %{"persist" => scope}}
-    else
-      %{"action" => "cancel"}
-    end
-  end
-
-  defp codex_decision_response(method, option_id)
-       when method in ["execCommandApproval", "applyPatchApproval"] do
-    %{"decision" => legacy_review_decision(option_id)}
-  end
-
-  defp codex_decision_response(_method, option_id) do
-    %{"decision" => app_server_decision(option_id)}
-  end
-
-  defp codex_cancel_response(method) when method in ["execCommandApproval", "applyPatchApproval"],
-    do: %{"decision" => "abort"}
-
-  defp codex_cancel_response("mcpServer/elicitation/request"), do: %{"action" => "cancel"}
-
-  defp codex_cancel_response("item/permissions/requestApproval"),
-    do: reject_permissions_response()
-
-  defp codex_cancel_response(_method), do: %{"decision" => "cancel"}
-
-  defp app_server_decision(option_id) do
-    cond do
-      always_option?(option_id) -> "acceptForSession"
-      allow_option?(option_id) -> "accept"
-      String.contains?(to_string(option_id), "cancel") -> "cancel"
-      true -> "decline"
-    end
-  end
-
-  defp legacy_review_decision(option_id) do
-    cond do
-      always_option?(option_id) -> "approved_for_session"
-      allow_option?(option_id) -> "approved"
-      String.contains?(to_string(option_id), "cancel") -> "abort"
-      true -> "denied"
-    end
-  end
-
-  defp allow_option?(option_id) do
-    option_id = to_string(option_id)
-
-    String.contains?(option_id, "allow") || String.contains?(option_id, "accept") ||
-      String.contains?(option_id, "approved")
-  end
-
-  defp always_option?(option_id) do
-    option_id = to_string(option_id)
-    String.contains?(option_id, "always") || String.contains?(option_id, "session")
-  end
+  # General helpers shared with the model catalog
 
   defp humanize_option(option_id) do
     option_id
@@ -4520,93 +3242,6 @@ defmodule ExMCP.ACP.Adapters.Codex do
     |> String.split()
     |> Enum.map_join(" ", &String.capitalize/1)
   end
-
-  # Prompt mapping
-
-  defp extract_input_items(nil), do: [%{"type" => "text", "text" => ""}]
-
-  defp extract_input_items(prompt) when is_binary(prompt),
-    do: [text_input(prompt)]
-
-  defp extract_input_items(blocks) when is_list(blocks) do
-    items =
-      Enum.flat_map(blocks, fn
-        %{"type" => "text", "text" => text} ->
-          [text_input(text)]
-
-        %{"type" => "image"} = img ->
-          [image_input(img)]
-
-        %{"type" => "resource_link"} = resource ->
-          [text_input(format_uri_as_link(resource["name"], resource["uri"]))]
-
-        %{"type" => "resource", "resource" => %{"text" => text, "uri" => uri}} ->
-          [
-            text_input(
-              "#{format_uri_as_link(nil, uri)}\n<context ref=\"#{uri}\">\n#{text}\n</context>"
-            )
-          ]
-
-        %{
-          "type" => "resource",
-          "resource" => %{"blob" => blob, "mimeType" => mime_type, "uri" => uri}
-        } ->
-          if image_mime_type?(mime_type) do
-            [%{"type" => "image", "url" => "data:#{mime_type};base64,#{blob}"}]
-          else
-            mime_type = mime_type || "application/octet-stream"
-
-            context =
-              [
-                format_uri_as_link(nil, uri),
-                ~s(<context ref="#{uri}" mimeType="#{mime_type}" encoding="base64">),
-                blob,
-                "</context>"
-              ]
-              |> Enum.join("\n")
-
-            [
-              text_input(context)
-            ]
-          end
-
-        _ ->
-          []
-      end)
-
-    if items == [], do: [text_input("")], else: items
-  end
-
-  defp extract_input_items(_), do: [text_input("")]
-
-  defp text_input(text),
-    do: %{"type" => "text", "text" => to_string(text || ""), "text_elements" => []}
-
-  defp image_input(%{"uri" => uri}) when is_binary(uri) and uri != "" do
-    %{"type" => "image", "url" => uri}
-  end
-
-  defp image_input(%{"data" => data} = img) do
-    mime_type = img["mimeType"] || "image/png"
-    %{"type" => "image", "url" => "data:#{mime_type};base64,#{data}"}
-  end
-
-  defp image_input(_img), do: %{"type" => "image", "url" => ""}
-
-  defp image_mime_type?(mime_type) when is_binary(mime_type),
-    do: String.starts_with?(mime_type, "image/")
-
-  defp image_mime_type?(_mime_type), do: false
-
-  defp format_uri_as_link(name, uri) when is_binary(name) and name != "", do: "[@#{name}](#{uri})"
-
-  defp format_uri_as_link(_name, "file://" <> path = uri) do
-    name = path |> String.split("/") |> List.last()
-    "[@#{name}](#{uri})"
-  end
-
-  defp format_uri_as_link(_name, uri) when is_binary(uri), do: uri
-  defp format_uri_as_link(_name, nil), do: ""
 
   # General helpers
 

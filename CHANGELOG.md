@@ -93,7 +93,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The two large client and transport cycles remain; see
   `docs/POST_1_0_MAINTENANCE_PLAN.md`.
 
+- The Codex ACP adapter is split into `ExMCP.ACP.Adapters.Codex.Permissions`,
+  `Codex.Content`, and `Codex.MCP` (internal modules) with no wire-visible
+  change: the golden transcript fixtures are byte-identical, and the public
+  `ExMCP.ACP.Adapters.Codex` API and state struct are unchanged. See the
+  Codex status in `docs/POST_1_0_MAINTENANCE_PLAN.md`.
+
 ### Fixed
+- Codex adapter: `session/load` history replay now handles app-server v2's camelCase `agentMessage` items. Previously a replayed `agentMessage` reached the streaming completion path with no session state and crashed the load; only the legacy `agent_message` spelling replayed.
 
 - `ExMCP.SessionManager` no longer logs at `info` when it starts or when it
   sweeps expired sessions; both are `debug`. The `:ex_mcp` application boots
