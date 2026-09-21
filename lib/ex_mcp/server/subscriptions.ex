@@ -12,8 +12,8 @@ defmodule ExMCP.Server.Subscriptions do
   alias ExMCP.Server.SubscriptionListener
   alias ExMCP.Server.Subscriptions.{Entry, ETS}
   alias ExMCP.SubscriptionFilter
-  alias ExMCP.Tasks
   alias ExMCP.Tasks.Extension, as: TasksExtension
+  alias ExMCP.Tasks.StoreCall
 
   @default_supported Map.new(SubscriptionFilter.keys(), &{&1, true})
 
@@ -475,10 +475,15 @@ defmodule ExMCP.Server.Subscriptions do
     cond do
       Keyword.has_key?(opts, :task_store_opts) ->
         task_opts = task_authorization_options(transport_ref, opts)
+        owner = Keyword.fetch!(task_opts, :owner)
 
+        # Equivalent to `ExMCP.Tasks.get/2` succeeding for this owner, invoked
+        # through the shared store primitive so this registry does not depend
+        # on the Tasks facade that publishes through it.
         authorized =
           Enum.filter(task_ids, fn task_id ->
-            match?({:ok, _task}, Tasks.get(task_id, task_opts))
+            is_binary(task_id) and
+              match?({:ok, _task}, StoreCall.call(:fetch, [task_id, owner], task_opts))
           end)
 
         {:ok, put_nonempty_ids(filter, "taskIds", authorized)}

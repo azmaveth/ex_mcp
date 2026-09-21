@@ -49,7 +49,7 @@ defmodule ExMCP.Protocol.ErrorCodes do
       true
   """
 
-  alias ExMCP.Internal.VersionRegistry
+  alias ExMCP.Internal.RevisionCatalog
 
   # Standard JSON-RPC 2.0 error codes
   @parse_error -32700
@@ -127,7 +127,7 @@ defmodule ExMCP.Protocol.ErrorCodes do
   def resource_not_found(:modern), do: @invalid_params
 
   def resource_not_found(version) when is_binary(version) do
-    case VersionRegistry.era_for(version) do
+    case RevisionCatalog.era_for(version) do
       :legacy -> @legacy_resource_not_found
       :modern -> @invalid_params
       :unknown -> raise ArgumentError, "unknown MCP protocol version: #{inspect(version)}"
@@ -149,7 +149,7 @@ defmodule ExMCP.Protocol.ErrorCodes do
     do: code in [@legacy_resource_not_found, @invalid_params]
 
   def resource_not_found_code?(code, version) when is_binary(version) do
-    resource_not_found_code?(code, VersionRegistry.era_for(version))
+    resource_not_found_code?(code, RevisionCatalog.era_for(version))
   end
 
   @doc "Legacy URL-elicitation-required code from MCP 2025-11-25."
@@ -163,7 +163,7 @@ defmodule ExMCP.Protocol.ErrorCodes do
   def url_elicitation_required(:modern), do: {:error, :retired_error_code}
 
   def url_elicitation_required(version) when is_binary(version) do
-    case VersionRegistry.era_for(version) do
+    case RevisionCatalog.era_for(version) do
       :legacy -> @legacy_url_elicitation_required
       :modern -> {:error, :retired_error_code}
       :unknown -> raise ArgumentError, "unknown MCP protocol version: #{inspect(version)}"

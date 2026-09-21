@@ -30,14 +30,8 @@ defmodule ExMCP.Internal.SessionStore do
   @callback event_clock(t()) :: non_neg_integer()
   @callback put_event_clock(t(), non_neg_integer()) :: t()
 
-  @spec open(map()) :: {:ok, t()} | {:error, term()}
-  def open(%{storage_backend: :dets} = config) do
-    __MODULE__.DETS.open(config)
-  end
-
-  def open(config) do
-    __MODULE__.ETS.open(config)
-  end
+  # Backend selection lives in `ExMCP.Internal.SessionStore.Factory` so this
+  # behaviour does not depend on the implementations that adopt it.
 
   @spec close(t()) :: :ok
   def close(%mod{} = store), do: mod.close(store)

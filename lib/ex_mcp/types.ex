@@ -593,7 +593,7 @@ defmodule ExMCP.Types do
   # Accessor functions for constants
   @doc "Returns the newest legacy protocol revision used by compatibility helpers."
   @spec latest_protocol_version() :: String.t()
-  def latest_protocol_version, do: ExMCP.Internal.VersionRegistry.latest_version()
+  def latest_protocol_version, do: ExMCP.Internal.RevisionCatalog.latest_legacy_version()
   def jsonrpc_version, do: @jsonrpc_version
 
   def parse_error, do: ErrorCodes.parse_error()

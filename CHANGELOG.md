@@ -67,6 +67,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - mint moves to 1.10.1, which fixes `EEF-CVE-2026-82672` (unvalidated
   chunk-size line tail in the HTTP/1 client). `mix hex.audit` fails on 1.10.0
   since the advisory was published on 2026-09-19.
+- Internal dependency-cycle reductions with no public API change. Seven of
+  the nine `mix xref graph --format cycles` components reported on Elixir
+  1.19.5 / OTP 28.3.1 are gone (`MessageProcessor`/`MethodHandlers`,
+  `Content.Validation`/`Rules`, `SchemaPolicy`/`SchemaRemoteResolver`,
+  `ExMCP`/`ClientConfig`, `Server.Subscriptions`/`Tasks`, the
+  `Internal.SessionStore` behaviour and its ETS/DETS backends, and the
+  `VersionRegistry`/`Protocol.Methods`/`ErrorCodes`/`Types` version cycle),
+  each through a narrow dependency inversion or a small `@moduledoc false`
+  lower-level module (`ExMCP.Tasks.StoreCall`,
+  `ExMCP.Internal.SessionStore.Factory`, `ExMCP.Internal.RevisionCatalog`).
+  The two large client and transport cycles remain; see
+  `docs/POST_1_0_MAINTENANCE_PLAN.md`.
 
 ### Fixed
 

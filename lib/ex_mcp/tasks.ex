@@ -19,7 +19,7 @@ defmodule ExMCP.Tasks do
 
   alias ExMCP.Server.Context
   alias ExMCP.Server.Subscriptions
-  alias ExMCP.Tasks.{Extension, Store, Task}
+  alias ExMCP.Tasks.{Extension, Store, StoreCall, Task}
 
   @default_ttl_ms 3_600_000
   @default_poll_interval_ms 1_000
@@ -222,25 +222,5 @@ defmodule ExMCP.Tasks do
     end
   end
 
-  defp call_store(function, args, opts) do
-    store = Keyword.get(opts, :store, Application.get_env(:ex_mcp, :task_store, Store.ETS))
-
-    store_opts =
-      Keyword.drop(opts, [
-        :store,
-        :owner,
-        :principal_id,
-        :tenant_id,
-        :audience,
-        :subscription_registry,
-        :notify,
-        :transport_ref
-      ])
-
-    apply(store, function, args ++ [store_opts])
-  rescue
-    _error -> {:error, :task_store_unavailable}
-  catch
-    :exit, _reason -> {:error, :task_store_unavailable}
-  end
+  defp call_store(function, args, opts), do: StoreCall.call(function, args, opts)
 end

@@ -24,4 +24,12 @@ defmodule ExMCP.MessageProcessor.Conn do
           progress_token: String.t() | integer() | nil,
           halted: boolean()
         }
+
+  # Struct-level primitive shared by `ExMCP.MessageProcessor` and its method
+  # handlers so the handlers do not depend back on the processor facade.
+  @doc false
+  @spec assign(t(), atom(), term()) :: t()
+  def assign(%__MODULE__{} = conn, key, value) do
+    %{conn | assigns: Map.put(conn.assigns, key, value)}
+  end
 end

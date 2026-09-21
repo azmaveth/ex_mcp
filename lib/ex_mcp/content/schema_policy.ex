@@ -287,7 +287,7 @@ defmodule ExMCP.Content.SchemaPolicy do
 
   defp resolve_schema(schema, opts) do
     if network_refs_enabled?(opts),
-      do: SchemaRemoteResolver.resolve(schema, opts),
+      do: SchemaRemoteResolver.resolve(schema, opts, &preflight/2),
       else: {:ok, ExJsonSchema.Schema.resolve(schema)}
   end
 

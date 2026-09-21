@@ -58,9 +58,7 @@ defmodule ExMCP.MessageProcessor do
   Assigns a value to the connection.
   """
   @spec assign(Conn.t(), atom(), term()) :: Conn.t()
-  def assign(%Conn{} = conn, key, value) do
-    %{conn | assigns: Map.put(conn.assigns, key, value)}
-  end
+  def assign(%Conn{} = conn, key, value), do: Conn.assign(conn, key, value)
 
   @doc """
   Halts the plug pipeline.
