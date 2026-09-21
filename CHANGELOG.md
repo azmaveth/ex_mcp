@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged (#44).
 
 ### Changed
+- Internal: `.dialyzer_ignore.exs` drops fifteen filters that no longer match
+  a warning, and documents that entries must be verified in both `MIX_ENV=dev`
+  and `MIX_ENV=test` because the files under `test/` are only analyzed in the
+  test environment. No analysis result changes.
 
 - ACP reference-adapter parity, from the 2026-09-20 drift review of
   claude-agent-acp and codex-acp (both still on ACP SDK 1.4.0):
@@ -104,6 +108,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Codex status in `docs/POST_1_0_MAINTENANCE_PLAN.md`.
 
 ### Fixed
+- Pi adapter: three agent-controlled payloads no longer crash the adapter.
+  A streamed tool call carried under `partial.content[contentIndex]` is now
+  selected with `Enum.at/2` (`Access` cannot index a list, so the clause
+  written to support that shape always raised), and a `get_available_models`
+  payload whose `models` is not a list, or whose entries are not maps, drops
+  the unusable data instead of raising. Found by the new Pi characterization
+  gate and pinned by three golden scenarios.
 - Codex adapter: `session/load` history replay now handles app-server v2's camelCase `agentMessage` items. Previously a replayed `agentMessage` reached the streaming completion path with no session state and crashed the load; only the legacy `agent_message` spelling replayed.
 
 - `ExMCP.SessionManager` no longer logs at `info` when it starts or when it

@@ -314,7 +314,7 @@ defmodule ExMCP.Compliance.TransportVersionTest do
       {:ok, server} = VersionTestServer.start_link(transport: :test)
       # Allow server to start its message loop
       Process.sleep(10)
-      on_exit(fn -> if Process.alive?(server), do: GenServer.stop(server) end)
+      ExMCP.TestHelpers.stop_on_exit(server)
       {:ok, server: server}
     end
 

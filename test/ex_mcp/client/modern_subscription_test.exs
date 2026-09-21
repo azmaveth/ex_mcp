@@ -250,7 +250,7 @@ defmodule ExMCP.Client.ModernSubscriptionTest do
         protocol_mode: :legacy_only
       )
 
-    on_exit(fn -> if Process.alive?(server), do: GenServer.stop(server) end)
+    ExMCP.TestHelpers.stop_on_exit(server)
 
     {:ok, client} =
       Client.start_link(
@@ -361,7 +361,7 @@ defmodule ExMCP.Client.ModernSubscriptionTest do
         subscription_registry: registry
       )
 
-    on_exit(fn -> if Process.alive?(server), do: GenServer.stop(server) end)
+    ExMCP.TestHelpers.stop_on_exit(server)
 
     {:ok, client} =
       Client.start_link(

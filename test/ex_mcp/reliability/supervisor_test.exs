@@ -609,7 +609,7 @@ defmodule ExMCP.Reliability.SupervisorTest do
   describe "error handling and edge cases" do
     setup do
       {:ok, mock_server} = MockServer.start_link([])
-      on_exit(fn -> if Process.alive?(mock_server), do: GenServer.stop(mock_server) end)
+      ExMCP.TestHelpers.stop_on_exit(mock_server)
       %{mock_server: mock_server}
     end
 

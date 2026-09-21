@@ -89,7 +89,7 @@ defmodule ExMCP.Integration.UrlElicitationCompleteTest do
         request_state: [active_key_id: "integration", keys: %{"integration" => @key}]
       )
 
-    on_exit(fn -> if Process.alive?(server), do: GenServer.stop(server) end)
+    ExMCP.TestHelpers.stop_on_exit(server)
 
     {:ok, client} =
       Client.start_link(

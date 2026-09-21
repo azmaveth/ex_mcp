@@ -13,10 +13,11 @@ defmodule ExMCP.ACP.Adapters.Pi.StreamEventsGoldenTest do
       `agent_thought_chunk` without accumulating, and the `"default"`
       session id used before any session exists;
     * streamed tool calls (`toolcall_start` / `toolcall_delta` /
-      `toolcall_end` / `tool_call`) in their `toolCall` and bare shapes, `arguments` / `args` / `partialArgs` raw input
-      extraction, the `pending` status, the first event emitting
-      `tool_call` and later ones `tool_call_update`, and id-less events
-      being skipped;
+      `toolcall_end` / `tool_call`) in their `toolCall`, bare, and
+      `partial.content[contentIndex]` shapes, `arguments` / `args` /
+      `partialArgs` raw input extraction, the `pending` status, the first
+      event emitting `tool_call` and later ones `tool_call_update`, and
+      id-less events being skipped;
     * `tool_execution_start` / `_update` / `_end` becoming
       `tool_call` / `tool_call_update` with kind, status, locations
       resolved against the session cwd, text content from result content,
@@ -36,9 +37,7 @@ defmodule ExMCP.ACP.Adapters.Pi.StreamEventsGoldenTest do
       buffered until the rest arrives, and non-JSON lines ignored.
 
   Prompt settlement ordering with queued prompts is characterized by the
-  prompt_flow area. A streamed tool-call event that carries the call under
-  `partial.content[contentIndex]` makes the adapter raise (`get_in/2` with an
-  integer index on a list), so that shape is deliberately not characterized.
+  prompt_flow area.
 
   Mutation check (2026-09-20): emitting `tool_call_update` instead of
   `tool_call` for a first-seen `tool_execution_start` fails
@@ -225,6 +224,78 @@ defmodule ExMCP.ACP.Adapters.Pi.StreamEventsGoldenTest do
              ] = transcript |> updates() |> Enum.drop(1)
 
       assert [%{tag: :skip}, %{tag: :skip}] = Enum.map(Enum.take(transcript, -2), & &1.result)
+    end
+
+    test "toolcall_in_partial_content_is_addressed_by_content_index" do
+      steps =
+        active_prompt() ++
+          [
+            {:note,
+             "a streamed tool call carried in partial.content is selected by contentIndex; before the fix Access raised on the list index"},
+            Flows.message_update(%{
+              "type" => "toolcall_start",
+              "partial" => %{
+                "content" => [
+                  %{"id" => "tc-zero", "name" => "read", "args" => %{"path" => "lib/a.ex"}},
+                  %{"id" => "tc-one", "name" => "write"}
+                ]
+              },
+              "contentIndex" => 1
+            }),
+            {:note, "a missing contentIndex means the first entry"},
+            Flows.message_update(%{
+              "type" => "toolcall_start",
+              "partial" => %{"content" => [%{"id" => "tc-default", "name" => "read"}]}
+            }),
+            {:note,
+             "an out-of-range, negative, or non-integer index and a non-list content fall back to the event itself"},
+            Flows.message_update(%{
+              "type" => "toolcall_start",
+              "partial" => %{"content" => [%{"id" => "tc-zero"}]},
+              "contentIndex" => 7,
+              "id" => "tc-out-of-range"
+            }),
+            Flows.message_update(%{
+              "type" => "toolcall_start",
+              "partial" => %{"content" => [%{"id" => "tc-zero"}]},
+              "contentIndex" => -1,
+              "id" => "tc-negative"
+            }),
+            Flows.message_update(%{
+              "type" => "toolcall_start",
+              "partial" => %{"content" => [%{"id" => "tc-zero"}]},
+              "contentIndex" => "1",
+              "id" => "tc-non-integer"
+            }),
+            Flows.message_update(%{
+              "type" => "toolcall_start",
+              "partial" => %{"content" => "not-a-list"},
+              "id" => "tc-content-not-a-list"
+            }),
+            {:note, "a content entry that is not a map is ignored rather than read with Access"},
+            Flows.message_update(%{
+              "type" => "toolcall_start",
+              "partial" => %{"content" => ["just-a-string"]},
+              "id" => "tc-entry-not-a-map"
+            })
+          ]
+
+      transcript =
+        PiGolden.assert_golden(
+          @area,
+          "toolcall_in_partial_content_is_addressed_by_content_index",
+          steps
+        )
+
+      assert [
+               %{"toolCallId" => "tc-one", "title" => "write"},
+               %{"toolCallId" => "tc-default", "title" => "read"},
+               %{"toolCallId" => "tc-out-of-range"},
+               %{"toolCallId" => "tc-negative"},
+               %{"toolCallId" => "tc-non-integer"},
+               %{"toolCallId" => "tc-content-not-a-list"},
+               %{"toolCallId" => "tc-entry-not-a-map"}
+             ] = transcript |> updates() |> Enum.drop(1)
     end
 
     test "toolcall_partial_args_are_decoded_when_valid_json" do
