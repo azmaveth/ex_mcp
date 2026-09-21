@@ -22,6 +22,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
     Prompt,
     PromptFlow,
     RPC,
+    Sessions,
     SessionStore,
     Settings,
     SlashCommands,
@@ -167,26 +168,18 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   @impl true
   def list_sessions(params, state) do
-    cursor = params["cursor"] || "0"
-    offset = parse_cursor(cursor)
-    page_size = 50
-    cwd = params["cwd"] || state.last_session_cwd
-
     all_sessions =
-      [
+      SessionStore.list_pi_sessions(
         session_dir: state.session_dir,
         agent_dir: Keyword.get(state.opts, :agent_dir)
-      ]
-      |> SessionStore.list_pi_sessions()
-      |> filter_sessions_by_cwd(cwd)
+      )
 
-    sessions =
-      all_sessions
-      |> Enum.slice(offset, page_size)
-      |> Enum.map(&Map.drop(&1, ["sessionFile"]))
-
-    next_cursor =
-      if offset + page_size < length(all_sessions), do: Integer.to_string(offset + page_size)
+    {sessions, next_cursor} =
+      Sessions.page(
+        all_sessions,
+        params["cwd"] || state.last_session_cwd,
+        params["cursor"] || "0"
+      )
 
     {:ok, RPC.compact(%{"sessions" => sessions, "nextCursor" => next_cursor, "_meta" => %{}}),
      state}
@@ -200,111 +193,21 @@ defmodule ExMCP.ACP.Adapters.Pi do
   def translate_outbound(%{"method" => "session/new", "id" => acp_id, "params" => params}, state) do
     cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd) || File.cwd!()
 
-    case require_absolute_cwd(cwd) do
+    case Sessions.require_absolute_cwd(cwd) do
       :ok -> start_session_new(acp_id, cwd, state)
       {:error, reason} -> {:error, reason, state}
     end
   end
 
   def translate_outbound(%{"method" => "session/load", "id" => acp_id, "params" => params}, state) do
-    session_id = params["sessionId"]
-    cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd) || File.cwd!()
-
-    with :ok <- require_absolute_cwd(cwd),
-         session_file when is_binary(session_file) <- find_session_file(session_id, state),
-         {:ok, state} <- prepare_session_process(cwd, session_file, state) do
-      file_commands = SlashCommands.load(cwd, state.opts)
-      settings = Settings.load(cwd, state.opts)
-
-      {switch_id, switch_session} =
-        rpc(RPC.method(:switch_session), %{"sessionPath" => session_file})
-
-      {messages_id, get_messages} = rpc(RPC.method(:get_messages))
-      {state_id, get_state} = rpc(RPC.method(:get_state))
-      {models_id, get_models} = rpc(RPC.method(:get_available_models))
-      {commands_id, get_commands} = rpc(RPC.method(:get_commands))
-
-      group = %{
-        type: :session_load,
-        acp_id: acp_id,
-        session_id: session_id,
-        cwd: cwd,
-        session_file: session_file,
-        file_commands: file_commands,
-        settings: settings,
-        replay?: true,
-        refs: MapSet.new([switch_id, messages_id, state_id, models_id, commands_id]),
-        responses: %{}
-      }
-
-      state =
-        state
-        |> put_group(group)
-        |> put_control(switch_id, :switch, group)
-        |> put_control(messages_id, :messages, group)
-        |> put_control(state_id, :state, group)
-        |> put_control(models_id, :models, group)
-        |> put_control(commands_id, :commands, group)
-
-      deliver_pending(
-        RPC.encode_many([switch_session, get_messages, get_state, get_models, get_commands]),
-        state
-      )
-    else
-      {:error, reason} -> {:error, reason, state}
-      _ -> {:error, "Unknown sessionId: #{session_id}", state}
-    end
+    start_session_switch(acp_id, params, true, state)
   end
 
   def translate_outbound(
         %{"method" => "session/resume", "id" => acp_id, "params" => params},
         state
       ) do
-    session_id = params["sessionId"]
-    cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd) || File.cwd!()
-
-    with :ok <- require_absolute_cwd(cwd),
-         session_file when is_binary(session_file) <- find_session_file(session_id, state),
-         {:ok, state} <- prepare_session_process(cwd, session_file, state) do
-      file_commands = SlashCommands.load(cwd, state.opts)
-      settings = Settings.load(cwd, state.opts)
-
-      {switch_id, switch_session} =
-        rpc(RPC.method(:switch_session), %{"sessionPath" => session_file})
-
-      {state_id, get_state} = rpc(RPC.method(:get_state))
-      {models_id, get_models} = rpc(RPC.method(:get_available_models))
-      {commands_id, get_commands} = rpc(RPC.method(:get_commands))
-
-      group = %{
-        type: :session_load,
-        acp_id: acp_id,
-        session_id: session_id,
-        cwd: cwd,
-        session_file: session_file,
-        file_commands: file_commands,
-        settings: settings,
-        replay?: false,
-        refs: MapSet.new([switch_id, state_id, models_id, commands_id]),
-        responses: %{}
-      }
-
-      state =
-        state
-        |> put_group(group)
-        |> put_control(switch_id, :switch, group)
-        |> put_control(state_id, :state, group)
-        |> put_control(models_id, :models, group)
-        |> put_control(commands_id, :commands, group)
-
-      deliver_pending(
-        RPC.encode_many([switch_session, get_state, get_models, get_commands]),
-        state
-      )
-    else
-      {:error, reason} -> {:error, reason, state}
-      _ -> {:error, "Unknown sessionId: #{session_id}", state}
-    end
+    start_session_switch(acp_id, params, false, state)
   end
 
   def translate_outbound(
@@ -676,6 +579,58 @@ defmodule ExMCP.ACP.Adapters.Pi do
   defp start_prompt(acp_id, message, images, params, state) do
     {data, state} = PromptFlow.start_plan(acp_id, message, images, params, state)
     deliver_pending(data, state)
+  end
+
+  # session/load and session/resume differ only in whether the transcript is
+  # replayed, which also decides whether `get_messages` joins the control group.
+  defp start_session_switch(acp_id, params, replay?, state) do
+    session_id = params["sessionId"]
+    cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd) || File.cwd!()
+
+    with :ok <- Sessions.require_absolute_cwd(cwd),
+         session_file when is_binary(session_file) <- find_session_file(session_id, state),
+         {:ok, state} <- prepare_session_process(cwd, session_file, state) do
+      file_commands = SlashCommands.load(cwd, state.opts)
+      settings = Settings.load(cwd, state.opts)
+
+      replay_requests =
+        if replay?, do: [{:messages, rpc(RPC.method(:get_messages))}], else: []
+
+      requests =
+        [{:switch, rpc(RPC.method(:switch_session), %{"sessionPath" => session_file})}] ++
+          replay_requests ++
+          [
+            {:state, rpc(RPC.method(:get_state))},
+            {:models, rpc(RPC.method(:get_available_models))},
+            {:commands, rpc(RPC.method(:get_commands))}
+          ]
+
+      group = %{
+        type: :session_load,
+        acp_id: acp_id,
+        session_id: session_id,
+        cwd: cwd,
+        session_file: session_file,
+        file_commands: file_commands,
+        settings: settings,
+        replay?: replay?,
+        refs: MapSet.new(Enum.map(requests, fn {_kind, {rpc_id, _msg}} -> rpc_id end)),
+        responses: %{}
+      }
+
+      state =
+        Enum.reduce(requests, put_group(state, group), fn {kind, {rpc_id, _msg}}, acc ->
+          put_control(acc, rpc_id, kind, group)
+        end)
+
+      deliver_pending(
+        RPC.encode_many(Enum.map(requests, fn {_kind, {_rpc_id, msg}} -> msg end)),
+        state
+      )
+    else
+      {:error, reason} -> {:error, reason, state}
+      _ -> {:error, "Unknown sessionId: #{session_id}", state}
+    end
   end
 
   defp start_session_new(acp_id, cwd, state) do
@@ -1318,45 +1273,12 @@ defmodule ExMCP.ACP.Adapters.Pi do
     models_data = group.responses[:models] || %{}
     session_file = state_data["sessionFile"]
 
-    if empty_models?(models_data) do
+    if Sessions.empty_models?(models_data) do
       state = maybe_cleanup_failed_session(session_file, state)
       {:messages, [auth_required_error(group.acp_id, state)], state}
     else
       session_id = state_data["sessionId"] || "pi-#{System.unique_integer([:positive])}"
-      cwd = state_data["cwd"] || group.cwd
-      models = Config.model_state(models_data, state_data)
-      modes = Config.thinking_state(state_data)
-      settings = group[:settings] || state.settings || %{}
-      commands = command_state(group.responses[:commands], group.file_commands, settings)
-
-      maybe_store_session(state.session_map_path, session_id, cwd, session_file)
-
-      state = %{
-        state
-        | session_id: session_id,
-          session_file: session_file,
-          cwd: cwd,
-          thinking_level: modes["currentModeId"],
-          current_model_id: get_in(models, ["currentModelId"]),
-          available_models: Map.get(models || %{}, "availableModels", []),
-          file_commands: group.file_commands,
-          available_commands: commands,
-          settings: settings,
-          last_session_cwd: cwd
-      }
-
-      response =
-        Envelope.response(group.acp_id, %{
-          "sessionId" => session_id,
-          "models" => models,
-          "modes" => modes,
-          "configOptions" => Config.session_config_options(models, modes),
-          "_meta" => %{"ex_mcp" => %{"pi" => RPC.compact(%{"sessionFile" => session_file})}}
-        })
-
-      {startup_messages, state} = startup_messages(session_id, cwd, state, settings)
-      commands_update = available_commands_update(session_id, commands)
-      {:messages, [response] ++ startup_messages ++ [commands_update], state}
+      finish_established_session(group, state, state_data, models_data, session_id)
     end
   end
 
@@ -1365,11 +1287,11 @@ defmodule ExMCP.ACP.Adapters.Pi do
     state_data = group.responses[:state] || %{}
     models_data = group.responses[:models] || %{}
 
-    if empty_models?(models_data) do
+    if Sessions.empty_models?(models_data) do
       state = maybe_cleanup_failed_session(group.session_file, state)
       {:messages, [auth_required_error(group.acp_id, state)], state}
     else
-      finish_successful_session_load(group, state, state_data, models_data)
+      finish_established_session(group, state, state_data, models_data, group.session_id)
     end
   end
 
@@ -1402,10 +1324,11 @@ defmodule ExMCP.ACP.Adapters.Pi do
     {:messages, messages ++ [response], state}
   end
 
-  defp finish_successful_session_load(group, state, state_data, models_data) do
-    session_id = group.session_id
+  # session/new and a settled session switch produce the same state transition
+  # and the same response; only the session id and the optional replay differ.
+  defp finish_established_session(group, state, state_data, models_data, session_id) do
     cwd = state_data["cwd"] || group.cwd
-    session_file = state_data["sessionFile"] || group.session_file
+    session_file = state_data["sessionFile"] || group[:session_file]
     models = Config.model_state(models_data, state_data)
     modes = Config.thinking_state(state_data)
     settings = group[:settings] || state.settings || %{}
@@ -1413,36 +1336,20 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     maybe_store_session(state.session_map_path, session_id, cwd, session_file)
 
-    state = %{
-      state
-      | session_id: session_id,
+    state =
+      Sessions.establish(state, %{
+        session_id: session_id,
         session_file: session_file,
         cwd: cwd,
-        thinking_level: modes["currentModeId"],
-        current_model_id: get_in(models, ["currentModelId"]),
-        available_models: Map.get(models || %{}, "availableModels", []),
+        models: models,
+        modes: modes,
+        commands: commands,
         file_commands: group.file_commands,
-        available_commands: commands,
-        settings: settings,
-        last_session_cwd: cwd
-    }
-
-    replay =
-      if group[:replay?] == false do
-        []
-      else
-        Events.replay_messages(group.responses[:messages], session_id)
-      end
-
-    response =
-      Envelope.response(group.acp_id, %{
-        "sessionId" => session_id,
-        "models" => models,
-        "modes" => modes,
-        "configOptions" => Config.session_config_options(models, modes),
-        "_meta" => %{"ex_mcp" => %{"pi" => RPC.compact(%{"sessionFile" => session_file})}}
+        settings: settings
       })
 
+    replay = replay_messages_for(group, session_id)
+    response = Sessions.session_response(group.acp_id, session_id, session_file, models, modes)
     {startup_messages, state} = startup_messages(session_id, cwd, state, settings)
 
     messages =
@@ -1451,6 +1358,13 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
     {:messages, messages, state}
   end
+
+  defp replay_messages_for(%{type: :session_load, replay?: false}, _session_id), do: []
+
+  defp replay_messages_for(%{type: :session_load} = group, session_id),
+    do: Events.replay_messages(group.responses[:messages], session_id)
+
+  defp replay_messages_for(_group, _session_id), do: []
 
   defp finish_control_error(group, error, state) do
     state = delete_group(state, group)
@@ -1472,7 +1386,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   defp process_untracked_response(%{"command" => "get_state", "data" => data}, state)
        when is_map(data) do
-    {:skip, update_session_state_from_pi(data, state)}
+    {:skip, Sessions.update_session_state_from_pi(data, state)}
   end
 
   defp process_untracked_response(_event, state), do: {:skip, state}
@@ -1713,24 +1627,6 @@ defmodule ExMCP.ACP.Adapters.Pi do
     AdapterEvents.available_commands_update(session_id, commands)
   end
 
-  defp empty_models?(%{"models" => models}) when is_list(models), do: models == []
-  defp empty_models?(_data), do: false
-
-  defp update_session_state_from_pi(data, state) do
-    state
-    |> maybe_set(:session_id, data["sessionId"])
-    |> maybe_set(:session_file, data["sessionFile"])
-    |> maybe_set(:thinking_level, data["thinkingLevel"])
-  end
-
-  defp require_absolute_cwd(cwd) when is_binary(cwd) do
-    if Path.type(cwd) == :absolute,
-      do: :ok,
-      else: {:error, "cwd must be an absolute path: #{cwd}"}
-  end
-
-  defp require_absolute_cwd(_cwd), do: {:error, "cwd is required"}
-
   defp find_session_file(session_id, state) when is_binary(session_id) do
     case SessionStore.get(state.session_map_path, session_id) do
       %{"sessionFile" => session_file} when is_binary(session_file) ->
@@ -1856,21 +1752,6 @@ defmodule ExMCP.ACP.Adapters.Pi do
       {:error, reason} -> {:error, reason, state}
     end
   end
-
-  defp filter_sessions_by_cwd(sessions, nil), do: sessions
-  defp filter_sessions_by_cwd(sessions, cwd), do: Enum.filter(sessions, &(&1["cwd"] == cwd))
-
-  defp parse_cursor(cursor) when is_binary(cursor) do
-    case Integer.parse(cursor) do
-      {offset, ""} when offset > 0 -> offset
-      _ -> 0
-    end
-  end
-
-  defp parse_cursor(_cursor), do: 0
-
-  defp maybe_set(state, _key, nil), do: state
-  defp maybe_set(state, key, value), do: Map.put(state, key, value)
 
   defp auth_required_error(id, state) do
     Envelope.error(
