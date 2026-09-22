@@ -39,7 +39,14 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.LifecycleGoldenTest do
       shadowed by that entry's message id, an unknown id failing with
       `{:invalid_params, _}` instead of silently copying everything, and a
       blank id or an unsupported `version` falling back to the whole-session
-      copy.
+      copy;
+    * the `messageId` round trip: an id the adapter stamped on a replayed
+      `agent_message_chunk`, a replayed `user_message_chunk`, or a live
+      streamed chunk is read back out of the recorded transcript and used
+      verbatim as the fork point, and the forked file is cut inclusively at
+      the entry it addresses. A stamped id our own `fork_session/2` could
+      not resolve would be worse than no id at all, so this is asserted
+      rather than assumed.
 
   Prompt scheduling is characterized by the faults area, stream events by
   the session_updates area, and the mode/config catalogs by the catalog
@@ -53,6 +60,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.LifecycleGoldenTest do
   fork point exclusive (`Enum.take(transcript, index)` in
   `take_through_fork_point/3`) fails the four fork-point scenarios that read
   the forked file back.
+
+  Mutation check (2026-09-22): in `claude_sdk/mapper.ex`, removing the
+  `message_start` clause of `handle_stream_event/2` fails
+  `a_streamed_chunk_message_id_forks_at_the_persisted_message`, because the
+  streamed chunk then carries no id for the fork step to read.
 
   To regenerate a fixture after an intentional behavior change, run the test
   with `CLAUDE_GOLDEN=update mix test <this file>[:line]`; that run rewrites
@@ -880,6 +892,105 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.LifecycleGoldenTest do
       assert %{content: content} = ClaudeGolden.last_result(transcript)
       assert length(content) == 4
     end
+  end
+
+  # The point of stamping `messageId` at all: an id the adapter puts on the
+  # wire has to be an id the adapter's own `fork_session/2` can resolve. Each
+  # scenario reads the id back out of the recorded transcript and forks at
+  # exactly that string - nothing is hand-written into the fork request.
+  describe "messageId round trip" do
+    test "a_replayed_agent_chunk_message_id_forks_at_that_message" do
+      steps =
+        forkable_session() ++
+          [
+            Flows.session_load("acp-load", Flows.session_uuid(1)),
+            fork_at_streamed_id("agent_message_chunk", 0),
+            read_forked()
+          ]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "a_replayed_agent_chunk_message_id_forks_at_that_message",
+          steps
+        )
+
+      assert stamped_ids(transcript, "agent_message_chunk") == ["msg_first", "msg_second"]
+      assert %{content: content} = ClaudeGolden.last_result(transcript)
+      assert Enum.map(content, & &1["uuid"]) == ["user-1", "assistant-1"]
+    end
+
+    test "a_replayed_user_chunk_message_id_forks_at_that_message" do
+      steps =
+        forkable_session() ++
+          [
+            Flows.session_load("acp-load", Flows.session_uuid(1)),
+            fork_at_streamed_id("user_message_chunk", 1),
+            read_forked()
+          ]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "a_replayed_user_chunk_message_id_forks_at_that_message",
+          steps
+        )
+
+      assert stamped_ids(transcript, "user_message_chunk") == ["user-1", "user-2"]
+      assert %{content: content} = ClaudeGolden.last_result(transcript)
+      assert Enum.map(content, & &1["uuid"]) == ["user-1", "assistant-1", "user-2"]
+    end
+
+    test "a_streamed_chunk_message_id_forks_at_the_persisted_message" do
+      steps =
+        forkable_session() ++
+          [
+            Flows.session_load("acp-load", Flows.session_uuid(1)),
+            Flows.prompt("acp-prompt", "third"),
+            {:note, "The live message_start id is the persisted assistant entry's message.id"},
+            Flows.message_start("msg_first"),
+            Flows.text_delta("answer one"),
+            fork_at_streamed_id("agent_message_chunk", 2),
+            read_forked()
+          ]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "a_streamed_chunk_message_id_forks_at_the_persisted_message",
+          steps
+        )
+
+      assert Enum.at(stamped_ids(transcript, "agent_message_chunk"), 2) == "msg_first"
+      assert %{content: content} = ClaudeGolden.last_result(transcript)
+      assert Enum.map(content, & &1["uuid"]) == ["user-1", "assistant-1"]
+    end
+  end
+
+  # Every `messageId` the adapter stamped on an update of `type`, in order.
+  defp stamped_ids(transcript, type) do
+    transcript
+    |> ClaudeGolden.updates()
+    |> Enum.map(& &1["params"]["update"])
+    |> Enum.filter(&(&1["sessionUpdate"] == type))
+    |> Enum.map(& &1["messageId"])
+  end
+
+  # Forks at the `messageId` the `n`-th `type` update of the transcript carried.
+  defp fork_at_streamed_id(type, n) do
+    {:fork_session,
+     fn transcript ->
+       message_id = transcript |> stamped_ids(type) |> Enum.at(n)
+       refute is_nil(message_id), "no #{type} carried a messageId"
+
+       %{
+         "sessionId" => Flows.session_uuid(1),
+         "cwd" => Flows.cwd(),
+         "_meta" => %{
+           "jetbrains" => %{"air" => %{"fork" => %{"version" => 1, "messageId" => message_id}}}
+         }
+       }
+     end}
   end
 
   defp list_request(params \\ %{}) do

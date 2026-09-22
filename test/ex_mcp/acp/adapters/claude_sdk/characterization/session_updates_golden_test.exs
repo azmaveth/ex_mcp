@@ -43,7 +43,14 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionUpdatesGoldenTest do
       subtypes that both emit plans and defer a result until every spawned
       subagent drains;
     * the standalone `tool_progress`, `tool_use_summary` and
-      `rate_limit_event` updates, and the message types that are skipped.
+      `rate_limit_event` updates, and the message types that are skipped;
+    * the `messageId` chunk updates carry: streamed chunks tagged with the
+      id of the `message_start` that opened the message (and re-tagged by a
+      second one), no id when no `message_start` arrived or it carried none,
+      no id inherited across a turn boundary, and the two chunks that
+      deliberately carry none - `tool_call` / `tool_call_update` / `plan`,
+      which are not chunk updates at all, and the `result` fallback chunk,
+      which ExMCP synthesizes from an event that has no message id.
 
   Prompt queueing and cancellation belong to the faults area; the contents
   of the config option catalog belong to the catalog area.
@@ -51,8 +58,17 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionUpdatesGoldenTest do
   Mutation check (2026-09-21): in `claude_sdk/mapper.ex`, emitting the
   terminal assistant text even after it was streamed (removing the
   `current_assistant_text_streamed?: true` clause of
-  `handle_assistant_block/2`) fails
+  `handle_assistant_block/3`) fails
   `streamed_text_is_not_repeated_by_the_assistant_message`.
+
+  Mutation check (2026-09-22): in `claude_sdk/mapper.ex`, removing the
+  `message_start` clause of `handle_stream_event/2` fails
+  `streamed_chunks_carry_the_message_start_id`,
+  `a_second_message_start_restamps_the_chunks_that_follow`,
+  `a_message_start_without_an_id_stamps_nothing` and
+  `the_next_turn_does_not_inherit_the_previous_message_start_id`; stamping a
+  message id on `result_text_chunk/3` fails
+  `the_result_fallback_chunk_carries_no_message_id`.
 
   To regenerate a fixture after an intentional behavior change, run the test
   with `CLAUDE_GOLDEN=update mix test <this file>[:line]`; that run rewrites
@@ -151,6 +167,133 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionUpdatesGoldenTest do
           ]
 
       ClaudeGolden.assert_golden(@area, "a_thinking_block_is_closed_by_its_stop", steps)
+    end
+  end
+
+  describe "message ids" do
+    test "streamed_chunks_carry_the_message_start_id" do
+      steps =
+        turn() ++
+          [
+            Flows.message_start("msg_stream_1"),
+            Flows.text_delta("Hel"),
+            Flows.text_delta("lo"),
+            Flows.thinking_delta("hmm")
+          ]
+
+      transcript =
+        ClaudeGolden.assert_golden(@area, "streamed_chunks_carry_the_message_start_id", steps)
+
+      assert message_ids(transcript) == ["msg_stream_1", "msg_stream_1", "msg_stream_1"]
+    end
+
+    test "a_second_message_start_restamps_the_chunks_that_follow" do
+      steps =
+        turn() ++
+          [
+            Flows.message_start("msg_stream_1"),
+            Flows.text_delta("first"),
+            Flows.message_start("msg_stream_2"),
+            Flows.text_delta("second")
+          ]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "a_second_message_start_restamps_the_chunks_that_follow",
+          steps
+        )
+
+      assert message_ids(transcript) == ["msg_stream_1", "msg_stream_2"]
+    end
+
+    test "streamed_chunks_without_a_message_start_carry_no_message_id" do
+      steps = turn() ++ [Flows.text_delta("Hello"), Flows.thinking_delta("hmm")]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "streamed_chunks_without_a_message_start_carry_no_message_id",
+          steps
+        )
+
+      assert message_ids(transcript) == []
+    end
+
+    test "a_message_start_without_an_id_stamps_nothing" do
+      steps =
+        turn() ++
+          [
+            Flows.message_start("msg_stream_1"),
+            Flows.text_delta("first"),
+            Flows.stream_event(%{
+              "type" => "message_start",
+              "message" => %{"role" => "assistant"}
+            }),
+            Flows.text_delta("second")
+          ]
+
+      transcript =
+        ClaudeGolden.assert_golden(@area, "a_message_start_without_an_id_stamps_nothing", steps)
+
+      assert message_ids(transcript) == ["msg_stream_1"]
+    end
+
+    test "the_next_turn_does_not_inherit_the_previous_message_start_id" do
+      steps =
+        turn() ++
+          [
+            Flows.message_start("msg_stream_1"),
+            Flows.text_delta("first"),
+            Flows.result(),
+            Flows.prompt("acp-prompt-2", "again"),
+            Flows.text_delta("second")
+          ]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "the_next_turn_does_not_inherit_the_previous_message_start_id",
+          steps
+        )
+
+      assert message_ids(transcript) == ["msg_stream_1"]
+    end
+
+    test "tool_calls_and_plans_never_carry_a_message_id" do
+      steps =
+        turn() ++
+          [
+            Flows.message_start("msg_stream_1"),
+            Flows.assistant([
+              Flows.tool_use("toolu_1", "TodoWrite", %{
+                "todos" => [%{"content" => "ship", "status" => "pending"}]
+              })
+            ]),
+            Flows.tool_result("toolu_1", "done")
+          ]
+
+      transcript =
+        ClaudeGolden.assert_golden(@area, "tool_calls_and_plans_never_carry_a_message_id", steps)
+
+      assert ["tool_call", "tool_call_update", "plan", "tool_call_update"] =
+               ClaudeGolden.update_types(transcript)
+
+      assert message_ids(transcript) == []
+    end
+
+    test "the_result_fallback_chunk_carries_no_message_id" do
+      steps = turn() ++ [Flows.result(%{"result" => "nothing streamed"})]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "the_result_fallback_chunk_carries_no_message_id",
+          steps
+        )
+
+      assert "agent_message_chunk" in ClaudeGolden.update_types(transcript)
+      assert message_ids(transcript) == []
     end
   end
 
@@ -984,6 +1127,17 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionUpdatesGoldenTest do
 
   defp turn do
     [Flows.session_new(), Flows.prompt("acp-prompt", "hi")]
+  end
+
+  defp message_ids(transcript) do
+    transcript
+    |> ClaudeGolden.updates()
+    |> Enum.flat_map(fn update ->
+      case get_in(update, ["params", "update", "messageId"]) do
+        nil -> []
+        message_id -> [message_id]
+      end
+    end)
   end
 
   defp last_update(transcript) do

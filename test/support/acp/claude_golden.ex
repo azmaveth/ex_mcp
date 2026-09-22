@@ -86,10 +86,11 @@ defmodule ExMCP.Test.ClaudeGolden do
       verbatim.
     * `{:note, text}` - recorded verbatim, no adapter call.
 
-  A `fun` (accepted by `:outbound`, `:inbound`, `:write_file` and
-  `:read_file`) receives the *raw* transcript recorded so far (real ids
-  intact) and returns the map or path to use; the resolved value is what gets
-  recorded.
+  A `fun` (accepted by `:outbound`, `:inbound`, `:fork_session`,
+  `:write_file` and `:read_file`) receives the *raw* transcript recorded so
+  far (real ids intact) and returns the map or path to use; the resolved value
+  is what gets recorded. A `:fork_session` fun is how a scenario forks at a
+  `messageId` an earlier step actually put on the wire.
 
   ## Request ids
 
@@ -221,7 +222,7 @@ defmodule ExMCP.Test.ClaudeGolden do
           | {:respond_control, String.t(), map()}
           | {:respond_control_error, String.t(), String.t()}
           | {:list_sessions, map()}
-          | {:fork_session, map()}
+          | {:fork_session, map() | (transcript() -> map())}
           | {:command, keyword()}
           | {:env, keyword()}
           | {:auth_methods, keyword()}
@@ -625,8 +626,8 @@ defmodule ExMCP.Test.ClaudeGolden do
     {%{kind: :list_sessions, params: params}, result, state}
   end
 
-  defp execute({:fork_session, params}, state, _transcript, ctx) do
-    params = substitute(params, ctx)
+  defp execute({:fork_session, params}, state, transcript, ctx) do
+    params = resolve(params, transcript, ctx)
 
     {result, state} =
       case ClaudeSDK.fork_session(params, state) do
