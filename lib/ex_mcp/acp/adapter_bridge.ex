@@ -615,57 +615,10 @@ defmodule ExMCP.ACP.AdapterBridge do
          _from,
          state
        ) do
-    case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
-      {:ok, :skip, new_adapter_state} ->
-        state = %{state | adapter_state: new_adapter_state}
-        state = synthesize_result(state, id, config_options_result(state))
-        {:reply, :ok, state}
-
-      {:ok, data, new_adapter_state} ->
-        state = %{state | adapter_state: new_adapter_state}
-        _ = write_to_port(state, data)
-        state = synthesize_result(state, id, config_options_result(state))
-        {:reply, :ok, state}
-
-      {:reply, result, new_adapter_state} ->
-        state = %{state | adapter_state: new_adapter_state}
-        state = synthesize_result(state, id, result || config_options_result(state))
-        {:reply, :ok, state}
-
-      {:messages_and_reply, messages, result, new_adapter_state} ->
-        state = %{state | adapter_state: new_adapter_state}
-        state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
-        state = synthesize_result(state, id, result || config_options_result(state))
-        {:reply, :ok, state}
-
-      {:reply_and_write, result, data, new_adapter_state} ->
-        state = %{state | adapter_state: new_adapter_state}
-        _ = write_to_port(state, data)
-        state = synthesize_result(state, id, result || config_options_result(state))
-        {:reply, :ok, state}
-
-      {:messages_and_write, messages, data, new_adapter_state} ->
-        state = %{state | adapter_state: new_adapter_state}
-        _ = write_to_port(state, data)
-        state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
-        state = synthesize_result(state, id, config_options_result(state))
-        {:reply, :ok, state}
-
-      {:messages_and_reply_and_write, messages, result, data, new_adapter_state} ->
-        state = %{state | adapter_state: new_adapter_state}
-        _ = write_to_port(state, data)
-        state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
-        state = synthesize_result(state, id, result || config_options_result(state))
-        {:reply, :ok, state}
-
-      {:error, reason, new_adapter_state} ->
-        # JSON-RPC -32602 = Invalid params. A config value outside the
-        # adapter's enum (e.g. Pi's thinking_level) is invalid params from
-        # the client's perspective.
-        state = %{state | adapter_state: new_adapter_state}
-        state = synthesize_error(state, id, -32_602, to_string(reason))
-        {:reply, :ok, state}
-    end
+    msg
+    |> then(&state.adapter_mod.translate_outbound(&1, state.adapter_state))
+    |> config_option_parts()
+    |> apply_config_option_translation(id, state)
   end
 
   defp handle_outbound(msg, _json, _from, state) do
@@ -673,6 +626,45 @@ defmodule ExMCP.ACP.AdapterBridge do
     |> translate_outbound_message(state)
     |> handle_translated_outbound(msg)
   end
+
+  # JSON-RPC -32602 = Invalid params. A config value outside the adapter's
+  # enum (e.g. Pi's thinking_level) is invalid params from the client's
+  # perspective.
+  defp apply_config_option_translation({:error, reason, adapter_state}, id, state) do
+    state = %{state | adapter_state: adapter_state}
+    {:reply, :ok, synthesize_error(state, id, -32_602, to_string(reason))}
+  end
+
+  defp apply_config_option_translation({:ok, messages, result, data, adapter_state}, id, state) do
+    state = %{state | adapter_state: adapter_state}
+    if data, do: _ = write_to_port(state, data)
+    state = push_encoded_messages(state, messages)
+    {:reply, :ok, synthesize_result(state, id, result || config_options_result(state))}
+  end
+
+  # One shape per translation: messages to push, a result or nil, and a write
+  # or nil. `{:ok, :skip, _}` is the adapter declining without a write.
+  defp config_option_parts({:ok, :skip, adapter_state}), do: {:ok, [], nil, nil, adapter_state}
+  defp config_option_parts({:ok, data, adapter_state}), do: {:ok, [], nil, data, adapter_state}
+
+  defp config_option_parts({:reply, result, adapter_state}),
+    do: {:ok, [], result, nil, adapter_state}
+
+  defp config_option_parts({:messages_and_reply, messages, result, adapter_state}),
+    do: {:ok, messages, result, nil, adapter_state}
+
+  defp config_option_parts({:reply_and_write, result, data, adapter_state}),
+    do: {:ok, [], result, data, adapter_state}
+
+  defp config_option_parts({:messages_and_write, messages, data, adapter_state}),
+    do: {:ok, messages, nil, data, adapter_state}
+
+  defp config_option_parts(
+         {:messages_and_reply_and_write, messages, result, data, adapter_state}
+       ),
+       do: {:ok, messages, result, data, adapter_state}
+
+  defp config_option_parts({:error, reason, adapter_state}), do: {:error, reason, adapter_state}
 
   defp handle_authenticate_translation_result({:ok, :skip, state}, _msg, id) do
     if adapter_auth_methods(state) == [] do
@@ -918,36 +910,42 @@ defmodule ExMCP.ACP.AdapterBridge do
   end
 
   defp synthesize_after_translated(translated, msg, id, result_fun) do
-    case translated do
-      {:ok, _delivery, state} ->
-        {:reply, :ok, synthesize_result(state, id, result_fun.(state))}
-
-      {:reply, result, state} ->
-        {:reply, :ok, synthesize_result(state, id, result || result_fun.(state))}
-
-      {:messages, messages, state} ->
-        state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
-        {:reply, :ok, synthesize_result(state, id, result_fun.(state))}
-
-      {:messages_and_reply, messages, result, state} ->
-        state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
-        {:reply, :ok, synthesize_result(state, id, result || result_fun.(state))}
-
-      {:reply_and_write, result, _delivery, state} ->
-        {:reply, :ok, synthesize_result(state, id, result || result_fun.(state))}
-
-      {:messages_and_write, messages, _delivery, state} ->
-        state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
-        {:reply, :ok, synthesize_result(state, id, result_fun.(state))}
-
-      {:messages_and_reply_and_write, messages, result, _delivery, state} ->
-        state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+    case translated_reply_parts(translated) do
+      {:ok, messages, result, state} ->
+        state = push_encoded_messages(state, messages)
         {:reply, :ok, synthesize_result(state, id, result || result_fun.(state))}
 
       {:error, reason, state} ->
         reply_translation_error(msg, reason, state)
     end
   end
+
+  # One shape per translation, so the caller above stays a single decision.
+  # A `_delivery` is a write the normalize step already performed.
+  defp translated_reply_parts({:ok, _delivery, state}), do: {:ok, [], nil, state}
+  defp translated_reply_parts({:reply, result, state}), do: {:ok, [], result, state}
+  defp translated_reply_parts({:messages, messages, state}), do: {:ok, messages, nil, state}
+
+  defp translated_reply_parts({:messages_and_reply, messages, result, state}),
+    do: {:ok, messages, result, state}
+
+  defp translated_reply_parts({:reply_and_write, result, _delivery, state}),
+    do: {:ok, [], result, state}
+
+  defp translated_reply_parts({:messages_and_write, messages, _delivery, state}),
+    do: {:ok, messages, nil, state}
+
+  defp translated_reply_parts(
+         {:messages_and_reply_and_write, messages, result, _delivery, state}
+       ),
+       do: {:ok, messages, result, state}
+
+  defp translated_reply_parts({:error, reason, state}), do: {:error, reason, state}
+
+  defp push_encoded_messages(state, []), do: state
+
+  defp push_encoded_messages(state, messages),
+    do: push_messages(state, Enum.map(messages, &Jason.encode!/1))
 
   defp reply_translation_error(%{"id" => id}, reason, state) do
     {:reply, :ok, synthesize_error(state, id, -32_603, to_string(reason))}
