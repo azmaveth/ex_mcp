@@ -20,15 +20,20 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.PermissionsGoldenTest do
       with and without `permission_suggestions`, `reject_once`, a cancelled
       outcome, an unknown option id, a flat (unwrapped) outcome, and a
       client error reply;
-    * the `ExitPlanMode` option set for each elevated mode (auto, bypass,
-      accept-edits), the `setMode` permission each selection writes, the
-      "keep planning" rejection with its `interrupt`, and the fail-closed
-      answer for an option that was never offered;
+    * the `ExitPlanMode` option set, whose elevated entry follows the
+      available-mode set and is therefore always "use auto mode" now that
+      the catalog is stable, the `setMode` permission each selection
+      writes, the rewrite of an `auto` `setMode` to `acceptEdits` (with its
+      one-per-session notice) when the model cannot run Auto, the "keep
+      planning" rejection with its `interrupt`, and the fail-closed answer
+      for an option that was never offered;
     * the tool-call id minted for a request that carries none, and the
       `toolUseID` spelling;
     * `session/set_mode` and the `mode` / `permission_mode` config aliases:
       the `set_permission_mode` control they write, the modes result they
-      reply with, and the errors for a mode outside the current catalog;
+      reply with, the errors for a mode outside the current catalog, and
+      the Auto-mode fallback to `acceptEdits` with its `current_mode_update`
+      and its once-per-session notice;
     * the `_meta.claudeCode.options.allowDangerouslySkipPermissions: false`
       opt-out on `session/new`, `session/load` and `session/resume` -
       removing `bypassPermissions` from the catalog, refusing it in
@@ -65,6 +70,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.PermissionsGoldenTest do
   @area "permissions"
   @form_caps %{"elicitation" => %{"form" => %{}}}
   @auto_models [%{"value" => "sonnet", "displayName" => "Sonnet", "supportsAutoMode" => true}]
+  @no_auto_models [%{"value" => "opus", "displayName" => "Opus", "supportsAutoMode" => false}]
 
   describe "can_use_tool options and results" do
     test "allow_once_allows_with_the_original_input" do
@@ -295,16 +301,15 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.PermissionsGoldenTest do
   end
 
   describe "ExitPlanMode" do
-    test "exit_plan_offers_accept_edits_by_default" do
-      steps = session() ++ [exit_plan_request(), Flows.select("exit-plan-accept-edits")]
+    test "exit_plan_offers_auto_by_default" do
+      steps = session() ++ [exit_plan_request(), Flows.select("exit-plan-auto")]
 
-      transcript =
-        ClaudeGolden.assert_golden(@area, "exit_plan_offers_accept_edits_by_default", steps)
+      transcript = ClaudeGolden.assert_golden(@area, "exit_plan_offers_auto_by_default", steps)
 
       assert [%{"params" => params}] = acp_requests(transcript)
 
       assert Enum.map(params["options"], & &1["optionId"]) == [
-               "exit-plan-accept-edits",
+               "exit-plan-auto",
                "exit-plan-default",
                "reject"
              ]
@@ -325,12 +330,32 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.PermissionsGoldenTest do
       assert hd(params["options"])["optionId"] == "exit-plan-auto"
     end
 
-    test "exit_plan_offers_bypass_when_it_is_allowed" do
+    test "exit_plan_prefers_auto_over_bypass" do
       steps =
         session(init: [allow_dangerously_skip_permissions: true]) ++
-          [exit_plan_request(), Flows.select("exit-plan-bypass")]
+          [exit_plan_request(), Flows.select("exit-plan-auto")]
 
-      ClaudeGolden.assert_golden(@area, "exit_plan_offers_bypass_when_it_is_allowed", steps)
+      transcript = ClaudeGolden.assert_golden(@area, "exit_plan_prefers_auto_over_bypass", steps)
+
+      assert [%{"params" => params}] = acp_requests(transcript)
+      assert hd(params["options"])["optionId"] == "exit-plan-auto"
+    end
+
+    test "exit_plan_auto_falls_back_for_a_model_without_auto" do
+      steps = no_auto_session() ++ [exit_plan_request(), Flows.select("exit-plan-auto")]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "exit_plan_auto_falls_back_for_a_model_without_auto",
+          steps
+        )
+
+      assert %{tag: :messages_and_write, writes: [%{"response" => %{"response" => response}}]} =
+               ClaudeGolden.last_result(transcript)
+
+      assert [%{"type" => "setMode", "mode" => "acceptEdits"}] = response["updatedPermissions"]
+      assert ["tool_call", "agent_message_chunk"] = ClaudeGolden.update_types(transcript)
     end
 
     test "exit_plan_default_stays_temporary" do
@@ -361,9 +386,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.PermissionsGoldenTest do
       steps =
         session() ++
           [
-            {:note, "auto is not in this catalog, so selecting it must not change the mode"},
+            {:note, "bypass is not in this catalog, so selecting it must not change the mode"},
             exit_plan_request(),
-            Flows.select("exit-plan-auto")
+            Flows.select("exit-plan-bypass")
           ]
 
       ClaudeGolden.assert_golden(
@@ -406,13 +431,26 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.PermissionsGoldenTest do
       ClaudeGolden.assert_golden(@area, "set_mode_plan_and_default_round_trip", steps)
     end
 
-    test "set_mode_auto_requires_model_support" do
-      steps = session() ++ [Flows.set_mode("acp-mode", "auto")]
+    test "set_mode_auto_falls_back_without_model_support" do
+      steps =
+        no_auto_session() ++
+          [
+            Flows.set_mode("acp-mode-1", "auto"),
+            {:note, "the notice is published once, however often Auto is re-selected"},
+            Flows.set_mode("acp-mode-2", "auto")
+          ]
 
       transcript =
-        ClaudeGolden.assert_golden(@area, "set_mode_auto_requires_model_support", steps)
+        ClaudeGolden.assert_golden(@area, "set_mode_auto_falls_back_without_model_support", steps)
 
-      assert %{tag: :error} = ClaudeGolden.last_result(transcript)
+      assert %{
+               tag: :messages_and_reply_and_write,
+               reply: %{"modes" => %{"currentModeId" => "acceptEdits"}},
+               writes: [%{"request" => %{"mode" => "acceptEdits"}}]
+             } = ClaudeGolden.last_result(transcript)
+
+      assert ["agent_message_chunk", "current_mode_update", "current_mode_update"] =
+               ClaudeGolden.update_types(transcript)
     end
 
     test "set_mode_auto_is_accepted_for_a_model_that_supports_it" do
@@ -536,7 +574,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.PermissionsGoldenTest do
       assert %{reply: %{"modes" => %{"availableModes" => modes}}} =
                ClaudeGolden.last_result(transcript)
 
-      assert Enum.map(modes, & &1["id"]) == ["default", "acceptEdits", "plan"]
+      assert Enum.map(modes, & &1["id"]) == ["default", "acceptEdits", "plan", "auto"]
     end
 
     test "opt_out_applies_to_session_resume" do
@@ -871,6 +909,18 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.PermissionsGoldenTest do
         Flows.initialize(),
         :post_connect,
         {:respond_control, "initialize", %{"models" => @auto_models}},
+        Flows.session_new()
+      ]
+  end
+
+  # A session on a model Claude described as not supporting Auto mode, which
+  # is what arms the Auto fallback (an undescribed model is assumed capable).
+  defp no_auto_session do
+    [{:init, model: "opus"}] ++
+      [
+        Flows.initialize(),
+        :post_connect,
+        {:respond_control, "initialize", %{"models" => @no_auto_models}},
         Flows.session_new()
       ]
   end

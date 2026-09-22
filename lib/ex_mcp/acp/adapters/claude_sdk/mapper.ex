@@ -19,6 +19,12 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
   @auth_errors ~w(authentication_failed oauth_org_not_allowed billing_error)
 
+  # Mode the session falls back to when Auto is selected but the current model
+  # does not support it, and the one-per-session notice that announces it.
+  # Both match claude-agent-acp `src/session-mode.ts` (#1025).
+  @auto_mode_fallback "acceptEdits"
+  @auto_mode_fallback_notice "**Auto mode unavailable:** the selected model does not support Auto mode; using Accept edits instead."
+
   @doc "Builds the dynamic session setup result for the current adapter state."
   @spec session_result(map(), String.t()) :: map()
   def session_result(state, session_id) do
@@ -52,47 +58,48 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     }
   end
 
-  @doc "Static, universally available Claude permission modes."
+  @doc """
+  Static, universally available Claude permission modes.
+
+  The catalog is stable: Auto is advertised regardless of the selected
+  model, and a session that selects it while the model cannot run it falls
+  back to Accept edits (see `auto_fallback?/1`). Each entry carries its
+  semantic kind under `_meta.kind`, matching claude-agent-acp
+  `buildAvailableModes` (#1025).
+  """
   @spec modes() :: [map()]
   def modes do
     [
       %{
         "id" => "default",
         "name" => "Manual",
-        "description" => "Always ask before making changes"
+        "description" => "Always ask before making changes",
+        "_meta" => %{"kind" => "standard"}
       },
       %{
         "id" => "acceptEdits",
         "name" => "Accept edits",
-        "description" => "Automatically accept all file edits"
+        "description" => "Automatically accept all file edits",
+        "_meta" => %{"kind" => "standard"}
       },
       %{
         "id" => "plan",
         "name" => "Plan",
-        "description" => "Create a plan before making changes"
+        "description" => "Create a plan before making changes",
+        "_meta" => %{"kind" => "plan"}
+      },
+      %{
+        "id" => "auto",
+        "name" => "Auto",
+        "description" => "Claude handles permission decisions",
+        "_meta" => %{"kind" => "auto_review"}
       }
     ]
   end
 
-  @doc "Mode list gated by the selected model and explicit dangerous-mode opt-in."
+  @doc "Mode list gated by the explicit dangerous-mode opt-in."
   @spec modes(map()) :: [map()]
   def modes(state) do
-    model = current_model_info(state)
-
-    modes =
-      if model["supportsAutoMode"] == true or model["supports_auto_mode"] == true do
-        modes() ++
-          [
-            %{
-              "id" => "auto",
-              "name" => "Auto",
-              "description" => "Claude handles permission decisions"
-            }
-          ]
-      else
-        modes()
-      end
-
     # A host may opt a session out of bypass through session meta; that wins
     # over the adapter option and over a bypass mode inherited at spawn time.
     bypass_allowed? = Map.get(state, :bypass_allowed?, true)
@@ -100,18 +107,111 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     if bypass_allowed? and
          (Keyword.get(Map.get(state, :opts, []), :allow_dangerously_skip_permissions, false) or
             Map.get(state, :permission_mode) == "bypassPermissions") do
-      modes ++
+      modes() ++
         [
           %{
             "id" => "bypassPermissions",
             "name" => "Bypass permissions",
-            "description" => "Accepts all permissions"
+            "description" => "Accepts all permissions",
+            "_meta" => %{"kind" => "full_access"}
           }
         ]
     else
-      modes
+      modes()
     end
   end
+
+  @doc """
+  The mode the session actually runs in, after the Auto-mode fallback.
+
+  Auto clamps to Accept edits when the current model is known and does not
+  advertise Auto support; a mode outside the catalog clamps to `default`.
+  """
+  @spec current_mode(map()) :: String.t()
+  def current_mode(state), do: effective_mode(state)
+
+  @doc """
+  True when the session asked for Auto but the current model cannot run it.
+
+  A model Claude never described is treated as capable, matching
+  claude-agent-acp's `isAutoUnavailable`: only a known model without
+  `supportsAutoMode` triggers the fallback.
+  """
+  @spec auto_fallback?(map()) :: boolean()
+  def auto_fallback?(state) do
+    permission_mode_to_mode(Map.get(state, :permission_mode) || "default") == "auto" and
+      auto_unavailable?(state)
+  end
+
+  @doc "The mode Auto falls back to when the model does not support it."
+  @spec auto_fallback_mode() :: String.t()
+  def auto_fallback_mode, do: @auto_mode_fallback
+
+  @doc "The client-visible notice announcing the Auto-mode fallback."
+  @spec auto_fallback_notice(map()) :: map()
+  def auto_fallback_notice(state) do
+    AdapterEvents.agent_message_chunk(session_id(state), @auto_mode_fallback_notice)
+  end
+
+  @doc "The `current_mode_update` for the session's effective mode."
+  @spec mode_update(map()) :: map()
+  def mode_update(state), do: current_mode_update(state)
+
+  @doc """
+  The Auto-mode fallback notice, at most once per session.
+
+  Returns `{[], state}` once the notice has been delivered, so a session that
+  keeps re-selecting Auto does not spam the transcript
+  (`autoModeFallbackWarningShown` upstream).
+  """
+  @spec auto_fallback_messages(map()) :: {[map()], map()}
+  def auto_fallback_messages(state) do
+    if Map.get(state, :auto_fallback_warned?, false) do
+      {[], %{state | auto_fallback_pending?: false}}
+    else
+      {[auto_fallback_notice(state)],
+       %{state | auto_fallback_warned?: true, auto_fallback_pending?: false}}
+    end
+  end
+
+  @doc "The Auto-mode fallback notice held since `session/new`, if one is due."
+  @spec auto_fallback_pending_messages(map()) :: {[map()], map()}
+  def auto_fallback_pending_messages(state) do
+    if Map.get(state, :auto_fallback_pending?, false) do
+      auto_fallback_messages(state)
+    else
+      {[], state}
+    end
+  end
+
+  @doc """
+  Rewrites an Auto `setMode` permission decision to the fallback mode.
+
+  A client that accepts an Exit Plan "use auto mode" option asks Claude to
+  switch the session to Auto; when the model cannot run Auto that request
+  would be rejected, so it is clamped the same way the mode catalog is.
+  Returns `{response, fallback_applied?}`.
+  """
+  @spec apply_auto_permission_fallback(map(), map()) :: {map(), boolean()}
+  def apply_auto_permission_fallback(%{"behavior" => "allow"} = response, state) do
+    updates = response["updatedPermissions"]
+
+    if auto_unavailable?(state) and is_list(updates) and Enum.any?(updates, &auto_set_mode?/1) do
+      {Map.put(response, "updatedPermissions", Enum.map(updates, &clamp_auto_set_mode/1)), true}
+    else
+      {response, false}
+    end
+  end
+
+  def apply_auto_permission_fallback(response, _state), do: {response, false}
+
+  defp auto_set_mode?(%{"type" => "setMode", "mode" => "auto"}), do: true
+  defp auto_set_mode?(_update), do: false
+
+  defp clamp_auto_set_mode(%{"type" => "setMode", "mode" => "auto"} = update),
+    do: Map.put(update, "mode", @auto_mode_fallback)
+
+  defp clamp_auto_set_mode(update), do: update
 
   @doc "Classifies a Claude SDK result into an ACP stop reason."
   @spec stop_reason(map()) :: String.t()
@@ -227,18 +327,21 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     end)
   end
 
-  @doc "Maps a client JSON-RPC response back into a Claude control response."
-  @spec client_response(map(), map()) :: {:ok, iodata(), map()} | :unknown
+  @doc """
+  Maps a client JSON-RPC response back into a Claude control response.
+
+  Returns `{:ok, messages, iodata, state}` when answering the response also
+  requires ACP session updates (the Auto-mode fallback notice).
+  """
+  @spec client_response(map(), map()) ::
+          {:ok, iodata(), map()} | {:ok, [map()], iodata(), map()} | :unknown
   def client_response(%{"id" => id, "result" => result}, state) do
     case pop_pending_client_request(state, id) do
       {nil, _state} ->
         :unknown
 
       {%{request_id: request_id, request: request, kind: :permission}, state} ->
-        response = ClaudeProtocol.permission_result(result["outcome"] || result, request)
-
-        {:ok, ClaudeProtocol.control_success(request_id, response) |> ClaudeProtocol.line(),
-         state}
+        permission_response(request_id, request, result, state)
 
       {%{request_id: request_id, request: request, kind: :elicitation_question}, state} ->
         response = ask_user_question_result(result, request)
@@ -281,6 +384,19 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   end
 
   def client_response(_msg, _state), do: :unknown
+
+  defp permission_response(request_id, request, result, state) do
+    {response, fallback?} =
+      result["outcome"]
+      |> Kernel.||(result)
+      |> ClaudeProtocol.permission_result(request)
+      |> apply_auto_permission_fallback(state)
+
+    {messages, state} = if fallback?, do: auto_fallback_messages(state), else: {[], state}
+    line = request_id |> ClaudeProtocol.control_success(response) |> ClaudeProtocol.line()
+
+    if messages == [], do: {:ok, line, state}, else: {:ok, messages, line, state}
+  end
 
   defp replay_message(%{"type" => "user"} = event, state) do
     {tool_messages, _writes, state} = reduce_message(event, state)
@@ -835,6 +951,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         :fast_mode_enabled,
         fast_mode_enabled?(result["fast_mode_state"], state.fast_mode_enabled)
       )
+      |> accumulate_model_usage(result)
 
     cond do
       not is_nil(state.deferred_result) and MapSet.size(state.background_subagents) == 0 ->
@@ -904,6 +1021,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         "stopReason" => stop_reason(result),
         "usage" => usage,
         "_meta" => %{
+          "quota" => turn_quota(usage, state),
           "ex_mcp" => %{
             "claude_sdk" =>
               %{
@@ -949,7 +1067,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         session_id: acp_session_id,
         claude_session_id: claude_session_id,
         deferred_result: nil,
-        background_subagents: MapSet.new()
+        background_subagents: MapSet.new(),
+        turn_model_usage: %{}
     }
 
     {writes, state} = start_next_queued_prompt(state)
@@ -1211,7 +1330,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
           %{
             "name" => mode["name"],
             "value" => mode["id"],
-            "description" => mode["description"]
+            "description" => mode["description"],
+            "_meta" => mode["_meta"]
           }
           |> compact()
         end)
@@ -1587,6 +1707,121 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     }
   end
 
+  # `_meta.quota` for a prompt response: what this turn spent, in the shape
+  # claude-agent-acp #1037 settled on (snake_case containers, camelCase
+  # counters) so a client reads one shape from Claude and from Codex.
+  #
+  # The two halves have different scopes and need not add up. `token_count`
+  # mirrors the response's own `usage`, which Claude reports for the main
+  # agent loop only. The `model_usage` rows come from `result.modelUsage`,
+  # which also counts Task subagents, sidechains and internal calls such as
+  # compaction, so they can total more than `token_count`.
+  defp turn_quota(usage, state) do
+    %{
+      "token_count" => quota_token_count(usage),
+      "model_usage" =>
+        state
+        |> Map.get(:turn_model_usage, %{})
+        |> Enum.sort_by(fn {model, _tally} -> model end)
+        |> Enum.map(fn {model, tally} ->
+          %{"model" => model, "token_count" => quota_token_count(tally)}
+        end)
+    }
+  end
+
+  # One `token_count`. `cachedInputTokens` is cache reads, matching Codex's
+  # field; Claude also reports cache writes, which Codex has no slot for, so
+  # those ride along under the name the ACP `usage` field already uses and are
+  # counted in `totalTokens`. `reasoningOutputTokens` is always 0: Claude bills
+  # thinking inside its output tokens and never breaks it out, and the key is
+  # kept so the shape stays uniform across agents.
+  defp quota_token_count(tally) do
+    input = tally["inputTokens"] || 0
+    output = tally["outputTokens"] || 0
+    cache_read = tally["cacheReadTokens"] || 0
+    cache_write = tally["cacheCreationTokens"] || 0
+
+    %{
+      "totalTokens" => input + output + cache_read + cache_write,
+      "inputTokens" => input,
+      "cachedInputTokens" => cache_read,
+      "cachedWriteTokens" => cache_write,
+      "outputTokens" => output,
+      "reasoningOutputTokens" => 0
+    }
+  end
+
+  # `result.modelUsage` is a running total for the whole Claude process, not a
+  # per-result figure, so a result's own spend is what it added to the previous
+  # reading. Advance the reading on every result and fold the increment into
+  # the turn tally that `settle_result/2` reports and resets.
+  defp accumulate_model_usage(state, result) do
+    reading = normalize_model_usage(result["modelUsage"])
+    increment = model_usage_increment(reading, Map.get(state, :last_model_usage, %{}))
+
+    %{
+      state
+      | last_model_usage: reading,
+        turn_model_usage: add_model_usage(Map.get(state, :turn_model_usage, %{}), increment)
+    }
+  end
+
+  defp normalize_model_usage(model_usage) when is_map(model_usage) do
+    Map.new(model_usage, fn {model, usage} ->
+      usage = if is_map(usage), do: usage, else: %{}
+
+      {to_string(model),
+       %{
+         "inputTokens" => finite_count(usage["inputTokens"] || usage["input_tokens"]),
+         "outputTokens" => finite_count(usage["outputTokens"] || usage["output_tokens"]),
+         "cacheReadTokens" =>
+           finite_count(usage["cacheReadInputTokens"] || usage["cache_read_input_tokens"]),
+         "cacheCreationTokens" =>
+           finite_count(usage["cacheCreationInputTokens"] || usage["cache_creation_input_tokens"])
+       }}
+    end)
+  end
+
+  defp normalize_model_usage(_model_usage), do: %{}
+
+  defp finite_count(value) when is_integer(value) and value >= 0, do: value
+  defp finite_count(value) when is_float(value) and value >= 0.0, do: trunc(value)
+  defp finite_count(_value), do: 0
+
+  # `current - previous` per model, dropping models with nothing to report so a
+  # turn only lists the models it actually ran on. A reading below the previous
+  # one means the running total restarted (a resumed session, a cleared
+  # context, a zeroed crash result): there is no usable reference left to
+  # subtract, so the reading itself is the increment.
+  defp model_usage_increment(current, previous) do
+    current
+    |> Enum.flat_map(fn {model, usage} ->
+      resolved =
+        case Map.get(previous, model) do
+          nil ->
+            usage
+
+          base ->
+            subtracted = Map.new(usage, fn {key, value} -> {key, value - (base[key] || 0)} end)
+
+            if Enum.any?(subtracted, fn {_key, value} -> value < 0 end),
+              do: usage,
+              else: subtracted
+        end
+
+      if tally_total(resolved) > 0, do: [{model, resolved}], else: []
+    end)
+    |> Map.new()
+  end
+
+  defp add_model_usage(base, increment) do
+    Map.merge(base, increment, fn _model, left, right ->
+      Map.new(left, fn {key, value} -> {key, value + (right[key] || 0)} end)
+    end)
+  end
+
+  defp tally_total(tally), do: tally |> Map.values() |> Enum.sum()
+
   defp usage_update(session_id, usage, result, state) do
     used =
       usage
@@ -1688,7 +1923,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
               current_assistant_text_streamed?: false,
               tool_calls: %{},
               background_subagents: MapSet.new(),
-              deferred_result: nil
+              deferred_result: nil,
+              turn_model_usage: %{}
           }
 
         {[ClaudeProtocol.line(queued.message)], state}
@@ -1731,7 +1967,21 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   defp effective_mode(state) do
     current = permission_mode_to_mode(state.permission_mode || "default")
 
-    if Enum.any?(modes(state), &(&1["id"] == current)), do: current, else: "default"
+    cond do
+      current == "auto" and auto_unavailable?(state) -> @auto_mode_fallback
+      Enum.any?(modes(state), &(&1["id"] == current)) -> current
+      true -> "default"
+    end
+  end
+
+  defp auto_unavailable?(state) do
+    case current_model_info(state) do
+      model when map_size(model) > 0 ->
+        not (model["supportsAutoMode"] == true or model["supports_auto_mode"] == true)
+
+      _ ->
+        false
+    end
   end
 
   defp maybe_set(state, _key, nil), do: state

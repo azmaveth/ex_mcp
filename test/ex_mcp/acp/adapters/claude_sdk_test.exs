@@ -1018,11 +1018,15 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
   end
 
   describe "upstream capability parity" do
-    test "gates auto by model support and bypass by explicit opt-in", %{state: state} do
-      base_ids = Mapper.modes_result(state)["availableModes"] |> Enum.map(& &1["id"])
-      refute "auto" in base_ids
+    test "advertises a stable mode catalog and gates bypass by explicit opt-in", %{state: state} do
+      base = Mapper.modes_result(state)["availableModes"]
+      base_ids = Enum.map(base, & &1["id"])
+      assert "auto" in base_ids
       refute "bypassPermissions" in base_ids
       refute "dontAsk" in base_ids
+
+      assert Enum.map(base, &get_in(&1, ["_meta", "kind"])) ==
+               ["standard", "standard", "plan", "auto_review"]
 
       state = %{
         state
@@ -1030,20 +1034,46 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
           opts: [allow_dangerously_skip_permissions: true]
       }
 
-      ids = Mapper.modes_result(state)["availableModes"] |> Enum.map(& &1["id"])
-      assert "auto" in ids
-      assert "bypassPermissions" in ids
+      modes = Mapper.modes_result(state)["availableModes"]
+      assert "bypassPermissions" in Enum.map(modes, & &1["id"])
+      assert List.last(modes)["_meta"] == %{"kind" => "full_access"}
     end
 
     test "rejects a mode that is not currently advertised", %{state: state} do
       request = %{
         "id" => 10,
         "method" => "session/set_mode",
+        "params" => %{"sessionId" => "s1", "modeId" => "bypassPermissions"}
+      }
+
+      assert {:error, "Unsupported Claude permission mode: bypassPermissions", ^state} =
+               ClaudeSDK.translate_outbound(request, state)
+    end
+
+    test "auto falls back to accept edits for a model without auto support", %{state: state} do
+      state = %{state | available_models: [%{"value" => "sonnet", "supportsAutoMode" => false}]}
+
+      request = %{
+        "id" => 11,
+        "method" => "session/set_mode",
         "params" => %{"sessionId" => "s1", "modeId" => "auto"}
       }
 
-      assert {:error, "Unsupported Claude permission mode: auto", ^state} =
+      assert {:messages_and_reply_and_write, messages, reply, data, state} =
                ClaudeSDK.translate_outbound(request, state)
+
+      assert reply["modes"]["currentModeId"] == "acceptEdits"
+      assert state.permission_mode == "acceptEdits"
+
+      assert IO.iodata_to_binary(data) =~ ~s("mode":"acceptEdits")
+
+      assert [notice, mode_update] = messages
+      assert get_in(notice, ["params", "update", "content", "text"]) =~ "Auto mode unavailable"
+
+      assert get_in(mode_update, ["params", "update"]) == %{
+               "sessionUpdate" => "current_mode_update",
+               "currentModeId" => "acceptEdits"
+             }
     end
 
     test "permission choices only promise persistence when Claude supplied an update", %{

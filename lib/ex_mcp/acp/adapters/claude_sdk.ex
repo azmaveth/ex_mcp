@@ -39,6 +39,17 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     # False when the host opted this session out of bypassPermissions through
     # `_meta.claudeCode.options.allowDangerouslySkipPermissions: false`.
     bypass_allowed?: true,
+    # Auto-mode fallback bookkeeping: the notice is published at most once per
+    # session, and a fallback decided while `session/new` is still in flight is
+    # held until the first prompt (the client cannot receive a session update
+    # for a session id it has not been given yet).
+    auto_fallback_warned?: false,
+    auto_fallback_pending?: false,
+    # `result.modelUsage` is a running total for the whole Claude process, so
+    # `last_model_usage` is the previous reading and `turn_model_usage` the
+    # increments accumulated for the turn being answered.
+    last_model_usage: %{},
+    turn_model_usage: %{},
     opts: [],
     pending_controls: %{},
     pending_client_requests: %{},
@@ -202,6 +213,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
   def translate_outbound(%{"id" => _id} = msg, state) do
     case Mapper.client_response(msg, state) do
       {:ok, data, state} -> {:ok, data, state}
+      {:ok, messages, data, state} -> {:messages_and_write, messages, data, state}
       :unknown -> {:ok, :skip, state}
     end
   end
@@ -278,13 +290,16 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
       {:ok, events} ->
         {messages, state} = Mapper.replay_messages(events, state)
 
-        case apply_bypass_policy(params, state) do
-          {state, nil} ->
-            {:messages_and_reply, messages, Mapper.session_result(state, session_id), state}
+        # Same policy pair as session/new and session/resume: a loaded session
+        # can inherit a bypass or Auto mode the model cannot support, so both
+        # have to be clamped here too.
+        {state, bypass_write} = apply_bypass_policy(params, state)
+        {state, auto_write} = apply_auto_mode_policy(state)
+        result = Mapper.session_result(state, session_id)
 
-          {state, data} ->
-            {:messages_and_reply_and_write, messages, Mapper.session_result(state, session_id),
-             data, state}
+        case Enum.reject([bypass_write, auto_write], &is_nil/1) do
+          [] -> {:messages_and_reply, messages, result, state}
+          writes -> {:messages_and_reply_and_write, messages, result, writes, state}
         end
 
       {:error, reason} ->
@@ -363,37 +378,49 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
          %{"id" => id, "params" => %{"sessionId" => session_id, "prompt" => prompt}},
          state
        ) do
-    if state.pending_prompt_id do
-      case ClaudeProtocol.user_message(session_id || state.session_id, prompt) do
-        {:ok, message} -> {:ok, :skip, enqueue_prompt(state, id, session_id, message)}
-        {:error, reason} -> {:error, reason, state}
+    with_pending_auto_notice(state, fn state ->
+      if state.pending_prompt_id do
+        case ClaudeProtocol.user_message(session_id || state.session_id, prompt) do
+          {:ok, message} -> {:ok, :skip, enqueue_prompt(state, id, session_id, message)}
+          {:error, reason} -> {:error, reason, state}
+        end
+      else
+        start_prompt(id, session_id, prompt, state)
       end
-    else
-      start_prompt(id, session_id, prompt, state)
-    end
+    end)
   end
 
   defp handle_request("session/set_mode", %{"params" => %{"modeId" => mode_id}}, state) do
     available = Mapper.modes_result(state)["availableModes"]
 
     if Enum.any?(available, &(&1["id"] == mode_id)) do
-      permission_mode = encode_permission_mode(mode_id)
+      requested = encode_permission_mode(mode_id)
+      # Auto is always in the catalog, so a model that cannot run it settles on
+      # the fallback mode here rather than refusing the request.
+      effective = Mapper.current_mode(%{state | permission_mode: requested})
       request_id = control_id("set_permission_mode")
 
       state = %{
         state
-        | permission_mode: permission_mode,
+        | permission_mode: effective,
           pending_controls: Map.put(state.pending_controls, request_id, :set_permission_mode)
       }
 
       data =
         ClaudeProtocol.control_request(request_id, %{
           "subtype" => "set_permission_mode",
-          "mode" => permission_mode
+          "mode" => effective
         })
         |> ClaudeProtocol.line()
 
-      {:reply_and_write, %{"modes" => Mapper.modes_result(state)}, data, state}
+      reply = %{"modes" => Mapper.modes_result(state)}
+
+      if effective == requested do
+        {:reply_and_write, reply, data, state}
+      else
+        {notice, state} = Mapper.auto_fallback_messages(state)
+        {:messages_and_reply_and_write, notice ++ [Mapper.mode_update(state)], reply, data, state}
+      end
     else
       {:error, "Unsupported Claude permission mode: #{mode_id}", state}
     end
@@ -419,31 +446,49 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
       })
       |> ClaudeProtocol.line()
 
-    {writes, state} =
-      if Mapper.modes_result(state)["currentModeId"] == "default" and
-           state.permission_mode != "default" do
+    # The new model may invalidate the session's mode: one outside the catalog
+    # clamps to `default`, and Auto on a model without Auto support clamps to
+    # the fallback mode with a client-visible notice.
+    {writes, messages, state} =
+      if Mapper.current_mode(state) != state.permission_mode do
+        auto_fallback? = Mapper.auto_fallback?(state)
+        mode = Mapper.current_mode(state)
         mode_request_id = control_id("set_permission_mode")
 
         mode_write =
           ClaudeProtocol.control_request(mode_request_id, %{
             "subtype" => "set_permission_mode",
-            "mode" => "default"
+            "mode" => mode
           })
           |> ClaudeProtocol.line()
 
         state = %{
           state
-          | permission_mode: "default",
+          | permission_mode: mode,
             pending_controls:
               Map.put(state.pending_controls, mode_request_id, :set_permission_mode)
         }
 
-        {[model_write, mode_write], state}
+        {messages, state} =
+          if auto_fallback? do
+            {notice, state} = Mapper.auto_fallback_messages(state)
+            {[Mapper.mode_update(state) | notice], state}
+          else
+            {[], state}
+          end
+
+        {[model_write, mode_write], messages, state}
       else
-        {[model_write], state}
+        {[model_write], [], state}
       end
 
-    {:reply_and_write, %{"configOptions" => Mapper.config_options(state)}, writes, state}
+    reply = %{"configOptions" => Mapper.config_options(state)}
+
+    if messages == [] do
+      {:reply_and_write, reply, writes, state}
+    else
+      {:messages_and_reply_and_write, messages, reply, writes, state}
+    end
   end
 
   defp handle_request(
@@ -581,10 +626,57 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     end
   end
 
+  # Mirrors claude-agent-acp#1025: a session that opens in Auto on a model
+  # without Auto support settles on the fallback mode and syncs the SDK, so
+  # Claude is never left running a mode it would reject. The notice is held
+  # until the first prompt — the client cannot receive a session update for a
+  # session id `session/new` has not returned yet.
+  defp apply_auto_mode_policy(state) do
+    if Mapper.auto_fallback?(state) do
+      mode = Mapper.auto_fallback_mode()
+      request_id = control_id("set_permission_mode")
+
+      state = %{
+        state
+        | permission_mode: mode,
+          auto_fallback_pending?: true,
+          pending_controls: Map.put(state.pending_controls, request_id, :set_permission_mode)
+      }
+
+      data =
+        ClaudeProtocol.control_request(request_id, %{
+          "subtype" => "set_permission_mode",
+          "mode" => mode
+        })
+        |> ClaudeProtocol.line()
+
+      {state, data}
+    else
+      {state, nil}
+    end
+  end
+
   defp reply_with_bypass_policy(params, state, result_fun) do
-    case apply_bypass_policy(params, state) do
-      {state, nil} -> {:reply, result_fun.(state), state}
-      {state, data} -> {:reply_and_write, result_fun.(state), data, state}
+    {state, bypass_write} = apply_bypass_policy(params, state)
+    {state, auto_write} = apply_auto_mode_policy(state)
+
+    case Enum.reject([bypass_write, auto_write], &is_nil/1) do
+      [] -> {:reply, result_fun.(state), state}
+      writes -> {:reply_and_write, result_fun.(state), writes, state}
+    end
+  end
+
+  # Delivers an Auto-mode fallback notice held since `session/new` alongside
+  # whatever the wrapped request produces. A failed request keeps the notice
+  # pending so it is not lost.
+  defp with_pending_auto_notice(state, fun) do
+    {notice, noticed} = Mapper.auto_fallback_pending_messages(state)
+
+    case fun.(noticed) do
+      result when notice == [] -> result
+      {:ok, :skip, new_state} -> {:messages, notice, new_state}
+      {:ok, data, new_state} -> {:messages_and_write, notice, data, new_state}
+      {:error, reason, _new_state} -> {:error, reason, state}
     end
   end
 
@@ -696,7 +788,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
               current_assistant_text_streamed?: false,
               tool_calls: %{},
               background_subagents: MapSet.new(),
-              deferred_result: nil
+              deferred_result: nil,
+              turn_model_usage: %{}
           }
 
         {:ok, ClaudeProtocol.line(message), state}

@@ -28,7 +28,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionUpdatesGoldenTest do
       matching `tool_use` (both are sent as explicit `null` when the tool
       is unknown, because `compact/1` only prunes the outer `_meta` map);
     * `result`: the `session/prompt` response - emitted *after* the updates
-      of the same event - (stop reason, usage,
+      of the same event - (stop reason, usage, the `_meta.quota`
+      `token_count` and per-model breakdown, which is the increment since
+      the previous reading of Claude's running `modelUsage` total, and
       `_meta.ex_mcp.claude_sdk` text/session/cost/errors), the
       `usage_update` that only appears with a known context window, the
       trailing `config_option_update` and `session_info_update`, the
@@ -527,6 +529,85 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionUpdatesGoldenTest do
       refute "usage_update" in ClaudeGolden.update_types(transcript)
     end
 
+    test "a_prompt_response_carries_per_model_quota" do
+      steps =
+        turn() ++
+          [
+            Flows.result(%{
+              "modelUsage" => %{
+                "claude-opus-5[1m]" => %{
+                  "inputTokens" => 100,
+                  "outputTokens" => 20,
+                  "cacheReadInputTokens" => 5,
+                  "cacheCreationInputTokens" => 2
+                },
+                "claude-haiku-4" => %{"inputTokens" => 7, "outputTokens" => 3}
+              }
+            })
+          ]
+
+      transcript =
+        ClaudeGolden.assert_golden(@area, "a_prompt_response_carries_per_model_quota", steps)
+
+      quota =
+        transcript |> prompt_responses() |> List.last() |> get_in(["result", "_meta", "quota"])
+
+      assert quota["token_count"] == %{
+               "totalTokens" => 23,
+               "inputTokens" => 12,
+               "cachedInputTokens" => 3,
+               "cachedWriteTokens" => 1,
+               "outputTokens" => 7,
+               "reasoningOutputTokens" => 0
+             }
+
+      assert Enum.map(quota["model_usage"], & &1["model"]) == [
+               "claude-haiku-4",
+               "claude-opus-5[1m]"
+             ]
+    end
+
+    test "per_model_quota_is_the_increment_since_the_last_result" do
+      steps =
+        turn() ++
+          [
+            {:note, "modelUsage is a running total for the Claude process"},
+            Flows.result(%{"modelUsage" => %{"sonnet" => %{"inputTokens" => 100}}}),
+            Flows.prompt("acp-prompt-2", "again"),
+            Flows.result(%{"modelUsage" => %{"sonnet" => %{"inputTokens" => 130}}}),
+            {:note, "a reading that rewound restarts from the reading itself"},
+            Flows.prompt("acp-prompt-3", "and again"),
+            Flows.result(%{"modelUsage" => %{"sonnet" => %{"inputTokens" => 4}}})
+          ]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "per_model_quota_is_the_increment_since_the_last_result",
+          steps
+        )
+
+      assert [100, 30, 4] = model_quota_inputs(transcript)
+    end
+
+    test "a_result_without_model_usage_reports_an_empty_breakdown" do
+      steps = turn() ++ [Flows.result()]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "a_result_without_model_usage_reports_an_empty_breakdown",
+          steps
+        )
+
+      assert [] =
+               transcript
+               |> prompt_responses()
+               |> List.last()
+               |> quota()
+               |> Map.fetch!("model_usage")
+    end
+
     test "stop_reasons_are_mapped" do
       steps =
         turn() ++
@@ -917,5 +998,19 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionUpdatesGoldenTest do
 
   defp stop_reasons(transcript) do
     transcript |> prompt_responses() |> Enum.map(&get_in(&1, ["result", "stopReason"]))
+  end
+
+  defp quota(response), do: get_in(response, ["result", "_meta", "quota"])
+
+  defp model_quota_inputs(transcript) do
+    transcript
+    |> prompt_responses()
+    |> Enum.map(fn response ->
+      response
+      |> quota()
+      |> Map.fetch!("model_usage")
+      |> hd()
+      |> get_in(["token_count", "inputTokens"])
+    end)
   end
 end

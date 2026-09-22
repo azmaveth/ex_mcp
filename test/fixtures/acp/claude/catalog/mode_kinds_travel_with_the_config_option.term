@@ -6,10 +6,50 @@
         cwd: "<sandbox>/project",
         claude_config_dir: "<sandbox>/claude",
         cli_path: "<sandbox>/bin/claude",
+        model: "sonnet",
         allow_dangerously_skip_permissions: true
       ]
     },
     result: %{tag: :ok}
+  },
+  %ExMCP.Test.ClaudeGolden.Entry{
+    step: %{
+      kind: :outbound,
+      message: %{
+        "id" => "acp-init",
+        "jsonrpc" => "2.0",
+        "method" => "initialize",
+        "params" => %{"clientCapabilities" => %{}}
+      }
+    },
+    result: %{skipped: true, tag: :ok}
+  },
+  %ExMCP.Test.ClaudeGolden.Entry{
+    step: %{kind: :post_connect},
+    result: %{
+      tag: :ok,
+      writes: [
+        %{
+          "request" => %{"subtype" => "initialize"},
+          "request_id" => "ex_mcp_initialize_<1>",
+          "type" => "control_request"
+        }
+      ]
+    }
+  },
+  %ExMCP.Test.ClaudeGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "response" => %{
+          "request_id" => "ex_mcp_initialize_<1>",
+          "response" => %{"models" => [%{"supportsAutoMode" => true, "value" => "sonnet"}]},
+          "subtype" => "success"
+        },
+        "type" => "control_response"
+      }
+    },
+    result: %{skipped: true, tag: :skip}
   },
   %ExMCP.Test.ClaudeGolden.Entry{
     step: %{
@@ -32,21 +72,31 @@
             "name" => "Mode",
             "options" => [
               %{
+                "_meta" => %{"kind" => "standard"},
                 "description" => "Always ask before making changes",
                 "name" => "Manual",
                 "value" => "default"
               },
               %{
+                "_meta" => %{"kind" => "standard"},
                 "description" => "Automatically accept all file edits",
                 "name" => "Accept edits",
                 "value" => "acceptEdits"
               },
               %{
+                "_meta" => %{"kind" => "plan"},
                 "description" => "Create a plan before making changes",
                 "name" => "Plan",
                 "value" => "plan"
               },
               %{
+                "_meta" => %{"kind" => "auto_review"},
+                "description" => "Claude handles permission decisions",
+                "name" => "Auto",
+                "value" => "auto"
+              },
+              %{
+                "_meta" => %{"kind" => "full_access"},
                 "description" => "Accepts all permissions",
                 "name" => "Bypass permissions",
                 "value" => "bypassPermissions"
@@ -56,15 +106,11 @@
           },
           %{
             "category" => "model",
-            "currentValue" => "default",
+            "currentValue" => "sonnet",
             "description" => "AI model to use",
             "id" => "model",
             "name" => "Model",
-            "options" => [
-              %{"name" => "Default", "value" => "default"},
-              %{"name" => "Sonnet", "value" => "sonnet"},
-              %{"name" => "Opus", "value" => "opus"}
-            ],
+            "options" => [%{"name" => "sonnet", "value" => "sonnet"}],
             "type" => "select"
           },
           %{
@@ -85,21 +131,31 @@
         "modes" => %{
           "availableModes" => [
             %{
+              "_meta" => %{"kind" => "standard"},
               "description" => "Always ask before making changes",
               "id" => "default",
               "name" => "Manual"
             },
             %{
+              "_meta" => %{"kind" => "standard"},
               "description" => "Automatically accept all file edits",
               "id" => "acceptEdits",
               "name" => "Accept edits"
             },
             %{
+              "_meta" => %{"kind" => "plan"},
               "description" => "Create a plan before making changes",
               "id" => "plan",
               "name" => "Plan"
             },
             %{
+              "_meta" => %{"kind" => "auto_review"},
+              "description" => "Claude handles permission decisions",
+              "id" => "auto",
+              "name" => "Auto"
+            },
+            %{
+              "_meta" => %{"kind" => "full_access"},
               "description" => "Accepts all permissions",
               "id" => "bypassPermissions",
               "name" => "Bypass permissions"
@@ -110,100 +166,6 @@
         "sessionId" => "claude_sdk_<1>"
       },
       tag: :reply
-    }
-  },
-  %ExMCP.Test.ClaudeGolden.Entry{
-    step: %{
-      kind: :inbound,
-      message: %{
-        "request" => %{
-          "input" => %{"plan" => "1. Read\n2. Edit"},
-          "subtype" => "can_use_tool",
-          "tool_name" => "ExitPlanMode",
-          "tool_use_id" => "toolu_plan"
-        },
-        "request_id" => "req-plan",
-        "type" => "control_request"
-      }
-    },
-    result: %{
-      messages: [
-        %{
-          "jsonrpc" => "2.0",
-          "method" => "session/update",
-          "params" => %{
-            "sessionId" => "claude_sdk_<1>",
-            "update" => %{
-              "kind" => "other",
-              "rawInput" => %{"plan" => "1. Read\n2. Edit"},
-              "sessionUpdate" => "tool_call",
-              "status" => "pending",
-              "title" => "ExitPlanMode",
-              "toolCallId" => "toolu_plan"
-            }
-          }
-        },
-        %{
-          "_meta" => %{"permission" => %{"title" => "Ready to code?", "version" => 1}},
-          "id" => "acp-<1>",
-          "jsonrpc" => "2.0",
-          "method" => "session/request_permission",
-          "params" => %{
-            "options" => [
-              %{
-                "kind" => "allow_always",
-                "name" => "Yes, and bypass permissions",
-                "optionId" => "exit-plan-bypass"
-              },
-              %{
-                "kind" => "allow_once",
-                "name" => "Yes, manually approve edits",
-                "optionId" => "exit-plan-default"
-              },
-              %{"kind" => "reject_once", "name" => "No, keep planning", "optionId" => "reject"}
-            ],
-            "sessionId" => "claude_sdk_<1>",
-            "toolCall" => %{
-              "kind" => "other",
-              "rawInput" => %{"plan" => "1. Read\n2. Edit"},
-              "title" => "ExitPlanMode",
-              "toolCallId" => "toolu_plan"
-            }
-          }
-        }
-      ],
-      tag: :messages
-    }
-  },
-  %ExMCP.Test.ClaudeGolden.Entry{
-    step: %{
-      kind: :outbound,
-      message: %{
-        "id" => "acp-<1>",
-        "jsonrpc" => "2.0",
-        "result" => %{"outcome" => %{"optionId" => "exit-plan-bypass", "outcome" => "selected"}}
-      }
-    },
-    result: %{
-      tag: :ok,
-      writes: [
-        %{
-          "response" => %{
-            "request_id" => "req-plan",
-            "response" => %{
-              "behavior" => "allow",
-              "decisionClassification" => "user_permanent",
-              "toolUseID" => "toolu_plan",
-              "updatedInput" => %{"plan" => "1. Read\n2. Edit"},
-              "updatedPermissions" => [
-                %{"destination" => "session", "mode" => "bypassPermissions", "type" => "setMode"}
-              ]
-            },
-            "subtype" => "success"
-          },
-          "type" => "control_response"
-        }
-      ]
     }
   }
 ]

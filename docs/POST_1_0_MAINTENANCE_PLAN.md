@@ -344,11 +344,11 @@ scenario under `test/fixtures/acp/claude/<area>/`:
 |---|---|---|
 | post_connect and session lifecycle | `lifecycle_golden_test.exs` | 44 |
 | prompt content conversion | `prompt_content_golden_test.exs` | 38 |
-| permissions, modes, opt-out, AskUserQuestion | `permissions_golden_test.exs` | 56 |
-| session update ordering | `session_updates_golden_test.exs` | 57 |
+| permissions, modes, opt-out, AskUserQuestion | `permissions_golden_test.exs` | 57 |
+| session update ordering | `session_updates_golden_test.exs` | 60 |
 | MCP configuration and authorization | `mcp_config_golden_test.exs` | 39 |
 | cancellation, late responses, fail-closed answers | `faults_golden_test.exs` | 31 |
-| model, mode, and config-option catalogs | `catalog_golden_test.exs` | 30 |
+| model, mode, and config-option catalogs | `catalog_golden_test.exs` | 35 |
 
 Each scenario reaches its preconditions through the adapter's public callbacks
 only (`init/1`, `command/1`, `env/1`, `post_connect/1`, `auth_methods/1,2`,
@@ -1030,6 +1030,124 @@ gap is `_meta.kind` plus the fallback warning.
 Update (2026-09-21): the gate is built and green - see "Claude adapter
 characterization gate" above for its areas, isolation rules and the one latent
 defect it recorded. The four parity ports are unblocked.
+
+### 2026-09-21 Claude mode kinds and per-model usage
+
+The first two of the four sequenced Claude items are ported behind the gate.
+Both were read from the upstream source at the reviewed pin
+`d421f56a6c43cde16d9a7531d08a750a5ef2f04a` rather than from the commit
+summaries, because the shapes matter.
+
+**Permission mode kinds and the Auto-mode fallback** (claude-agent-acp
+`caf609b`, #1025; upstream `src/session-mode.ts`). The reference's
+`buildAvailableModes` returns a catalog that no longer consults the model:
+`default`/Manual, `acceptEdits`/Accept edits, `plan`/Plan and `auto`/Auto
+are always present, `bypassPermissions` is appended only when bypass is
+allowed, and every entry carries `_meta: { kind }` with the values
+`standard`, `standard`, `plan`, `auto_review` and `full_access`.
+`SessionModeManager.configOption` copies each mode's `_meta` onto the
+corresponding `mode` config option entry. Because the catalog is stable, Auto
+can now be selected on a model that cannot run it, and
+`AUTO_MODE_FALLBACK = "acceptEdits"` is what the session runs instead. The
+warning mechanism is not a log: `publishFallbackWarning` sends a
+`session/update` `agent_message_chunk` with the fixed text
+`**Auto mode unavailable:** the selected model does not support Auto mode;
+using Accept edits instead.`, guarded by `autoModeFallbackWarningShown` so it
+is delivered at most once per session, and a failure to deliver it must not
+fail the mode change. A fallback decided while the session is being created
+is held in `autoModeFallbackWarningPending` and published on the first
+prompt, because there is no session id for the client to receive an update
+for yet. `isAutoUnavailable` treats a model the agent never described as
+capable, so only a known model without `supportsAutoMode` triggers the
+fallback.
+
+ExMCP matches all of that: the catalog, the kinds on both the mode list and
+the config option, the fallback mode, the notice text, the once-per-session
+guard, the held notice, and the unknown-model rule. The fallback is applied
+at every entry point the reference applies it: `session/new`
+(`apply_auto_mode_policy/1` clamps and syncs the SDK with a
+`set_permission_mode` control, mirroring `trySyncMode`),
+`session/set_mode` and its `mode` / `permission_mode` config aliases
+(mirroring `setSessionMode`, which publishes the warning before the
+`current_mode_update`), a model switch that invalidates Auto (mirroring
+`reconcileForModel` + `publishFallbackState`, which publishes the
+`current_mode_update` before the warning - the two orders differ upstream and
+are matched), and a permission decision carrying `{type: "setMode", mode:
+"auto"}` (mirroring `applyPermissionFallback`, which rewrites the update and
+publishes only the warning, leaving the mode state to the SDK's own status
+event). ExMCP's `session/set_mode` returns
+`{:messages_and_reply_and_write, ...}` in the fallback case; the Mapper's
+`client_response/2` gained a `{:ok, messages, iodata, state}` return for the
+permission path.
+
+One consequence is worth recording because it looks like drift and is not:
+the elevated Exit Plan option follows the available-mode set, so with a
+stable catalog it is always "Yes, and use auto mode". The reference is in the
+same state for the same reason (`buildExitPlanModePermissionOptions` reads
+`availableModeIds(session.modes)`), and the permission rewrite above is what
+keeps that safe on a model without Auto support.
+
+This is a wire change, so §8.1 condition 3 needs its justification. It is
+accepted as deliberate reference parity, not as a bug fix. Everything added
+is additive - `_meta.kind`, one extra catalog entry - and no existing mode
+id, name, description or config-option key is removed or renamed. The only
+behavior an existing client can observe changing is that selecting Auto on a
+model without Auto support now succeeds as Accept edits instead of returning
+`Unsupported Claude permission mode: auto`, and that an inherited Auto lands
+on Accept edits instead of silently on Manual. Both are strictly more useful
+and both are now reported to the client rather than being invisible. The four
+fallback entry points, the once-per-session guard, the held notice and the
+unknown-model rule are each pinned by a golden scenario.
+
+**Per-model token usage on prompt responses** (claude-agent-acp `fad4d10`,
+#1037). The reference does not leave this in a vendor namespace: `turnOutcome`
+puts it on the prompt response as `_meta.quota`, with `token_count` for the
+turn and `model_usage` as a list of `{model, token_count}` rows.
+`quotaTokenCount` spells one row as `totalTokens`, `inputTokens`,
+`cachedInputTokens`, `cachedWriteTokens`, `outputTokens`,
+`reasoningOutputTokens`, and the upstream comment is explicit that the
+container keys are snake_case and the counters camelCase so the shape matches
+codex-acp's. It is equally explicit that the two halves need not add up:
+`token_count` mirrors the response's `usage`, which the SDK reports for the
+main agent loop only, while the `model_usage` rows come from
+`result.modelUsage`, which also counts Task subagents, sidechains and
+compaction. `reasoningOutputTokens` is always 0 because Claude bills thinking
+inside its output tokens. Critically, `result.modelUsage` is a running total
+for the whole `query()` call, so `modelUsageIncrement` derives a result's own
+spend by subtracting the previous reading, treats a reading that fell below
+the previous one as a restart (the reading itself becomes the increment), and
+drops models with nothing to report.
+
+Decision: ExMCP adopts `_meta.quota` as the reference specifies it, and keeps
+`_meta.ex_mcp.claude_sdk.modelUsage` exactly as it is. The adapter now tracks
+`last_model_usage` (the previous reading) and `turn_model_usage` (the
+increments accumulated for the turn), reset when the turn settles or a new
+turn starts, and sorts the rows by model id so the fixtures are stable.
+
+Rejected: keeping per-model usage only under
+`_meta.ex_mcp.claude_sdk.modelUsage` and adding characterization scenarios
+that pin the current shape. That was a legitimate outcome and it is what the
+2026-09-21 sequencing note anticipated, but it does not hold up. The raw map
+is Claude's own on three counts: it is keyed by Claude's resolved model
+spelling, it uses Claude's field names (`cacheReadInputTokens`,
+`cacheCreationInputTokens`, `contextWindow`), and - the decisive one - it is a
+running total for the whole Claude process, not the turn's spend, so a client
+reading it per prompt gets a number that means something else entirely. A
+host would need Claude-specific knowledge to use it and still could not
+compare it with the same figure from Codex. Namespacing is the right default
+for genuinely vendor-specific data; this is not that, and there is an agreed
+cross-agent shape for it. The raw map stays for readers that want the
+unprocessed numbers, including the fields `_meta.quota` does not carry.
+
+Not ported here: a cancelled turn that never received a Claude `result` still
+answers with a bare `{"stopReason": "cancelled"}`. Upstream's cancellation
+lanes carry `usage` and therefore `quota`; ExMCP's have never carried `usage`
+either, so adding `quota` alone would be arbitrary. Giving those responses a
+usage figure is its own change with its own fixtures.
+
+Still open from the 2026-09-01 list after this: deferred steering while user
+input is pending, message-specific ACP session forks, and Codex session
+titles with `/rename`.
 
 ### 2026-09-21 ZCode source baseline
 

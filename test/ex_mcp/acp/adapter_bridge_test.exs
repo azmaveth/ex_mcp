@@ -1332,6 +1332,28 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
         {:reply_and_write, %{"configOptions" => [%{"id" => "model"}]}, data, state}
       end
 
+      # The five-tuple from the Adapter contract: a notice to the client, a
+      # reply, and a control line for the subprocess, all from one request.
+      # This is the shape the Claude adapter's Auto-mode fallback returns.
+      def translate_outbound(%{"method" => "session/set_mode"}, state) do
+        messages = [
+          %{
+            "jsonrpc" => "2.0",
+            "method" => "session/update",
+            "params" => %{
+              "sessionId" => "adapter-session",
+              "update" => %{
+                "sessionUpdate" => "agent_message_chunk",
+                "content" => %{"type" => "text", "text" => "mode clamped"}
+              }
+            }
+          }
+        ]
+
+        data = Jason.encode!(%{"type" => "config_echo", "clamped" => true}) <> "\n"
+        {:messages_and_reply_and_write, messages, %{"modes" => %{}}, data, state}
+      end
+
       def translate_outbound(_msg, state), do: {:ok, :skip, state}
 
       @impl true
@@ -1453,6 +1475,47 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
       update = Jason.decode!(raw_update)
       assert update["method"] == "session/update"
       assert update["params"]["update"]["sessionUpdate"] == "config_option_update"
+
+      AdapterBridge.close(bridge)
+    end
+
+    # Regression: the five-tuple is part of the Adapter contract but only the
+    # session lifecycle path implemented it, so returning it from any other
+    # method raised a FunctionClauseError in the bridge and killed the
+    # connection. The golden adapter suites cannot catch this: they drive the
+    # adapter directly and never go through AdapterBridge.
+    test "messages_and_reply_and_write replies, notifies, and forwards data" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: DirectReplyAdapter, adapter_opts: [])
+      _init = send_initialize(bridge)
+
+      mode_msg = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/set_mode",
+        "params" => %{"sessionId" => "adapter-session", "modeId" => "auto"},
+        "id" => 93
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(mode_msg))
+
+      messages =
+        Enum.map(1..3, fn _ ->
+          assert {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+          Jason.decode!(raw)
+        end)
+
+      # The reply carries the result.
+      assert Enum.any?(messages, &(&1["id"] == 93 and is_map(&1["result"]["modes"])))
+
+      # The adapter's own notice reaches the client.
+      assert Enum.any?(messages, fn m ->
+               get_in(m, ["params", "update", "content", "text"]) == "mode clamped"
+             end)
+
+      # The control line reached the subprocess, which echoed it back through
+      # translate_inbound.
+      assert Enum.any?(messages, fn m ->
+               get_in(m, ["params", "update", "sessionUpdate"]) == "config_option_update"
+             end)
 
       AdapterBridge.close(bridge)
     end

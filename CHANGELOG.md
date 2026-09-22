@@ -7,12 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `ExMCP.ACP.AdapterBridge` now handles the documented
+  `{:messages_and_reply_and_write, ...}` adapter translation on every request
+  path, not only the session lifecycle. Returning it from `session/set_mode`,
+  `session/set_model` or `session/set_config_option` raised a
+  `CaseClauseError` in the bridge and killed the connection.
+- Claude ACP adapter: `session/load` now clamps an inherited Auto mode the
+  model cannot support, matching `session/new` and `session/resume`. It
+  applied only the bypass policy.
+
 ### Added
 
 - Claude adapter golden-transcript characterization suite:
   `ExMCP.Test.ClaudeGolden` (`test/support/acp/claude_golden.ex`, with
   `ExMCP.Test.ClaudeGolden.Flows`) and seven golden areas under
-  `test/ex_mcp/acp/adapters/claude_sdk/characterization/` with 295 fixtures
+  `test/ex_mcp/acp/adapters/claude_sdk/characterization/` with 304 fixtures
   under `test/fixtures/acp/claude/`, pinning the adapter's session
   lifecycle, prompt content conversion, permission bridge, session update
   ordering, process configuration and authorization, fault handling and
@@ -21,6 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and CLI, so no scenario reads the developer's real Claude configuration,
   credentials, sessions or projects. The suite and its fixtures are
   repo-only; no library code or behavior changes.
+- Claude ACP adapter: per-turn, per-model token usage on the prompt response
+  as `_meta.quota` (`token_count` plus a `model_usage` breakdown), ported
+  from claude-agent-acp#1037 and shaped like codex-acp's so a host reads one
+  shape from either agent. Additive: the raw Claude figures remain available
+  unchanged under `_meta.ex_mcp.claude_sdk.modelUsage`.
+- Claude ACP adapter: every permission mode entry now carries its semantic
+  kind under `_meta.kind` (`standard`, `plan`, `auto_review`,
+  `full_access`), on `modes/0`, the `session/new` mode catalog and the
+  `mode` config option's options (claude-agent-acp#1025).
 
 ### Changed
 
@@ -36,6 +56,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ExMCP.ACP.Adapters.Pi` API, its struct and its startup options are
   unchanged, and there is no wire-visible change: the 123 golden Pi
   transcripts are byte-identical.
+- **Wire-visible (Claude ACP adapter):** the permission mode catalog is now
+  stable. `auto` is advertised for every model instead of only for a model
+  reporting `supportsAutoMode`; `bypassPermissions` keeps its existing
+  gating behind `allow_dangerously_skip_permissions` or an inherited bypass
+  mode. Accepted under `V2_ROADMAP.md` §8.1 condition 3 as deliberate
+  reference parity with claude-agent-acp#1025: the change is additive (one
+  extra catalog entry and the new `_meta.kind`), and no existing mode id,
+  name, description or config-option key is removed or renamed.
+- **Wire-visible (Claude ACP adapter):** selecting or inheriting `auto` on a
+  model Claude has described as lacking Auto support now falls back to
+  `acceptEdits` and says so, instead of failing (`session/set_mode`) or
+  silently clamping to `default` (an inherited mode). The client receives a
+  `current_mode_update` for the effective mode plus a once-per-session
+  `agent_message_chunk` notice. The fallback applies at `session/new` (where
+  the notice is held until the first prompt), on `session/set_mode` and its
+  `mode` / `permission_mode` aliases, on a model switch that invalidates
+  Auto, and to an Exit Plan "use auto mode" decision, whose `setMode`
+  permission is rewritten before it reaches Claude. A model Claude never
+  described is assumed capable, so no fallback happens. As a consequence the
+  elevated Exit Plan option is now always "Yes, and use auto mode", which is
+  the same state the reference reached for the same reason.
 
 ## [1.5.0] - 2026-09-21
 
