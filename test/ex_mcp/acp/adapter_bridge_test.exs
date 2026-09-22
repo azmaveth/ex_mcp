@@ -448,6 +448,48 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     end
   end
 
+  # The golden gate drives adapters directly, so the `messageId` the Claude
+  # adapter now stamps on chunk updates is never seen going through the bridge
+  # there. This adapter builds its chunks with the same `AdapterEvents`
+  # builders the Claude mapper uses, so the bridge's JSON round trip is
+  # exercised for a stamped and an unstamped chunk.
+  defmodule MessageIdAdapter do
+    @behaviour ExMCP.ACP.Adapter
+
+    alias ExMCP.ACP.AdapterEvents
+
+    defstruct []
+
+    @impl true
+    def init(_opts), do: {:ok, %__MODULE__{}}
+
+    @impl true
+    def command(_opts), do: {"cat", []}
+
+    @impl true
+    def capabilities, do: %{}
+
+    @impl true
+    def translate_outbound(%{"method" => "initialize"}, state), do: {:ok, :skip, state}
+
+    def translate_outbound(%{"method" => "session/prompt"}, state),
+      do: {:ok, "go\n", state}
+
+    def translate_outbound(_msg, state), do: {:ok, :skip, state}
+
+    @impl true
+    def translate_inbound(_line, state) do
+      messages = [
+        AdapterEvents.agent_message_chunk("s1", "stamped", message_id: "msg_bridge_1"),
+        AdapterEvents.agent_thought_chunk("s1", "thinking", message_id: "msg_bridge_1"),
+        AdapterEvents.agent_message_chunk("s1", "unstamped"),
+        AdapterEvents.tool_call("s1", %{"toolCallId" => "toolu_1", "title" => "Read"})
+      ]
+
+      {:messages, messages, state}
+    end
+  end
+
   # Helper to send initialize and drain the synthesized init response
   defp send_initialize(bridge) do
     :ok =
@@ -988,6 +1030,44 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     AdapterBridge.close(bridge)
 
     msg["error"]
+  end
+
+  describe "chunk messageId" do
+    test "a stamped messageId reaches the client and an unstamped chunk omits the key" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: MessageIdAdapter, adapter_opts: [])
+
+      _init = send_initialize(bridge)
+
+      prompt = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/prompt",
+        "params" => %{"sessionId" => "s1", "prompt" => []},
+        "id" => 77
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(prompt))
+
+      updates =
+        for _ <- 1..4 do
+          assert {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+          Jason.decode!(raw)["params"]["update"]
+        end
+
+      assert [message_chunk, thought_chunk, unstamped, tool_call] = updates
+
+      assert message_chunk["messageId"] == "msg_bridge_1"
+      assert thought_chunk["messageId"] == "msg_bridge_1"
+      refute Map.has_key?(unstamped, "messageId")
+      refute Map.has_key?(tool_call, "messageId")
+
+      assert :ok =
+               ExMCP.ACP.RequestValidation.validate_session_update(%{
+                 "sessionId" => "s1",
+                 "update" => message_chunk
+               })
+
+      AdapterBridge.close(bridge)
+    end
   end
 
   describe "synthetic responses with adapter-emitted messages" do
