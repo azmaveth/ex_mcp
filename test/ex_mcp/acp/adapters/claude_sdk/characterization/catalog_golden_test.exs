@@ -26,10 +26,17 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.CatalogGoldenTest do
       with the upstream built-in personas filtered out, accepting both
       `agents` and `supportedAgents`, string entries, and dropping entries
       that are neither;
-    * mode gating: `auto` only for a model that advertises it,
-      `bypassPermissions` only behind the dangerous opt-in or an inherited
-      bypass mode, and `currentModeId` falling back to `default` when the
-      configured mode is outside the catalog;
+    * the stable mode catalog and its `_meta.kind` values: `auto` is
+      advertised for every model, `bypassPermissions` only behind the
+      dangerous opt-in or an inherited bypass mode, the kinds travel onto
+      the `mode` config option's own options, and `currentModeId` falls
+      back to `default` when the configured mode is outside the catalog;
+    * the Auto-mode fallback: an inherited `auto` on a model without Auto
+      support clamps to `acceptEdits` and syncs the SDK, a model Claude
+      never described keeps `auto`, the notice decided at `session/new` is
+      held until the first prompt and published only once, and a model
+      switch that invalidates `auto` emits `current_mode_update` before the
+      notice;
     * `session/set_config_option` for `model` (including the extra
       `set_permission_mode` clamp when the effective mode fell back to
       `default`), `effort` (with `"default"` meaning no level), `fast`

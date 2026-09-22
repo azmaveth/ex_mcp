@@ -28,7 +28,9 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionUpdatesGoldenTest do
       matching `tool_use` (both are sent as explicit `null` when the tool
       is unknown, because `compact/1` only prunes the outer `_meta` map);
     * `result`: the `session/prompt` response - emitted *after* the updates
-      of the same event - (stop reason, usage,
+      of the same event - (stop reason, usage, the `_meta.quota`
+      `token_count` and per-model breakdown, which is the increment since
+      the previous reading of Claude's running `modelUsage` total, and
       `_meta.ex_mcp.claude_sdk` text/session/cost/errors), the
       `usage_update` that only appears with a known context window, the
       trailing `config_option_update` and `session_info_update`, the

@@ -341,12 +341,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         :unknown
 
       {%{request_id: request_id, request: request, kind: :permission}, state} ->
-        response = ClaudeProtocol.permission_result(result["outcome"] || result, request)
-        {response, fallback?} = apply_auto_permission_fallback(response, state)
-        {messages, state} = if fallback?, do: auto_fallback_messages(state), else: {[], state}
-        line = ClaudeProtocol.control_success(request_id, response) |> ClaudeProtocol.line()
-
-        if messages == [], do: {:ok, line, state}, else: {:ok, messages, line, state}
+        permission_response(request_id, request, result, state)
 
       {%{request_id: request_id, request: request, kind: :elicitation_question}, state} ->
         response = ask_user_question_result(result, request)
@@ -389,6 +384,19 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   end
 
   def client_response(_msg, _state), do: :unknown
+
+  defp permission_response(request_id, request, result, state) do
+    {response, fallback?} =
+      result["outcome"]
+      |> Kernel.||(result)
+      |> ClaudeProtocol.permission_result(request)
+      |> apply_auto_permission_fallback(state)
+
+    {messages, state} = if fallback?, do: auto_fallback_messages(state), else: {[], state}
+    line = request_id |> ClaudeProtocol.control_success(response) |> ClaudeProtocol.line()
+
+    if messages == [], do: {:ok, line, state}, else: {:ok, messages, line, state}
+  end
 
   defp replay_message(%{"type" => "user"} = event, state) do
     {tool_messages, _writes, state} = reduce_message(event, state)

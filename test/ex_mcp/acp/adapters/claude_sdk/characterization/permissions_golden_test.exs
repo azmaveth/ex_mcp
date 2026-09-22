@@ -20,15 +20,20 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.PermissionsGoldenTest do
       with and without `permission_suggestions`, `reject_once`, a cancelled
       outcome, an unknown option id, a flat (unwrapped) outcome, and a
       client error reply;
-    * the `ExitPlanMode` option set for each elevated mode (auto, bypass,
-      accept-edits), the `setMode` permission each selection writes, the
-      "keep planning" rejection with its `interrupt`, and the fail-closed
-      answer for an option that was never offered;
+    * the `ExitPlanMode` option set, whose elevated entry follows the
+      available-mode set and is therefore always "use auto mode" now that
+      the catalog is stable, the `setMode` permission each selection
+      writes, the rewrite of an `auto` `setMode` to `acceptEdits` (with its
+      one-per-session notice) when the model cannot run Auto, the "keep
+      planning" rejection with its `interrupt`, and the fail-closed answer
+      for an option that was never offered;
     * the tool-call id minted for a request that carries none, and the
       `toolUseID` spelling;
     * `session/set_mode` and the `mode` / `permission_mode` config aliases:
       the `set_permission_mode` control they write, the modes result they
-      reply with, and the errors for a mode outside the current catalog;
+      reply with, the errors for a mode outside the current catalog, and
+      the Auto-mode fallback to `acceptEdits` with its `current_mode_update`
+      and its once-per-session notice;
     * the `_meta.claudeCode.options.allowDangerouslySkipPermissions: false`
       opt-out on `session/new`, `session/load` and `session/resume` -
       removing `bypassPermissions` from the catalog, refusing it in
