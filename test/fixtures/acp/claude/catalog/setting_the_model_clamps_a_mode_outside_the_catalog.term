@@ -13,7 +13,7 @@
   %ExMCP.Test.ClaudeGolden.Entry{
     step: %{
       kind: :note,
-      text: "auto is not in this catalog, so the effective mode already fell back"
+      text: "dontAsk is not in this catalog, so the effective mode already fell back"
     },
     result: %{}
   },
@@ -24,7 +24,7 @@
         cwd: "<sandbox>/project",
         claude_config_dir: "<sandbox>/claude",
         cli_path: "<sandbox>/bin/claude",
-        permission_mode: :auto
+        permission_mode: :dont_ask
       ]
     },
     result: %{tag: :ok}
@@ -50,19 +50,28 @@
             "name" => "Mode",
             "options" => [
               %{
+                "_meta" => %{"kind" => "standard"},
                 "description" => "Always ask before making changes",
                 "name" => "Manual",
                 "value" => "default"
               },
               %{
+                "_meta" => %{"kind" => "standard"},
                 "description" => "Automatically accept all file edits",
                 "name" => "Accept edits",
                 "value" => "acceptEdits"
               },
               %{
+                "_meta" => %{"kind" => "plan"},
                 "description" => "Create a plan before making changes",
                 "name" => "Plan",
                 "value" => "plan"
+              },
+              %{
+                "_meta" => %{"kind" => "auto_review"},
+                "description" => "Claude handles permission decisions",
+                "name" => "Auto",
+                "value" => "auto"
               }
             ],
             "type" => "select"
@@ -98,19 +107,28 @@
         "modes" => %{
           "availableModes" => [
             %{
+              "_meta" => %{"kind" => "standard"},
               "description" => "Always ask before making changes",
               "id" => "default",
               "name" => "Manual"
             },
             %{
+              "_meta" => %{"kind" => "standard"},
               "description" => "Automatically accept all file edits",
               "id" => "acceptEdits",
               "name" => "Accept edits"
             },
             %{
+              "_meta" => %{"kind" => "plan"},
               "description" => "Create a plan before making changes",
               "id" => "plan",
               "name" => "Plan"
+            },
+            %{
+              "_meta" => %{"kind" => "auto_review"},
+              "description" => "Claude handles permission decisions",
+              "id" => "auto",
+              "name" => "Auto"
             }
           ],
           "currentModeId" => "default"
@@ -141,19 +159,28 @@
             "name" => "Mode",
             "options" => [
               %{
+                "_meta" => %{"kind" => "standard"},
                 "description" => "Always ask before making changes",
                 "name" => "Manual",
                 "value" => "default"
               },
               %{
+                "_meta" => %{"kind" => "standard"},
                 "description" => "Automatically accept all file edits",
                 "name" => "Accept edits",
                 "value" => "acceptEdits"
               },
               %{
+                "_meta" => %{"kind" => "plan"},
                 "description" => "Create a plan before making changes",
                 "name" => "Plan",
                 "value" => "plan"
+              },
+              %{
+                "_meta" => %{"kind" => "auto_review"},
+                "description" => "Claude handles permission decisions",
+                "name" => "Auto",
+                "value" => "auto"
               }
             ],
             "type" => "select"

@@ -19,6 +19,12 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
   @auth_errors ~w(authentication_failed oauth_org_not_allowed billing_error)
 
+  # Mode the session falls back to when Auto is selected but the current model
+  # does not support it, and the one-per-session notice that announces it.
+  # Both match claude-agent-acp `src/session-mode.ts` (#1025).
+  @auto_mode_fallback "acceptEdits"
+  @auto_mode_fallback_notice "**Auto mode unavailable:** the selected model does not support Auto mode; using Accept edits instead."
+
   @doc "Builds the dynamic session setup result for the current adapter state."
   @spec session_result(map(), String.t()) :: map()
   def session_result(state, session_id) do
@@ -52,47 +58,48 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     }
   end
 
-  @doc "Static, universally available Claude permission modes."
+  @doc """
+  Static, universally available Claude permission modes.
+
+  The catalog is stable: Auto is advertised regardless of the selected
+  model, and a session that selects it while the model cannot run it falls
+  back to Accept edits (see `auto_fallback?/1`). Each entry carries its
+  semantic kind under `_meta.kind`, matching claude-agent-acp
+  `buildAvailableModes` (#1025).
+  """
   @spec modes() :: [map()]
   def modes do
     [
       %{
         "id" => "default",
         "name" => "Manual",
-        "description" => "Always ask before making changes"
+        "description" => "Always ask before making changes",
+        "_meta" => %{"kind" => "standard"}
       },
       %{
         "id" => "acceptEdits",
         "name" => "Accept edits",
-        "description" => "Automatically accept all file edits"
+        "description" => "Automatically accept all file edits",
+        "_meta" => %{"kind" => "standard"}
       },
       %{
         "id" => "plan",
         "name" => "Plan",
-        "description" => "Create a plan before making changes"
+        "description" => "Create a plan before making changes",
+        "_meta" => %{"kind" => "plan"}
+      },
+      %{
+        "id" => "auto",
+        "name" => "Auto",
+        "description" => "Claude handles permission decisions",
+        "_meta" => %{"kind" => "auto_review"}
       }
     ]
   end
 
-  @doc "Mode list gated by the selected model and explicit dangerous-mode opt-in."
+  @doc "Mode list gated by the explicit dangerous-mode opt-in."
   @spec modes(map()) :: [map()]
   def modes(state) do
-    model = current_model_info(state)
-
-    modes =
-      if model["supportsAutoMode"] == true or model["supports_auto_mode"] == true do
-        modes() ++
-          [
-            %{
-              "id" => "auto",
-              "name" => "Auto",
-              "description" => "Claude handles permission decisions"
-            }
-          ]
-      else
-        modes()
-      end
-
     # A host may opt a session out of bypass through session meta; that wins
     # over the adapter option and over a bypass mode inherited at spawn time.
     bypass_allowed? = Map.get(state, :bypass_allowed?, true)
@@ -100,18 +107,111 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     if bypass_allowed? and
          (Keyword.get(Map.get(state, :opts, []), :allow_dangerously_skip_permissions, false) or
             Map.get(state, :permission_mode) == "bypassPermissions") do
-      modes ++
+      modes() ++
         [
           %{
             "id" => "bypassPermissions",
             "name" => "Bypass permissions",
-            "description" => "Accepts all permissions"
+            "description" => "Accepts all permissions",
+            "_meta" => %{"kind" => "full_access"}
           }
         ]
     else
-      modes
+      modes()
     end
   end
+
+  @doc """
+  The mode the session actually runs in, after the Auto-mode fallback.
+
+  Auto clamps to Accept edits when the current model is known and does not
+  advertise Auto support; a mode outside the catalog clamps to `default`.
+  """
+  @spec current_mode(map()) :: String.t()
+  def current_mode(state), do: effective_mode(state)
+
+  @doc """
+  True when the session asked for Auto but the current model cannot run it.
+
+  A model Claude never described is treated as capable, matching
+  claude-agent-acp's `isAutoUnavailable`: only a known model without
+  `supportsAutoMode` triggers the fallback.
+  """
+  @spec auto_fallback?(map()) :: boolean()
+  def auto_fallback?(state) do
+    permission_mode_to_mode(Map.get(state, :permission_mode) || "default") == "auto" and
+      auto_unavailable?(state)
+  end
+
+  @doc "The mode Auto falls back to when the model does not support it."
+  @spec auto_fallback_mode() :: String.t()
+  def auto_fallback_mode, do: @auto_mode_fallback
+
+  @doc "The client-visible notice announcing the Auto-mode fallback."
+  @spec auto_fallback_notice(map()) :: map()
+  def auto_fallback_notice(state) do
+    AdapterEvents.agent_message_chunk(session_id(state), @auto_mode_fallback_notice)
+  end
+
+  @doc "The `current_mode_update` for the session's effective mode."
+  @spec mode_update(map()) :: map()
+  def mode_update(state), do: current_mode_update(state)
+
+  @doc """
+  The Auto-mode fallback notice, at most once per session.
+
+  Returns `{[], state}` once the notice has been delivered, so a session that
+  keeps re-selecting Auto does not spam the transcript
+  (`autoModeFallbackWarningShown` upstream).
+  """
+  @spec auto_fallback_messages(map()) :: {[map()], map()}
+  def auto_fallback_messages(state) do
+    if Map.get(state, :auto_fallback_warned?, false) do
+      {[], %{state | auto_fallback_pending?: false}}
+    else
+      {[auto_fallback_notice(state)],
+       %{state | auto_fallback_warned?: true, auto_fallback_pending?: false}}
+    end
+  end
+
+  @doc "The Auto-mode fallback notice held since `session/new`, if one is due."
+  @spec auto_fallback_pending_messages(map()) :: {[map()], map()}
+  def auto_fallback_pending_messages(state) do
+    if Map.get(state, :auto_fallback_pending?, false) do
+      auto_fallback_messages(state)
+    else
+      {[], state}
+    end
+  end
+
+  @doc """
+  Rewrites an Auto `setMode` permission decision to the fallback mode.
+
+  A client that accepts an Exit Plan "use auto mode" option asks Claude to
+  switch the session to Auto; when the model cannot run Auto that request
+  would be rejected, so it is clamped the same way the mode catalog is.
+  Returns `{response, fallback_applied?}`.
+  """
+  @spec apply_auto_permission_fallback(map(), map()) :: {map(), boolean()}
+  def apply_auto_permission_fallback(%{"behavior" => "allow"} = response, state) do
+    updates = response["updatedPermissions"]
+
+    if auto_unavailable?(state) and is_list(updates) and Enum.any?(updates, &auto_set_mode?/1) do
+      {Map.put(response, "updatedPermissions", Enum.map(updates, &clamp_auto_set_mode/1)), true}
+    else
+      {response, false}
+    end
+  end
+
+  def apply_auto_permission_fallback(response, _state), do: {response, false}
+
+  defp auto_set_mode?(%{"type" => "setMode", "mode" => "auto"}), do: true
+  defp auto_set_mode?(_update), do: false
+
+  defp clamp_auto_set_mode(%{"type" => "setMode", "mode" => "auto"} = update),
+    do: Map.put(update, "mode", @auto_mode_fallback)
+
+  defp clamp_auto_set_mode(update), do: update
 
   @doc "Classifies a Claude SDK result into an ACP stop reason."
   @spec stop_reason(map()) :: String.t()
@@ -227,8 +327,14 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     end)
   end
 
-  @doc "Maps a client JSON-RPC response back into a Claude control response."
-  @spec client_response(map(), map()) :: {:ok, iodata(), map()} | :unknown
+  @doc """
+  Maps a client JSON-RPC response back into a Claude control response.
+
+  Returns `{:ok, messages, iodata, state}` when answering the response also
+  requires ACP session updates (the Auto-mode fallback notice).
+  """
+  @spec client_response(map(), map()) ::
+          {:ok, iodata(), map()} | {:ok, [map()], iodata(), map()} | :unknown
   def client_response(%{"id" => id, "result" => result}, state) do
     case pop_pending_client_request(state, id) do
       {nil, _state} ->
@@ -236,9 +342,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
       {%{request_id: request_id, request: request, kind: :permission}, state} ->
         response = ClaudeProtocol.permission_result(result["outcome"] || result, request)
+        {response, fallback?} = apply_auto_permission_fallback(response, state)
+        {messages, state} = if fallback?, do: auto_fallback_messages(state), else: {[], state}
+        line = ClaudeProtocol.control_success(request_id, response) |> ClaudeProtocol.line()
 
-        {:ok, ClaudeProtocol.control_success(request_id, response) |> ClaudeProtocol.line(),
-         state}
+        if messages == [], do: {:ok, line, state}, else: {:ok, messages, line, state}
 
       {%{request_id: request_id, request: request, kind: :elicitation_question}, state} ->
         response = ask_user_question_result(result, request)
@@ -1211,7 +1319,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
           %{
             "name" => mode["name"],
             "value" => mode["id"],
-            "description" => mode["description"]
+            "description" => mode["description"],
+            "_meta" => mode["_meta"]
           }
           |> compact()
         end)
@@ -1731,7 +1840,21 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   defp effective_mode(state) do
     current = permission_mode_to_mode(state.permission_mode || "default")
 
-    if Enum.any?(modes(state), &(&1["id"] == current)), do: current, else: "default"
+    cond do
+      current == "auto" and auto_unavailable?(state) -> @auto_mode_fallback
+      Enum.any?(modes(state), &(&1["id"] == current)) -> current
+      true -> "default"
+    end
+  end
+
+  defp auto_unavailable?(state) do
+    case current_model_info(state) do
+      model when map_size(model) > 0 ->
+        not (model["supportsAutoMode"] == true or model["supports_auto_mode"] == true)
+
+      _ ->
+        false
+    end
   end
 
   defp maybe_set(state, _key, nil), do: state

@@ -647,6 +647,22 @@ ignore it while ExMCP peers can negotiate and validate BEAM-local descriptors.
 
 **Config options:** `mode`, `model`, `effort`, `fast` (when the selected model supports fast mode), and `agent` (when custom main-thread agents are available). The legacy inbound `permission_mode` config id is still accepted as an alias for `mode`.
 
+**Modes:** the catalog is stable — `default` (Manual), `acceptEdits`, `plan`,
+and `auto` are always advertised, and `bypassPermissions` is added only behind
+the `allow_dangerously_skip_permissions` opt-in (or an inherited bypass mode).
+Each entry carries its semantic kind under `_meta.kind`
+(`standard`, `plan`, `auto_review`, `full_access`). When a session selects or
+inherits `auto` while Claude has described the current model as not supporting
+it, the session runs in `acceptEdits` instead and the client is told: a
+`current_mode_update` plus a one-per-session `agent_message_chunk` notice. A
+model Claude never described is assumed capable, so no fallback happens.
+
+**Prompt response usage:** besides the ACP `usage` field, a prompt response
+carries `_meta.quota` with a `token_count` for the turn and a `model_usage`
+breakdown (`[{"model": ..., "token_count": ...}]`) derived from Claude's
+`modelUsage`. The raw Claude figures remain available unchanged under
+`_meta.ex_mcp.claude_sdk.modelUsage`.
+
 **Startup options:** `model`, `permission_mode`, `max_thinking_tokens`,
 `effort`, `fast_mode`, `agent`, `additional_directories`, `mcp_servers`, `session_id`, `resume`,
 `resume_session_at`, `allowed_tools`, `disallowed_tools`, `tools`,

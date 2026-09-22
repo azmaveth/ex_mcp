@@ -5,7 +5,8 @@
       opts: [
         cwd: "<sandbox>/project",
         claude_config_dir: "<sandbox>/claude",
-        cli_path: "<sandbox>/bin/claude"
+        cli_path: "<sandbox>/bin/claude",
+        allow_dangerously_skip_permissions: true
       ]
     },
     result: %{tag: :ok}
@@ -31,19 +32,34 @@
             "name" => "Mode",
             "options" => [
               %{
+                "_meta" => %{"kind" => "standard"},
                 "description" => "Always ask before making changes",
                 "name" => "Manual",
                 "value" => "default"
               },
               %{
+                "_meta" => %{"kind" => "standard"},
                 "description" => "Automatically accept all file edits",
                 "name" => "Accept edits",
                 "value" => "acceptEdits"
               },
               %{
+                "_meta" => %{"kind" => "plan"},
                 "description" => "Create a plan before making changes",
                 "name" => "Plan",
                 "value" => "plan"
+              },
+              %{
+                "_meta" => %{"kind" => "auto_review"},
+                "description" => "Claude handles permission decisions",
+                "name" => "Auto",
+                "value" => "auto"
+              },
+              %{
+                "_meta" => %{"kind" => "full_access"},
+                "description" => "Accepts all permissions",
+                "name" => "Bypass permissions",
+                "value" => "bypassPermissions"
               }
             ],
             "type" => "select"
@@ -79,19 +95,34 @@
         "modes" => %{
           "availableModes" => [
             %{
+              "_meta" => %{"kind" => "standard"},
               "description" => "Always ask before making changes",
               "id" => "default",
               "name" => "Manual"
             },
             %{
+              "_meta" => %{"kind" => "standard"},
               "description" => "Automatically accept all file edits",
               "id" => "acceptEdits",
               "name" => "Accept edits"
             },
             %{
+              "_meta" => %{"kind" => "plan"},
               "description" => "Create a plan before making changes",
               "id" => "plan",
               "name" => "Plan"
+            },
+            %{
+              "_meta" => %{"kind" => "auto_review"},
+              "description" => "Claude handles permission decisions",
+              "id" => "auto",
+              "name" => "Auto"
+            },
+            %{
+              "_meta" => %{"kind" => "full_access"},
+              "description" => "Accepts all permissions",
+              "id" => "bypassPermissions",
+              "name" => "Bypass permissions"
             }
           ],
           "currentModeId" => "default"
@@ -141,8 +172,8 @@
             "options" => [
               %{
                 "kind" => "allow_always",
-                "name" => "Yes, auto-accept edits",
-                "optionId" => "exit-plan-accept-edits"
+                "name" => "Yes, and use auto mode",
+                "optionId" => "exit-plan-auto"
               },
               %{
                 "kind" => "allow_once",
@@ -170,9 +201,7 @@
       message: %{
         "id" => "acp-<1>",
         "jsonrpc" => "2.0",
-        "result" => %{
-          "outcome" => %{"optionId" => "exit-plan-accept-edits", "outcome" => "selected"}
-        }
+        "result" => %{"outcome" => %{"optionId" => "exit-plan-auto", "outcome" => "selected"}}
       }
     },
     result: %{
@@ -187,7 +216,7 @@
               "toolUseID" => "toolu_plan",
               "updatedInput" => %{"plan" => "1. Read\n2. Edit"},
               "updatedPermissions" => [
-                %{"destination" => "session", "mode" => "acceptEdits", "type" => "setMode"}
+                %{"destination" => "session", "mode" => "auto", "type" => "setMode"}
               ]
             },
             "subtype" => "success"

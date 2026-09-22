@@ -280,24 +280,48 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.CatalogGoldenTest do
     end
   end
 
-  describe "mode gating" do
-    test "auto_mode_needs_model_support" do
+  describe "mode kinds" do
+    test "the_mode_catalog_is_stable_across_models" do
       transcript =
         catalog(
-          "auto_mode_needs_model_support",
-          %{"models" => [%{"value" => "sonnet", "supportsAutoMode" => true}]},
+          "the_mode_catalog_is_stable_across_models",
+          %{"models" => [%{"value" => "sonnet"}]},
           model: "sonnet"
         )
 
       assert ["default", "acceptEdits", "plan", "auto"] = mode_ids(transcript)
+      assert ["standard", "standard", "plan", "auto_review"] = mode_kinds(transcript)
     end
 
+    test "mode_kinds_travel_with_the_config_option" do
+      transcript =
+        catalog(
+          "mode_kinds_travel_with_the_config_option",
+          %{"models" => [%{"value" => "sonnet", "supportsAutoMode" => true}]},
+          model: "sonnet",
+          init: [allow_dangerously_skip_permissions: true]
+        )
+
+      assert ["default", "acceptEdits", "plan", "auto", "bypassPermissions"] =
+               mode_ids(transcript)
+
+      assert ["standard", "standard", "plan", "auto_review", "full_access"] =
+               option(transcript, "mode")["options"] |> Enum.map(&get_in(&1, ["_meta", "kind"]))
+    end
+  end
+
+  describe "mode gating" do
     test "auto_mode_accepts_the_snake_case_spelling" do
-      catalog(
-        "auto_mode_accepts_the_snake_case_spelling",
-        %{"models" => [%{"value" => "sonnet", "supports_auto_mode" => true}]},
-        model: "sonnet"
-      )
+      transcript =
+        catalog(
+          "auto_mode_accepts_the_snake_case_spelling",
+          %{"models" => [%{"value" => "sonnet", "supports_auto_mode" => true}]},
+          model: "sonnet",
+          init: [permission_mode: :auto]
+        )
+
+      assert %{reply: %{"modes" => %{"currentModeId" => "auto"}}} =
+               ClaudeGolden.last_result(transcript)
     end
 
     test "auto_and_bypass_can_both_be_offered" do
@@ -314,7 +338,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.CatalogGoldenTest do
     end
 
     test "a_mode_outside_the_catalog_falls_back_to_default" do
-      steps = [{:init, permission_mode: :auto}, Flows.session_new()]
+      steps = [{:init, permission_mode: :dont_ask}, Flows.session_new()]
 
       transcript =
         ClaudeGolden.assert_golden(
@@ -325,6 +349,89 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.CatalogGoldenTest do
 
       assert %{reply: %{"modes" => %{"currentModeId" => "default"}}} =
                ClaudeGolden.last_result(transcript)
+    end
+
+    test "an_inherited_auto_mode_falls_back_to_accept_edits" do
+      transcript =
+        catalog(
+          "an_inherited_auto_mode_falls_back_to_accept_edits",
+          %{"models" => [%{"value" => "sonnet"}]},
+          model: "sonnet",
+          init: [permission_mode: :auto]
+        )
+
+      assert %{
+               tag: :reply_and_write,
+               reply: %{"modes" => %{"currentModeId" => "acceptEdits"}},
+               writes: [%{"request" => sync}]
+             } = ClaudeGolden.last_result(transcript)
+
+      assert sync == %{"subtype" => "set_permission_mode", "mode" => "acceptEdits"}
+    end
+
+    test "an_unknown_model_keeps_auto" do
+      steps = [
+        {:note, "Claude never described this model, so Auto is assumed to work"},
+        {:init, permission_mode: :auto, model: "mystery"},
+        Flows.session_new()
+      ]
+
+      transcript = ClaudeGolden.assert_golden(@area, "an_unknown_model_keeps_auto", steps)
+
+      assert %{tag: :reply, reply: %{"modes" => %{"currentModeId" => "auto"}}} =
+               ClaudeGolden.last_result(transcript)
+    end
+
+    test "the_held_auto_fallback_notice_reaches_the_first_prompt" do
+      steps =
+        catalog_steps(%{"models" => [%{"value" => "sonnet"}]},
+          model: "sonnet",
+          init: [permission_mode: :auto]
+        ) ++
+          [
+            {:note, "session/new cannot notify a session id the client does not have yet"},
+            Flows.prompt("acp-prompt-1", "hi"),
+            {:note, "and the notice is published only once"},
+            Flows.prompt("acp-prompt-2", "again")
+          ]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "the_held_auto_fallback_notice_reaches_the_first_prompt",
+          steps
+        )
+
+      assert ["agent_message_chunk"] = ClaudeGolden.update_types(transcript)
+    end
+
+    test "switching_to_a_model_without_auto_downgrades_the_mode" do
+      steps =
+        catalog_steps(
+          %{
+            "models" => [
+              %{"value" => "sonnet", "supportsAutoMode" => true},
+              %{"value" => "opus"}
+            ]
+          },
+          model: "sonnet",
+          init: [permission_mode: :auto]
+        ) ++ [Flows.set_config("acp-config", "model", "opus")]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "switching_to_a_model_without_auto_downgrades_the_mode",
+          steps
+        )
+
+      assert %{tag: :messages_and_reply_and_write, writes: [_model, %{"request" => clamp}]} =
+               ClaudeGolden.last_result(transcript)
+
+      assert clamp == %{"subtype" => "set_permission_mode", "mode" => "acceptEdits"}
+
+      assert ["current_mode_update", "agent_message_chunk"] =
+               ClaudeGolden.update_types(transcript)
     end
   end
 
@@ -345,8 +452,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.CatalogGoldenTest do
 
     test "setting_the_model_clamps_a_mode_outside_the_catalog" do
       steps = [
-        {:note, "auto is not in this catalog, so the effective mode already fell back"},
-        {:init, permission_mode: :auto},
+        {:note, "dontAsk is not in this catalog, so the effective mode already fell back"},
+        {:init, permission_mode: :dont_ask},
         Flows.session_new(),
         Flows.set_config("acp-config", "model", "opus")
       ]
@@ -502,8 +609,13 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.CatalogGoldenTest do
 
   defp model_option(transcript), do: option(transcript, "model")
 
-  defp mode_ids(transcript) do
+  defp mode_ids(transcript), do: Enum.map(available_modes(transcript), & &1["id"])
+
+  defp mode_kinds(transcript),
+    do: Enum.map(available_modes(transcript), &get_in(&1, ["_meta", "kind"]))
+
+  defp available_modes(transcript) do
     %{reply: %{"modes" => %{"availableModes" => modes}}} = ClaudeGolden.last_result(transcript)
-    Enum.map(modes, & &1["id"])
+    modes
   end
 end

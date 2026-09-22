@@ -6,7 +6,8 @@
         cwd: "<sandbox>/project",
         claude_config_dir: "<sandbox>/claude",
         cli_path: "<sandbox>/bin/claude",
-        model: "sonnet"
+        model: "sonnet",
+        permission_mode: :auto
       ]
     },
     result: %{tag: :ok}
@@ -42,7 +43,7 @@
       message: %{
         "response" => %{
           "request_id" => "ex_mcp_initialize_<1>",
-          "response" => %{"models" => [%{"supportsAutoMode" => true, "value" => "sonnet"}]},
+          "response" => %{"models" => [%{"value" => "sonnet"}]},
           "subtype" => "success"
         },
         "type" => "control_response"
@@ -65,27 +66,31 @@
         "configOptions" => [
           %{
             "category" => "mode",
-            "currentValue" => "default",
+            "currentValue" => "acceptEdits",
             "description" => "Session permission mode",
             "id" => "mode",
             "name" => "Mode",
             "options" => [
               %{
+                "_meta" => %{"kind" => "standard"},
                 "description" => "Always ask before making changes",
                 "name" => "Manual",
                 "value" => "default"
               },
               %{
+                "_meta" => %{"kind" => "standard"},
                 "description" => "Automatically accept all file edits",
                 "name" => "Accept edits",
                 "value" => "acceptEdits"
               },
               %{
+                "_meta" => %{"kind" => "plan"},
                 "description" => "Create a plan before making changes",
                 "name" => "Plan",
                 "value" => "plan"
               },
               %{
+                "_meta" => %{"kind" => "auto_review"},
                 "description" => "Claude handles permission decisions",
                 "name" => "Auto",
                 "value" => "auto"
@@ -120,31 +125,103 @@
         "modes" => %{
           "availableModes" => [
             %{
+              "_meta" => %{"kind" => "standard"},
               "description" => "Always ask before making changes",
               "id" => "default",
               "name" => "Manual"
             },
             %{
+              "_meta" => %{"kind" => "standard"},
               "description" => "Automatically accept all file edits",
               "id" => "acceptEdits",
               "name" => "Accept edits"
             },
             %{
+              "_meta" => %{"kind" => "plan"},
               "description" => "Create a plan before making changes",
               "id" => "plan",
               "name" => "Plan"
             },
             %{
+              "_meta" => %{"kind" => "auto_review"},
               "description" => "Claude handles permission decisions",
               "id" => "auto",
               "name" => "Auto"
             }
           ],
-          "currentModeId" => "default"
+          "currentModeId" => "acceptEdits"
         },
         "sessionId" => "claude_sdk_<1>"
       },
-      tag: :reply
+      tag: :reply_and_write,
+      writes: [
+        %{
+          "request" => %{"mode" => "acceptEdits", "subtype" => "set_permission_mode"},
+          "request_id" => "ex_mcp_set_permission_mode_<1>",
+          "type" => "control_request"
+        }
+      ]
     }
+  },
+  %ExMCP.Test.ClaudeGolden.Entry{
+    step: %{
+      kind: :note,
+      text: "session/new cannot notify a session id the client does not have yet"
+    },
+    result: %{}
+  },
+  %ExMCP.Test.ClaudeGolden.Entry{
+    step: %{
+      kind: :outbound,
+      message: %{
+        "id" => "acp-prompt-1",
+        "jsonrpc" => "2.0",
+        "method" => "session/prompt",
+        "params" => %{"prompt" => "hi", "sessionId" => "claude_sdk_<1>"}
+      }
+    },
+    result: %{
+      messages: [
+        %{
+          "jsonrpc" => "2.0",
+          "method" => "session/update",
+          "params" => %{
+            "sessionId" => "claude_sdk_<1>",
+            "update" => %{
+              "content" => %{
+                "text" => "**Auto mode unavailable:** the selected model does not support Auto mode; using Accept edits instead.",
+                "type" => "text"
+              },
+              "sessionUpdate" => "agent_message_chunk"
+            }
+          }
+        }
+      ],
+      tag: :messages_and_write,
+      writes: [
+        %{
+          "message" => %{"content" => [%{"text" => "hi", "type" => "text"}], "role" => "user"},
+          "parent_tool_use_id" => nil,
+          "session_id" => "claude_sdk_<1>",
+          "type" => "user"
+        }
+      ]
+    }
+  },
+  %ExMCP.Test.ClaudeGolden.Entry{
+    step: %{kind: :note, text: "and the notice is published only once"},
+    result: %{}
+  },
+  %ExMCP.Test.ClaudeGolden.Entry{
+    step: %{
+      kind: :outbound,
+      message: %{
+        "id" => "acp-prompt-2",
+        "jsonrpc" => "2.0",
+        "method" => "session/prompt",
+        "params" => %{"prompt" => "again", "sessionId" => "claude_sdk_<1>"}
+      }
+    },
+    result: %{skipped: true, tag: :ok}
   }
 ]
