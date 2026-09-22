@@ -255,6 +255,17 @@
                   "sessionId" => "00000001-0000-4000-8000-000000000001",
                   "text" => ""
                 }
+              },
+              "quota" => %{
+                "model_usage" => [],
+                "token_count" => %{
+                  "cachedInputTokens" => 3,
+                  "cachedWriteTokens" => 1,
+                  "inputTokens" => 12,
+                  "outputTokens" => 7,
+                  "reasoningOutputTokens" => 0,
+                  "totalTokens" => 23
+                }
               }
             },
             "stopReason" => "max_turn_requests",
@@ -406,6 +417,17 @@
                   "sessionId" => "00000001-0000-4000-8000-000000000001",
                   "text" => ""
                 }
+              },
+              "quota" => %{
+                "model_usage" => [],
+                "token_count" => %{
+                  "cachedInputTokens" => 3,
+                  "cachedWriteTokens" => 1,
+                  "inputTokens" => 12,
+                  "outputTokens" => 7,
+                  "reasoningOutputTokens" => 0,
+                  "totalTokens" => 23
+                }
               }
             },
             "stopReason" => "max_turn_requests",
@@ -556,6 +578,17 @@
                   "resultSubtype" => "error_max_structured_output_retries",
                   "sessionId" => "00000001-0000-4000-8000-000000000001",
                   "text" => ""
+                }
+              },
+              "quota" => %{
+                "model_usage" => [],
+                "token_count" => %{
+                  "cachedInputTokens" => 3,
+                  "cachedWriteTokens" => 1,
+                  "inputTokens" => 12,
+                  "outputTokens" => 7,
+                  "reasoningOutputTokens" => 0,
+                  "totalTokens" => 23
                 }
               }
             },

@@ -943,6 +943,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         :fast_mode_enabled,
         fast_mode_enabled?(result["fast_mode_state"], state.fast_mode_enabled)
       )
+      |> accumulate_model_usage(result)
 
     cond do
       not is_nil(state.deferred_result) and MapSet.size(state.background_subagents) == 0 ->
@@ -1012,6 +1013,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         "stopReason" => stop_reason(result),
         "usage" => usage,
         "_meta" => %{
+          "quota" => turn_quota(usage, state),
           "ex_mcp" => %{
             "claude_sdk" =>
               %{
@@ -1057,7 +1059,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         session_id: acp_session_id,
         claude_session_id: claude_session_id,
         deferred_result: nil,
-        background_subagents: MapSet.new()
+        background_subagents: MapSet.new(),
+        turn_model_usage: %{}
     }
 
     {writes, state} = start_next_queued_prompt(state)
@@ -1696,6 +1699,121 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     }
   end
 
+  # `_meta.quota` for a prompt response: what this turn spent, in the shape
+  # claude-agent-acp #1037 settled on (snake_case containers, camelCase
+  # counters) so a client reads one shape from Claude and from Codex.
+  #
+  # The two halves have different scopes and need not add up. `token_count`
+  # mirrors the response's own `usage`, which Claude reports for the main
+  # agent loop only. The `model_usage` rows come from `result.modelUsage`,
+  # which also counts Task subagents, sidechains and internal calls such as
+  # compaction, so they can total more than `token_count`.
+  defp turn_quota(usage, state) do
+    %{
+      "token_count" => quota_token_count(usage),
+      "model_usage" =>
+        state
+        |> Map.get(:turn_model_usage, %{})
+        |> Enum.sort_by(fn {model, _tally} -> model end)
+        |> Enum.map(fn {model, tally} ->
+          %{"model" => model, "token_count" => quota_token_count(tally)}
+        end)
+    }
+  end
+
+  # One `token_count`. `cachedInputTokens` is cache reads, matching Codex's
+  # field; Claude also reports cache writes, which Codex has no slot for, so
+  # those ride along under the name the ACP `usage` field already uses and are
+  # counted in `totalTokens`. `reasoningOutputTokens` is always 0: Claude bills
+  # thinking inside its output tokens and never breaks it out, and the key is
+  # kept so the shape stays uniform across agents.
+  defp quota_token_count(tally) do
+    input = tally["inputTokens"] || 0
+    output = tally["outputTokens"] || 0
+    cache_read = tally["cacheReadTokens"] || 0
+    cache_write = tally["cacheCreationTokens"] || 0
+
+    %{
+      "totalTokens" => input + output + cache_read + cache_write,
+      "inputTokens" => input,
+      "cachedInputTokens" => cache_read,
+      "cachedWriteTokens" => cache_write,
+      "outputTokens" => output,
+      "reasoningOutputTokens" => 0
+    }
+  end
+
+  # `result.modelUsage` is a running total for the whole Claude process, not a
+  # per-result figure, so a result's own spend is what it added to the previous
+  # reading. Advance the reading on every result and fold the increment into
+  # the turn tally that `settle_result/2` reports and resets.
+  defp accumulate_model_usage(state, result) do
+    reading = normalize_model_usage(result["modelUsage"])
+    increment = model_usage_increment(reading, Map.get(state, :last_model_usage, %{}))
+
+    %{
+      state
+      | last_model_usage: reading,
+        turn_model_usage: add_model_usage(Map.get(state, :turn_model_usage, %{}), increment)
+    }
+  end
+
+  defp normalize_model_usage(model_usage) when is_map(model_usage) do
+    Map.new(model_usage, fn {model, usage} ->
+      usage = if is_map(usage), do: usage, else: %{}
+
+      {to_string(model),
+       %{
+         "inputTokens" => finite_count(usage["inputTokens"] || usage["input_tokens"]),
+         "outputTokens" => finite_count(usage["outputTokens"] || usage["output_tokens"]),
+         "cacheReadTokens" =>
+           finite_count(usage["cacheReadInputTokens"] || usage["cache_read_input_tokens"]),
+         "cacheCreationTokens" =>
+           finite_count(usage["cacheCreationInputTokens"] || usage["cache_creation_input_tokens"])
+       }}
+    end)
+  end
+
+  defp normalize_model_usage(_model_usage), do: %{}
+
+  defp finite_count(value) when is_integer(value) and value >= 0, do: value
+  defp finite_count(value) when is_float(value) and value >= 0.0, do: trunc(value)
+  defp finite_count(_value), do: 0
+
+  # `current - previous` per model, dropping models with nothing to report so a
+  # turn only lists the models it actually ran on. A reading below the previous
+  # one means the running total restarted (a resumed session, a cleared
+  # context, a zeroed crash result): there is no usable reference left to
+  # subtract, so the reading itself is the increment.
+  defp model_usage_increment(current, previous) do
+    current
+    |> Enum.flat_map(fn {model, usage} ->
+      resolved =
+        case Map.get(previous, model) do
+          nil ->
+            usage
+
+          base ->
+            subtracted = Map.new(usage, fn {key, value} -> {key, value - (base[key] || 0)} end)
+
+            if Enum.any?(subtracted, fn {_key, value} -> value < 0 end),
+              do: usage,
+              else: subtracted
+        end
+
+      if tally_total(resolved) > 0, do: [{model, resolved}], else: []
+    end)
+    |> Map.new()
+  end
+
+  defp add_model_usage(base, increment) do
+    Map.merge(base, increment, fn _model, left, right ->
+      Map.new(left, fn {key, value} -> {key, value + (right[key] || 0)} end)
+    end)
+  end
+
+  defp tally_total(tally), do: tally |> Map.values() |> Enum.sum()
+
   defp usage_update(session_id, usage, result, state) do
     used =
       usage
@@ -1797,7 +1915,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
               current_assistant_text_streamed?: false,
               tool_calls: %{},
               background_subagents: MapSet.new(),
-              deferred_result: nil
+              deferred_result: nil,
+              turn_model_usage: %{}
           }
 
         {[ClaudeProtocol.line(queued.message)], state}

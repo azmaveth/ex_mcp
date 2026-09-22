@@ -250,6 +250,17 @@
                   "sessionId" => "00000001-0000-4000-8000-000000000001",
                   "text" => ""
                 }
+              },
+              "quota" => %{
+                "model_usage" => [],
+                "token_count" => %{
+                  "cachedInputTokens" => 0,
+                  "cachedWriteTokens" => 0,
+                  "inputTokens" => 0,
+                  "outputTokens" => 0,
+                  "reasoningOutputTokens" => 0,
+                  "totalTokens" => 0
+                }
               }
             },
             "stopReason" => "end_turn",

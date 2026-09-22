@@ -45,6 +45,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     # for a session id it has not been given yet).
     auto_fallback_warned?: false,
     auto_fallback_pending?: false,
+    # `result.modelUsage` is a running total for the whole Claude process, so
+    # `last_model_usage` is the previous reading and `turn_model_usage` the
+    # increments accumulated for the turn being answered.
+    last_model_usage: %{},
+    turn_model_usage: %{},
     opts: [],
     pending_controls: %{},
     pending_client_requests: %{},
@@ -780,7 +785,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
               current_assistant_text_streamed?: false,
               tool_calls: %{},
               background_subagents: MapSet.new(),
-              deferred_result: nil
+              deferred_result: nil,
+              turn_model_usage: %{}
           }
 
         {:ok, ClaudeProtocol.line(message), state}
