@@ -211,6 +211,7 @@
             "sessionId" => "claude_sdk_<1>",
             "update" => %{
               "content" => %{"text" => "Anything else?", "type" => "text"},
+              "messageId" => "msg_assistant_1",
               "sessionUpdate" => "agent_message_chunk"
             }
           }

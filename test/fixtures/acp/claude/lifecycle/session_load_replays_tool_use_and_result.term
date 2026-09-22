@@ -75,6 +75,7 @@
                 "ex_mcp" => %{"claude_sdk" => %{"messageUuid" => "user-1", "replay" => true}}
               },
               "content" => %{"text" => "run it", "type" => "text"},
+              "messageId" => "user-1",
               "sessionUpdate" => "user_message_chunk"
             }
           }
