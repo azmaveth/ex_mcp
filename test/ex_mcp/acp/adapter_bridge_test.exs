@@ -363,6 +363,16 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     def auth_methods(_opts), do: [%{"id" => "terminal", "name" => "Terminal login"}]
 
     @impl true
+    def fork_session(%{"sessionId" => "missing-point"}, state) do
+      # The shape ExMCP.ACP.Adapters.ClaudeSDK returns for a fork point the
+      # transcript does not contain, which the bridge must answer as -32602.
+      {:error, {:invalid_params, "Fork point message msg_nope was not found"}, state}
+    end
+
+    def fork_session(%{"sessionId" => "broken"}, state) do
+      {:error, "Claude session broken could not be forked", state}
+    end
+
     def fork_session(params, state) do
       {:ok,
        %{
@@ -944,6 +954,40 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
 
       AdapterBridge.close(bridge)
     end
+
+    # The golden gate drives fork_session/2 directly and never sees the
+    # bridge, so the tuple reason a missing fork point returns is pinned here.
+    test "a fork point the adapter could not resolve answers invalid params" do
+      assert %{"code" => -32_602, "message" => "Fork point message msg_nope was not found"} =
+               fork_error("missing-point")
+    end
+
+    test "any other fork failure stays an internal error" do
+      assert %{"code" => -32_603, "message" => "Claude session broken could not be forked"} =
+               fork_error("broken")
+    end
+  end
+
+  defp fork_error(session_id) do
+    {:ok, bridge} = AdapterBridge.start_link(adapter: AuthForkAdapter, adapter_opts: [])
+    _init = send_initialize(bridge)
+
+    fork_msg = %{
+      "jsonrpc" => "2.0",
+      "method" => "session/fork",
+      "params" => %{"sessionId" => session_id, "cwd" => "/tmp/project"},
+      "id" => 53
+    }
+
+    assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(fork_msg))
+
+    {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+    msg = Jason.decode!(raw)
+    assert msg["id"] == 53
+
+    AdapterBridge.close(bridge)
+
+    msg["error"]
   end
 
   describe "synthetic responses with adapter-emitted messages" do

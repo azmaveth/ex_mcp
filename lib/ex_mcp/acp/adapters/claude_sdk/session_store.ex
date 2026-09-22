@@ -18,6 +18,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionStore do
   @claude_config_env "CLAUDE_CONFIG_DIR"
   @claude_config_env_atom :CLAUDE_CONFIG_DIR
   @uuid_re ~r/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  @segment_suffix_re ~r/:segment:\d+$/
 
   @type opts :: keyword() | map()
 
@@ -127,6 +128,14 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionStore do
   transcript is rewritten with the new session id where common Claude JSONL id
   fields are present, while message UUIDs are preserved so clients can still
   refer to replayed history.
+
+  Besides the config-directory and `:cwd` options every reader takes:
+
+  - `:fork_message_id` / `"forkMessageId"` - fork at a specific message
+    instead of copying the whole transcript. The copy stops at the matching
+    entry, which is itself included, and everything after it is dropped; an
+    id that matches nothing is an error rather than a silent full copy. See
+    `message_grouping_id/1` for how an entry is matched.
   """
   @spec fork_session(String.t(), opts()) :: {:ok, String.t()} | {:error, term()}
   def fork_session(session_id, opts \\ [])
@@ -134,7 +143,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionStore do
   def fork_session(session_id, opts) when is_binary(session_id) do
     with :ok <- validate_session_id(session_id),
          {:ok, source_path} <- find_session_path(session_id, opts),
-         {:ok, messages} <- read_session_messages(session_id, opts),
+         {:ok, transcript} <- read_session_messages(session_id, opts),
+         {:ok, messages} <- slice_to_fork_point(transcript, session_id, opts),
          new_session_id <- new_session_id(),
          target_path <- source_path |> Path.dirname() |> Path.join("#{new_session_id}.jsonl"),
          true <- safe_child?(projects_dir(config_dir(opts)), target_path),
@@ -153,6 +163,85 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.SessionStore do
 
   def fork_session(session_id, _opts),
     do: {:error, "Invalid Claude sessionId: #{inspect(session_id)}"}
+
+  @doc """
+  The id a transcript entry is addressed by when a client names a fork point.
+
+  This mirrors `messageIdForGrouping` in claude-agent-acp: an assistant turn
+  is keyed by the Anthropic API message id (`message.id`), which is stable
+  across the streamed `message_start`, the consolidated assistant message and
+  the persisted transcript, while a user message has no API id and is keyed by
+  its own transcript `uuid`. Entries that are neither (a `summary`, a
+  `system` line, a file-history snapshot) are addressable by nothing, so they
+  can never be a fork point.
+
+  Returns `nil` when the entry carries no usable id.
+  """
+  @spec message_grouping_id(term()) :: String.t() | nil
+  def message_grouping_id(%{"type" => "assistant", "message" => %{"id" => id}})
+      when is_binary(id) and id != "",
+      do: id
+
+  def message_grouping_id(%{"type" => type, "uuid" => uuid})
+      when type in ["user", "assistant"] and is_binary(uuid) and uuid != "",
+      do: uuid
+
+  def message_grouping_id(_entry), do: nil
+
+  @doc """
+  Fork-point id candidates for a client-supplied message id.
+
+  Older JetBrains AIR builds send the visible *segment* id of a message
+  (`msg_abc:segment:0`) rather than the ACP message id it was derived from.
+  The exact id is preferred over its unsuffixed source, matching
+  `forkPointMessageIdCandidates` upstream.
+  """
+  @spec fork_message_id_candidates(String.t()) :: [String.t()]
+  def fork_message_id_candidates(message_id) when is_binary(message_id) do
+    case String.replace(message_id, @segment_suffix_re, "") do
+      ^message_id -> [message_id]
+      protocol_message_id -> [message_id, protocol_message_id]
+    end
+  end
+
+  # Truncates the transcript at the requested fork point. Without one the
+  # transcript is returned untouched, which is the whole-session copy
+  # `session/fork` has always performed.
+  defp slice_to_fork_point(transcript, session_id, opts) do
+    case option(opts, :fork_message_id, "forkMessageId") do
+      message_id when is_binary(message_id) and message_id != "" ->
+        take_through_fork_point(transcript, message_id, session_id)
+
+      _ ->
+        {:ok, transcript}
+    end
+  end
+
+  defp take_through_fork_point(transcript, message_id, session_id) do
+    message_id
+    |> fork_message_id_candidates()
+    |> Enum.find_value(&fork_point_index(transcript, &1))
+    |> case do
+      nil ->
+        {:error,
+         {:invalid_params,
+          "Fork point message #{message_id} was not found in session #{session_id}"}}
+
+      index ->
+        {:ok, Enum.take(transcript, index + 1)}
+    end
+  end
+
+  # The *last* entry carrying the id wins: one Anthropic message id can span
+  # several transcript entries (one per content block), and an inclusive fork
+  # has to keep all of them.
+  defp fork_point_index(transcript, candidate) do
+    transcript
+    |> Enum.with_index()
+    |> Enum.reduce(nil, fn {entry, index}, last ->
+      if message_grouping_id(entry) == candidate, do: index, else: last
+    end)
+  end
 
   @doc """
   Resolves the Claude config directory from adapter options, environment, or

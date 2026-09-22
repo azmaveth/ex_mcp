@@ -20,10 +20,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Claude ACP adapter: `session/fork` accepts an optional, explicitly
+  versioned fork point at `_meta.jetbrains.air.fork`
+  (`{"version": 1, "messageId": "..."}`), ported from claude-agent-acp#1046.
+  The transcript is copied up to **and including** the named message instead
+  of in full. The `messageId` addresses an assistant turn by its Anthropic
+  API message id and a user message by its transcript uuid (upstream's
+  `messageIdForGrouping`), a trailing `:segment:<n>` suffix is stripped and
+  both spellings are tried, and the last entry carrying the id wins so a
+  message split across several content-block entries is kept whole. A
+  `session/fork` with no fork point behaves exactly as before. **Wire-visible:**
+  a fork point that matches nothing now answers JSON-RPC `-32602` naming the
+  `messageId`, matching the reference's `invalidParams`; every other
+  `session/fork` failure still answers `-32603`.
+- `ExMCP.ACP.Adapter`: `fork_session/2` may return
+  `{:error, {:invalid_params, message}, state}`, which
+  `ExMCP.ACP.AdapterBridge` answers as JSON-RPC `-32602`. Additive — a plain
+  `{:error, reason, state}` still answers `-32603` unchanged.
+- Claude ACP adapter characterization: two golden scenarios pin that a
+  `session/prompt` arriving while a permission request or an elicitation is
+  outstanding is queued and cannot disturb the pending client request. This
+  records ExMCP's standing answer to claude-agent-acp#1045 ("defer steering
+  while user input is pending"), which does not apply because ExMCP never
+  injects a mid-turn user message. Test-only; no behavior change.
 - Claude adapter golden-transcript characterization suite:
   `ExMCP.Test.ClaudeGolden` (`test/support/acp/claude_golden.ex`, with
   `ExMCP.Test.ClaudeGolden.Flows`) and seven golden areas under
-  `test/ex_mcp/acp/adapters/claude_sdk/characterization/` with 304 fixtures
+  `test/ex_mcp/acp/adapters/claude_sdk/characterization/` with 314 fixtures
   under `test/fixtures/acp/claude/`, pinning the adapter's session
   lifecycle, prompt content conversion, permission bridge, session update
   ordering, process configuration and authorization, fault handling and

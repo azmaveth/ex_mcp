@@ -44,7 +44,14 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.PermissionsGoldenTest do
       a typed custom answer replacing or annotating a pick, the CLI's
       quoted multi-select join, `decline`, `cancel`, a client error, an
       existing `annotations` map, and the two fail-closed refusals
-      (no form elicitation capability, no valid questions).
+      (no form elicitation capability, no valid questions);
+    * a `session/prompt` arriving while a permission request or an
+      elicitation is outstanding: the prompt is queued with nothing written,
+      the outstanding client request is never withdrawn or re-answered, the
+      client's answer still lands, and the queued user message reaches
+      Claude only when the first turn settles. This is ExMCP's standing
+      answer to claude-agent-acp #1045 (see `docs/POST_1_0_MAINTENANCE_PLAN.md`,
+      "2026-09-22 Claude message forks and deferred steering").
 
   Control-request shapes the adapter does not implement, late replies, and
   cancellation belong to the faults area; the catalog contents themselves
@@ -55,6 +62,13 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.PermissionsGoldenTest do
   `permission_suggestions` as an ordinary allow (returning the `allow_once`
   body instead of `cancelled_permission/1`) fails
   `allow_always_without_suggestions_fails_closed`.
+
+  Mutation check (2026-09-22): in `claude_sdk.ex`, making the queued branch
+  of `handle_request("session/prompt", ...)` write its user message
+  immediately (`{:ok, ClaudeProtocol.line(message), enqueue_prompt(...)}`),
+  which is exactly the mid-turn steering upstream had to defer, fails both
+  `a_second_prompt_leaves_a_pending_permission_request_alone` and
+  `a_second_prompt_leaves_a_pending_elicitation_alone`.
 
   To regenerate a fixture after an intentional behavior change, run the test
   with `CLAUDE_GOLDEN=update mix test <this file>[:line]`; that run rewrites
@@ -893,7 +907,112 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.PermissionsGoldenTest do
     end
   end
 
+  # claude-agent-acp #1045 ("defer steering while user input is pending") has
+  # no ExMCP counterpart: that adapter injects a mid-turn user message at SDK
+  # priority `now`, which aborts the cycle blocked in a user-input callback
+  # and withdraws the client's card. ExMCP never steers - a `session/prompt`
+  # arriving while `pending_prompt_id` is set is queued by `enqueue_prompt/4`
+  # and only written by `start_next_queued_prompt/1` once the turn settles -
+  # and writes no `priority` field at all. These scenarios pin that model so a
+  # change to it fails here rather than silently reintroducing the defect.
+  describe "a concurrent prompt while user input is pending" do
+    test "a_second_prompt_leaves_a_pending_permission_request_alone" do
+      steps =
+        session() ++
+          [
+            Flows.prompt("acp-prompt", "first"),
+            Flows.can_use_tool(),
+            Flows.prompt("acp-prompt-2", "second"),
+            Flows.select("allow_once"),
+            Flows.result(),
+            Flows.result()
+          ]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "a_second_prompt_leaves_a_pending_permission_request_alone",
+          steps
+        )
+
+      assert_input_card_survives_a_second_prompt(transcript, "session/request_permission")
+
+      # The client's answer still lands: the card was never withdrawn.
+      assert %{writes: [%{"response" => %{"response" => %{"behavior" => "allow"}}}]} =
+               step_result(transcript, :outbound, &Map.has_key?(&1, "result"))
+    end
+
+    test "a_second_prompt_leaves_a_pending_elicitation_alone" do
+      steps =
+        form_session() ++
+          [
+            Flows.prompt("acp-prompt", "first"),
+            ask_user_question(),
+            Flows.prompt("acp-prompt-2", "second"),
+            Flows.reply_last(%{
+              "action" => "accept",
+              "content" => %{"question_0" => "Blue"}
+            }),
+            Flows.result(),
+            Flows.result()
+          ]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "a_second_prompt_leaves_a_pending_elicitation_alone",
+          steps
+        )
+
+      assert_input_card_survives_a_second_prompt(transcript, "elicitation/create")
+    end
+  end
+
   # -- helpers ---------------------------------------------------------------
+
+  # The shared shape of both scenarios above: exactly one outstanding client
+  # request, nothing written for the second prompt, no message that withdraws
+  # the outstanding request, and the queued user message reaching Claude only
+  # when the first turn settles.
+  defp assert_input_card_survives_a_second_prompt(transcript, method) do
+    assert [%{"method" => ^method, "id" => request_id}] = acp_requests(transcript)
+
+    # Skipped with no writes: the second prompt is queued, not steered in.
+    assert %{tag: :ok, skipped: true} ==
+             step_result(transcript, :outbound, &(&1["id"] == "acp-prompt-2"))
+
+    # Exactly one message names the outstanding request - the request itself.
+    # Nothing withdraws, cancels or re-answers it after the second prompt.
+    assert Enum.count(ClaudeGolden.messages(transcript), &(&1["id"] == request_id)) == 1
+
+    # The queued prompt is written by the first settle and by nothing earlier.
+    assert [
+             %{result: %{tag: :messages_and_write, writes: [queued_write]}},
+             %{result: %{tag: :messages}}
+           ] =
+             Enum.filter(
+               transcript,
+               &match?(%{step: %{kind: :inbound, message: %{"type" => "result"}}}, &1)
+             )
+
+    assert queued_write["message"]["content"] == [%{"type" => "text", "text" => "second"}]
+
+    assert transcript
+           |> ClaudeGolden.messages()
+           |> Enum.filter(&(Map.has_key?(&1, "result") and &1["result"]["stopReason"]))
+           |> Enum.map(& &1["id"]) == ["acp-prompt", "acp-prompt-2"]
+  end
+
+  # The recorded result of the first step of `kind` whose message matches.
+  defp step_result(transcript, kind, match_fun) do
+    Enum.find_value(transcript, fn
+      %{step: %{kind: ^kind, message: message}, result: result} ->
+        if match_fun.(message), do: result
+
+      _ ->
+        nil
+    end)
+  end
 
   defp session(opts \\ []) do
     [{:init, Keyword.get(opts, :init, [])}, Flows.session_new()]

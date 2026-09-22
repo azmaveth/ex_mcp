@@ -721,6 +721,10 @@ defmodule ExMCP.ACP.AdapterBridge do
         state = %{state | adapter_state: adapter_state}
         {:reply, :ok, synthesize_session_lifecycle_result(state, id, result)}
 
+      {:error, {:invalid_params, reason}, adapter_state} ->
+        state = %{state | adapter_state: adapter_state}
+        {:reply, :ok, synthesize_error(state, id, -32_602, to_string(reason))}
+
       {:error, reason, adapter_state} ->
         state = %{state | adapter_state: adapter_state}
         {:reply, :ok, synthesize_error(state, id, -32_603, to_string(reason))}

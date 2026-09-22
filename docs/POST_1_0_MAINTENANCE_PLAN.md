@@ -6,7 +6,7 @@
 - **Baseline:** ExMCP `1.0.0`
 - **Scope:** behavior-preserving modularization, functional-core extraction,
   dependency cleanup, and Hex source-package cleanup
-- **Last updated:** 2026-09-20
+- **Last updated:** 2026-09-22
 
 This is a repository-maintenance document, not user-facing package
 documentation. It records cleanup that is valuable but too invasive to mix
@@ -342,9 +342,9 @@ scenario under `test/fixtures/acp/claude/<area>/`:
 
 | Gate bullet | File | Scenarios |
 |---|---|---|
-| post_connect and session lifecycle | `lifecycle_golden_test.exs` | 44 |
+| post_connect and session lifecycle | `lifecycle_golden_test.exs` | 52 |
 | prompt content conversion | `prompt_content_golden_test.exs` | 38 |
-| permissions, modes, opt-out, AskUserQuestion | `permissions_golden_test.exs` | 57 |
+| permissions, modes, opt-out, AskUserQuestion | `permissions_golden_test.exs` | 59 |
 | session update ordering | `session_updates_golden_test.exs` | 60 |
 | MCP configuration and authorization | `mcp_config_golden_test.exs` | 39 |
 | cancellation, late responses, fail-closed answers | `faults_golden_test.exs` | 31 |
@@ -1159,6 +1159,133 @@ remains the adapter's production boundary in that revision; upstream also
 contains an in-progress V4 wire used by its own clients. Treat V4 drift as a
 separate migration signal rather than silently changing the adapter's wire
 version.
+
+### 2026-09-22 Claude message forks and deferred steering
+
+The last two Claude items from the 2026-09-01 list are resolved: one is a
+port, one is not applicable. Both were read from the upstream source at the
+reviewed pin `d421f56a6c43cde16d9a7531d08a750a5ef2f04a`.
+
+**Message-specific ACP session forks** (claude-agent-acp `c3ff343`, #1046;
+upstream `src/fork-session.ts`). `session/fork` already forked a Claude
+session by copying its whole transcript under a new UUID; the gap was forking
+at a specific message. What the reference actually specifies:
+
+- the fork point is optional and explicitly versioned. `forkPoint` reads
+  `_meta.jetbrains.air.fork` and returns nothing unless `version === 1`, so a
+  missing object, a different version, a missing `messageId` and a `messageId`
+  that trims to empty all mean "no fork point" and take the unchanged
+  whole-session path;
+- the id is a *message* id, not a transcript uuid.
+  `messageIdForGrouping` keys an assistant turn by its Anthropic API message
+  id (`message.id`) because that id is identical at `message_start`, on the
+  consolidated assistant message and in the persisted transcript, and keys a
+  user message by its own SDK uuid because a user message has no API id.
+  An assistant entry that carries an API id is therefore *not* addressable by
+  its uuid;
+- `forkPointMessageIdCandidates` strips a trailing `:segment:<n>` (older AIR
+  builds send their visible segment id) and tries the exact id first, then the
+  unsuffixed one, each across the whole history before moving on;
+- the match is the *last* entry carrying the id, not the first
+  (`history.slice().reverse().find(...)`, and the same last-write-wins rule in
+  `assistantGroups`). One Anthropic message id can span several transcript
+  entries, one per content block, and the fork has to keep all of them; the
+  original commit took the first match and the pin corrects it;
+- the fork point is **inclusive**. It is handed to the Agent SDK as
+  `forkSession(id, { upToMessageId })`, documented there as "slice transcript
+  up to the message whose `uuid` field equals this value (inclusive)"; and
+- an id that resolves to nothing is `RequestError.invalidParams` naming the
+  `messageId`, never a silent full copy.
+
+ExMCP matches all of that. `ExMCP.ACP.Adapters.ClaudeSDK.fork_session/2`
+extracts the versioned fork point and passes it to
+`SessionStore.fork_session/2` as `:fork_message_id`;
+`SessionStore.message_grouping_id/1` is `messageIdForGrouping`,
+`fork_message_id_candidates/1` is `forkPointMessageIdCandidates`, and
+`take_through_fork_point/3` takes the last matching index and keeps the
+transcript through it. Eight golden scenarios pin the semantics
+(`lifecycle_golden_test.exs`, "fork_session/2 fork points").
+
+Three deliberate deviations, none of them guesses:
+
+- *No live message-id table.* Upstream consults an in-memory
+  `messageIdToUuid` first to avoid a disk read, then `getSessionMessages`
+  (the active parentUuid chain), then a full import that also carries
+  inactive branches. ExMCP's fork has always read the persisted JSONL file
+  directly, which is a superset of the last two: it contains the active chain
+  *and* the inactive branches in one pass. The adapter's existing
+  `:message_ids` map is keyed uuid-first and would resolve assistant ids by a
+  different rule, so it is deliberately not used here. The one thing upstream's
+  live map buys that this does not is a fork point from a turn still in flight
+  and not yet flushed to disk; forking a session mid-turn was already reading
+  from disk, so this is not a regression.
+- *No fingerprint/occurrence recovery.* Upstream's full-history path can fall
+  back to `messageFingerprint` (a sha256 of the grouped assistant text) plus a
+  1-based `messageOccurrence` counted along the branch. That path is reachable
+  only when the id lookup fails in both the active chain and the inactive
+  branches, it only indexes assistant entries, and it depends on AIR computing
+  and sending those two extra fields. ExMCP's single full-file lookup already
+  covers what that path exists to reach; the fields are ignored rather than
+  half-implemented.
+- *Error code.* The not-found error is wire-visible and now answers -32602
+  (invalid params) as upstream does, through a new
+  `{:error, {:invalid_params, message}, state}` return that
+  `AdapterBridge.handle_adapter_fork_callback/3` maps. Every *other*
+  `session/fork` failure (missing session, non-UUID id, no session at all)
+  still answers -32603 byte-identically. The golden gate drives `fork_session/2`
+  directly and never sees the bridge, so the new tuple is pinned in
+  `adapter_bridge_test.exs` alongside a regression test for the -32603 path.
+
+The `_meta.jetbrains.air.fork` spelling is kept exactly as the reference reads
+it, deliberately: a client that can fork against claude-agent-acp forks
+against ExMCP unchanged, and inventing a second vendor-neutral alias would be
+inventing protocol. §8.1 condition 4 guards session identity, and the guard
+holds: a fork with no fork point produces the same bytes it always did, which
+is what the unchanged fixtures for the five pre-existing fork scenarios show.
+
+**Deferred steering while user input is pending** (claude-agent-acp
+`8710ce1c`, #1045): **not applicable**, for the same class of reason as
+codex-acp#471 above - the failure mode needs a mechanism ExMCP does not have.
+Upstream's ACP steering extension injects a follow-up user message into a
+*running* SDK turn at `SDKUserMessage.priority` `"now"`, which is interrupting
+delivery: the SDK aborts the cycle currently blocked in a user-input callback
+and emits `$/cancel_request` for the open permission or elicitation, so the
+client's card disappears before it can be answered. Their fix counts pending
+user-input requests per session and downgrades the injected message to
+`"later"` while the count is non-zero.
+
+ExMCP never steers, so there is no message to downgrade. The functions that
+establish it:
+
+- `ExMCP.ACP.Adapters.ClaudeSDK.Protocol.user_message/2` is the only producer
+  of a `"type" => "user"` line, and it has exactly two callers;
+- `handle_request("session/prompt", ...)` in `claude_sdk.ex` branches on
+  `pending_prompt_id`. With a turn active it returns `{:ok, :skip, ...}` after
+  `enqueue_prompt/4` - the message is queued and *nothing* is written to the
+  port. Only the idle branch calls `start_prompt/4`, the other caller;
+- `Mapper.start_next_queued_prompt/1` is the sole place a queued message is
+  written, and its sole call site is the turn-settle path that runs on
+  Claude's `result` event, after the prompt response is built; and
+- no ExMCP code writes a `priority` field on any Claude SDK line.
+
+A second prompt therefore cannot pre-empt an outstanding
+`session/request_permission` or `elicitation/create`. Two golden scenarios pin
+the property rather than leaving it as an assertion in prose
+(`permissions_golden_test.exs`, "a concurrent prompt while user input is
+pending"): with a permission request and with an elicitation outstanding, a
+second `session/prompt` is skipped with no writes, exactly one message in the
+whole transcript names the outstanding request (its own creation - nothing
+withdraws or re-answers it), the client's answer still lands, and the queued
+user message reaches Claude only on the first `result`. The recorded mutation
+check makes the queued branch write immediately - upstream's `now` delivery -
+and both scenarios fail.
+
+If ExMCP ever gains real mid-turn steering, this decision is void: that change
+must port the pending-user-input counter with it.
+
+Still open from the 2026-09-01 list after this: Codex session titles with a
+`/rename` command. The Claude list is clear, so the Claude pin may advance at
+the next scheduled review.
 
 ## ACP v1 completion and v2 monitoring
 
