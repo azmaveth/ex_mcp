@@ -342,10 +342,10 @@ scenario under `test/fixtures/acp/claude/<area>/`:
 
 | Gate bullet | File | Scenarios |
 |---|---|---|
-| post_connect and session lifecycle | `lifecycle_golden_test.exs` | 52 |
+| post_connect and session lifecycle | `lifecycle_golden_test.exs` | 55 |
 | prompt content conversion | `prompt_content_golden_test.exs` | 38 |
 | permissions, modes, opt-out, AskUserQuestion | `permissions_golden_test.exs` | 59 |
-| session update ordering | `session_updates_golden_test.exs` | 60 |
+| session update ordering | `session_updates_golden_test.exs` | 67 |
 | MCP configuration and authorization | `mcp_config_golden_test.exs` | 39 |
 | cancellation, late responses, fail-closed answers | `faults_golden_test.exs` | 31 |
 | model, mode, and config-option catalogs | `catalog_golden_test.exs` | 35 |
@@ -1286,6 +1286,111 @@ must port the pending-user-input counter with it.
 Still open from the 2026-09-01 list after this: Codex session titles with a
 `/rename` command. The Claude list is clear, so the Claude pin may advance at
 the next scheduled review.
+
+### 2026-09-22 Claude chunk message ids
+
+The fork port above closed the *receiving* half of message-specific forks:
+ExMCP resolves a `messageId` a host sends. It left the *sending* half open.
+The Claude adapter never stamped `messageId` on any session update, so a host
+had no way to learn a fork point from us and had to read Claude's JSONL
+transcript itself to find one. This subsection records closing that gap, read
+from the same reviewed pin `d421f56a6c43cde16d9a7531d08a750a5ef2f04a`.
+
+Only wiring was missing. `ExMCP.ACP.AdapterEvents.agent_message_chunk/3`,
+`agent_thought_chunk/3`, `user_message_chunk/3` and `content_chunk/4` already
+accepted a `:message_id` option and stamped it with `Maps.put_present/3`;
+`ExMCP.ACP.RequestValidation` already accepted
+`optional_nullable_string?(update, "messageId")`; and
+`SessionStore.message_grouping_id/1` already implemented the id rule. No
+adapter passed the option.
+
+**The rule matches the reference.** `messageIdForGrouping` in
+`src/acp-agent.ts` keys an assistant entry by `message.id` when it has one and
+falls back to the entry `uuid`. `message_grouping_id/1` is the same function
+with the uuid fallback restricted to `user` and `assistant` entries. That is
+not a divergence in reachable behavior: upstream's two id lookups run over
+`getSessionMessages` and `assistantGroups`, which are already restricted to
+SDK user/assistant messages and to non-sidechain assistant entries
+respectively, so neither can resolve a `summary` or `system` entry's uuid
+either. Our restriction makes structurally-unreachable cases explicit rather
+than changing what resolves. No change was needed.
+
+**What is stamped.** `applyMessageId` upstream is a no-op unless the update is
+one of `agent_message_chunk`, `user_message_chunk` or `agent_thought_chunk`,
+and a no-op when the id is absent. ExMCP matches that: `tool_call`,
+`tool_call_update`, `plan`, `session_info_update`, `current_mode_update`,
+`config_option_update`, `available_commands_update` and the usage updates never
+carry one. The three coverage paths upstream threads the id through are all
+covered:
+
+- *live streamed chunks.* `message_start` is the only streamed event carrying
+  the Anthropic API message id, so the adapter captures it into the new
+  `stream_message_id` state field — upstream's `currentStreamMessageId` — and
+  stamps every `text_delta` / `thinking_delta` chunk that follows with it. The
+  field is cleared wherever a turn ends or a session is dropped (the same five
+  sites that already clear `current_assistant_text_streamed?`), so a chunk can
+  never inherit an id from a previous turn;
+- *unstreamed / consolidated assistant text.* `reduce_message/2` computes
+  `SessionStore.message_grouping_id/1` from the message wrapper and threads it
+  to `handle_assistant_block/3`, which is the path that emits a text block the
+  stream did not already deliver; and
+- *replay.* `session/load` replays persisted entries through the same
+  `reduce_message/2` for assistant entries, and `replay_user_content/2` stamps
+  the replayed `user_message_chunk` with the entry's grouping id.
+
+**What is deliberately not stamped**, both cases being chunks ExMCP
+synthesizes rather than chunks Claude sent:
+
+- the Auto-mode fallback notice (`@auto_mode_fallback_notice` in `Mapper`) is
+  ExMCP's own prose about a mode decision. No transcript entry backs it, so any
+  id we invented for it would be unresolvable and `fork_session/2` would answer
+  -32602. A host forking "at the notice" wants the message before or after it,
+  neither of which the notice identifies; and
+- the `result` fallback chunk (`result_text_chunk/3`), which re-emits
+  `result.result` when a turn streamed nothing. It is built from Claude's
+  `result` event, which carries no message id, and the reference emits no chunk
+  for `result` at all.
+
+Subagent and sidechain chunks *are* stamped. Upstream's `applyMessageId` runs
+on the `parentToolUseId` path too, and our own `fork_point_index/2` matches a
+sidechain assistant entry like any other, so an id we stamp there still
+resolves. Upstream excludes sidechains only from `assistantGroups`, the
+fingerprint-recovery path ExMCP does not implement.
+
+**The round trip is asserted, not assumed.** A stamped id our own fork rejects
+would be worse than no id, so three golden scenarios in `lifecycle_golden_test.exs`
+("messageId round trip") read the `messageId` back out of the recorded
+transcript and fork at exactly that string: a replayed `agent_message_chunk`
+id, a replayed `user_message_chunk` id, and a live streamed chunk id whose
+`message_start` matches the persisted assistant entry. Each asserts the fork
+succeeds and that the forked file is cut inclusively at the addressed entry.
+The `:fork_session` harness step gained function support for this, so nothing
+is hand-written into the fork request.
+
+Nine existing fixtures moved, all by pure `messageId` addition (13 added lines,
+no deletion, no other key changed): six replayed `user_message_chunk`s keyed by
+the transcript uuid, five consolidated assistant chunks keyed by the Anthropic
+message id, one scenario's explicit id, and one replayed assistant entry with
+no `message.id` keyed by its uuid. Streamed chunks were unaffected because no
+pre-existing flow sends a `message_start`; seven new `session_updates`
+scenarios cover that path, including the two no-stamp cases above.
+
+Mutation checks (2026-09-22), all in `claude_sdk/mapper.ex`: stamping any id on
+the `result` fallback chunk (`result_text_chunk/3`) fails
+`the_result_fallback_chunk_carries_no_message_id` and
+`a_result_without_streamed_text_emits_a_fallback_chunk`; dropping the
+`message_start` clause of `handle_stream_event/2` fails four `message ids`
+scenarios and `a_streamed_chunk_message_id_forks_at_the_persisted_message`;
+and stamping the Auto-mode fallback notice (`auto_fallback_notice/1`) fails the
+four pre-existing catalog and permissions fixtures that carry it, so that
+judgement call is pinned without a scenario of its own.
+
+The golden gate drives adapters directly, so it never sees
+`ExMCP.ACP.AdapterBridge`. No adapter return shape changed here — only the
+content of a message the bridge already forwards — but because the field is
+wire-visible, `adapter_bridge_test.exs` gained one test ("chunk messageId")
+proving a stamped chunk survives the bridge's JSON round trip, an unstamped one
+omits the key entirely, and a `tool_call` never gains it.
 
 ## ACP v1 completion and v2 monitoring
 
