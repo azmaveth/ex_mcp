@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `ExMCP.ACP.AdapterBridge` now handles the documented
+  `{:messages_and_reply_and_write, ...}` adapter translation on every request
+  path, not only the session lifecycle. Returning it from `session/set_mode`,
+  `session/set_model` or `session/set_config_option` raised a
+  `CaseClauseError` in the bridge and killed the connection.
+- Claude ACP adapter: `session/load` now clamps an inherited Auto mode the
+  model cannot support, matching `session/new` and `session/resume`. It
+  applied only the bypass policy.
+
 ### Added
 
 - Claude adapter golden-transcript characterization suite:

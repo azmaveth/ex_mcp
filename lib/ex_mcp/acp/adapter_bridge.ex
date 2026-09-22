@@ -651,6 +651,13 @@ defmodule ExMCP.ACP.AdapterBridge do
         state = synthesize_result(state, id, config_options_result(state))
         {:reply, :ok, state}
 
+      {:messages_and_reply_and_write, messages, result, data, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        _ = write_to_port(state, data)
+        state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+        state = synthesize_result(state, id, result || config_options_result(state))
+        {:reply, :ok, state}
+
       {:error, reason, new_adapter_state} ->
         # JSON-RPC -32602 = Invalid params. A config value outside the
         # adapter's enum (e.g. Pi's thinking_level) is invalid params from
@@ -843,6 +850,14 @@ defmodule ExMCP.ACP.AdapterBridge do
     synthesize_translated_reply(msg, result, state)
   end
 
+  defp handle_translated_outbound(
+         {:messages_and_reply_and_write, messages, result, _delivery, state},
+         msg
+       ) do
+    state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+    synthesize_translated_reply(msg, result, state)
+  end
+
   defp handle_translated_outbound({:messages_and_write, messages, _delivery, state}, _msg) do
     state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
     {:reply, :ok, state}
@@ -925,6 +940,10 @@ defmodule ExMCP.ACP.AdapterBridge do
         state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
         {:reply, :ok, synthesize_result(state, id, result_fun.(state))}
 
+      {:messages_and_reply_and_write, messages, result, _delivery, state} ->
+        state = push_messages(state, Enum.map(messages, &Jason.encode!/1))
+        {:reply, :ok, synthesize_result(state, id, result || result_fun.(state))}
+
       {:error, reason, state} ->
         reply_translation_error(msg, reason, state)
     end
@@ -973,6 +992,19 @@ defmodule ExMCP.ACP.AdapterBridge do
   end
 
   defp normalize_translated_outbound(
+         {:messages_and_reply_and_write, messages, result, data, adapter_state},
+         state
+       ) do
+    state = %{state | adapter_state: adapter_state}
+
+    write_translation_to_port(
+      state,
+      {:messages_and_reply_and_write, messages, result, :sent},
+      data
+    )
+  end
+
+  defp normalize_translated_outbound(
          {:messages_and_write, messages, data, adapter_state},
          state
        ) do
@@ -997,6 +1029,9 @@ defmodule ExMCP.ACP.AdapterBridge do
 
   defp translated_write_success({:reply_and_write, result, :sent}, state),
     do: {:reply_and_write, result, :sent, state}
+
+  defp translated_write_success({:messages_and_reply_and_write, messages, result, :sent}, state),
+    do: {:messages_and_reply_and_write, messages, result, :sent, state}
 
   defp translated_write_success({:messages_and_write, messages, :sent}, state),
     do: {:messages_and_write, messages, :sent, state}

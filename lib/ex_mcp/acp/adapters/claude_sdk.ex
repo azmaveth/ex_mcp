@@ -290,13 +290,16 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
       {:ok, events} ->
         {messages, state} = Mapper.replay_messages(events, state)
 
-        case apply_bypass_policy(params, state) do
-          {state, nil} ->
-            {:messages_and_reply, messages, Mapper.session_result(state, session_id), state}
+        # Same policy pair as session/new and session/resume: a loaded session
+        # can inherit a bypass or Auto mode the model cannot support, so both
+        # have to be clamped here too.
+        {state, bypass_write} = apply_bypass_policy(params, state)
+        {state, auto_write} = apply_auto_mode_policy(state)
+        result = Mapper.session_result(state, session_id)
 
-          {state, data} ->
-            {:messages_and_reply_and_write, messages, Mapper.session_result(state, session_id),
-             data, state}
+        case Enum.reject([bypass_write, auto_write], &is_nil/1) do
+          [] -> {:messages_and_reply, messages, result, state}
+          writes -> {:messages_and_reply_and_write, messages, result, writes, state}
         end
 
       {:error, reason} ->
