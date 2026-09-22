@@ -145,14 +145,25 @@
     step: %{
       kind: :inbound,
       message: %{
-        "message" => %{
-          "content" => [%{"text" => "hi", "type" => "text"}],
-          "id" => "msg_assistant_1",
-          "model" => "claude-opus-4",
-          "role" => "assistant"
+        "event" => %{
+          "message" => %{"id" => "msg_stream_1", "role" => "assistant"},
+          "type" => "message_start"
         },
-        "session_id" => "00000001-0000-4000-8000-000000000001",
-        "type" => "assistant"
+        "type" => "stream_event"
+      }
+    },
+    result: %{skipped: true, tag: :skip}
+  },
+  %ExMCP.Test.ClaudeGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "event" => %{
+          "delta" => %{"text" => "first", "type" => "text_delta"},
+          "index" => 0,
+          "type" => "content_block_delta"
+        },
+        "type" => "stream_event"
       }
     },
     result: %{
@@ -163,8 +174,8 @@
           "params" => %{
             "sessionId" => "claude_sdk_<1>",
             "update" => %{
-              "content" => %{"text" => "hi", "type" => "text"},
-              "messageId" => "msg_assistant_1",
+              "content" => %{"text" => "first", "type" => "text"},
+              "messageId" => "msg_stream_1",
               "sessionUpdate" => "agent_message_chunk"
             }
           }
@@ -172,13 +183,6 @@
       ],
       tag: :messages
     }
-  },
-  %ExMCP.Test.ClaudeGolden.Entry{
-    step: %{
-      kind: :note,
-      text: "The next config_option_update carries the model the assistant reported"
-    },
-    result: %{}
   },
   %ExMCP.Test.ClaudeGolden.Entry{
     step: %{
@@ -253,7 +257,7 @@
                 },
                 %{
                   "category" => "model",
-                  "currentValue" => "claude-opus-4",
+                  "currentValue" => "default",
                   "description" => "AI model to use",
                   "id" => "model",
                   "name" => "Model",
@@ -292,7 +296,7 @@
                 "claude_sdk" => %{
                   "resultSubtype" => "success",
                   "sessionId" => "00000001-0000-4000-8000-000000000001",
-                  "text" => "hi"
+                  "text" => "first"
                 }
               },
               "quota" => %{
@@ -313,6 +317,57 @@
               "cacheReadTokens" => 3,
               "inputTokens" => 12,
               "outputTokens" => 7
+            }
+          }
+        }
+      ],
+      tag: :messages
+    }
+  },
+  %ExMCP.Test.ClaudeGolden.Entry{
+    step: %{
+      kind: :outbound,
+      message: %{
+        "id" => "acp-prompt-2",
+        "jsonrpc" => "2.0",
+        "method" => "session/prompt",
+        "params" => %{"prompt" => "again", "sessionId" => "claude_sdk_<1>"}
+      }
+    },
+    result: %{
+      tag: :ok,
+      writes: [
+        %{
+          "message" => %{"content" => [%{"text" => "again", "type" => "text"}], "role" => "user"},
+          "parent_tool_use_id" => nil,
+          "session_id" => "claude_sdk_<1>",
+          "type" => "user"
+        }
+      ]
+    }
+  },
+  %ExMCP.Test.ClaudeGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "event" => %{
+          "delta" => %{"text" => "second", "type" => "text_delta"},
+          "index" => 0,
+          "type" => "content_block_delta"
+        },
+        "type" => "stream_event"
+      }
+    },
+    result: %{
+      messages: [
+        %{
+          "jsonrpc" => "2.0",
+          "method" => "session/update",
+          "params" => %{
+            "sessionId" => "claude_sdk_<1>",
+            "update" => %{
+              "content" => %{"text" => "second", "type" => "text"},
+              "sessionUpdate" => "agent_message_chunk"
             }
           }
         }

@@ -60,6 +60,7 @@
                 "ex_mcp" => %{"claude_sdk" => %{"messageUuid" => "user-1", "replay" => true}}
               },
               "content" => %{"text" => "look", "type" => "text"},
+              "messageId" => "user-1",
               "sessionUpdate" => "user_message_chunk"
             }
           }
@@ -74,6 +75,7 @@
                 "ex_mcp" => %{"claude_sdk" => %{"messageUuid" => "user-1", "replay" => true}}
               },
               "content" => %{"data" => "AAA", "mimeType" => "image/jpeg", "type" => "image"},
+              "messageId" => "user-1",
               "sessionUpdate" => "user_message_chunk"
             }
           }
@@ -88,6 +90,7 @@
                 "ex_mcp" => %{"claude_sdk" => %{"messageUuid" => "user-1", "replay" => true}}
               },
               "content" => %{"data" => "BBB", "mimeType" => "image/png", "type" => "image"},
+              "messageId" => "user-1",
               "sessionUpdate" => "user_message_chunk"
             }
           }

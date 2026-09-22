@@ -145,8 +145,28 @@
     step: %{
       kind: :inbound,
       message: %{
+        "event" => %{
+          "message" => %{"id" => "msg_stream_1", "role" => "assistant"},
+          "type" => "message_start"
+        },
+        "type" => "stream_event"
+      }
+    },
+    result: %{skipped: true, tag: :skip}
+  },
+  %ExMCP.Test.ClaudeGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
         "message" => %{
-          "content" => [%{"text" => "Hello", "type" => "text"}],
+          "content" => [
+            %{
+              "id" => "toolu_1",
+              "input" => %{"todos" => [%{"content" => "ship", "status" => "pending"}]},
+              "name" => "TodoWrite",
+              "type" => "tool_use"
+            }
+          ],
           "id" => "msg_assistant_1",
           "role" => "assistant"
         },
@@ -162,9 +182,83 @@
           "params" => %{
             "sessionId" => "claude_sdk_<1>",
             "update" => %{
-              "content" => %{"text" => "Hello", "type" => "text"},
-              "messageId" => "msg_assistant_1",
-              "sessionUpdate" => "agent_message_chunk"
+              "kind" => "think",
+              "rawInput" => %{"todos" => [%{"content" => "ship", "status" => "pending"}]},
+              "sessionUpdate" => "tool_call",
+              "status" => "pending",
+              "title" => "Update plan (1)",
+              "toolCallId" => "toolu_1"
+            }
+          }
+        },
+        %{
+          "jsonrpc" => "2.0",
+          "method" => "session/update",
+          "params" => %{
+            "sessionId" => "claude_sdk_<1>",
+            "update" => %{
+              "kind" => "think",
+              "rawInput" => %{"todos" => [%{"content" => "ship", "status" => "pending"}]},
+              "sessionUpdate" => "tool_call_update",
+              "status" => "in_progress",
+              "title" => "Update plan (1)",
+              "toolCallId" => "toolu_1"
+            }
+          }
+        },
+        %{
+          "jsonrpc" => "2.0",
+          "method" => "session/update",
+          "params" => %{
+            "sessionId" => "claude_sdk_<1>",
+            "update" => %{
+              "entries" => [%{"content" => "ship", "priority" => "medium", "status" => "pending"}],
+              "sessionUpdate" => "plan"
+            }
+          }
+        }
+      ],
+      tag: :messages
+    }
+  },
+  %ExMCP.Test.ClaudeGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "message" => %{
+          "content" => [
+            %{"content" => "done", "tool_use_id" => "toolu_1", "type" => "tool_result"}
+          ],
+          "role" => "user"
+        },
+        "session_id" => "00000001-0000-4000-8000-000000000001",
+        "type" => "user"
+      }
+    },
+    result: %{
+      messages: [
+        %{
+          "jsonrpc" => "2.0",
+          "method" => "session/update",
+          "params" => %{
+            "sessionId" => "claude_sdk_<1>",
+            "update" => %{
+              "_meta" => %{
+                "ex_mcp" => %{
+                  "claude_sdk" => %{
+                    "isError" => false,
+                    "toolInput" => %{"todos" => [%{"content" => "ship", "status" => "pending"}]},
+                    "toolName" => "TodoWrite"
+                  }
+                }
+              },
+              "content" => [
+                %{"content" => %{"text" => "done", "type" => "text"}, "type" => "content"}
+              ],
+              "rawOutput" => "done",
+              "sessionUpdate" => "tool_call_update",
+              "status" => "completed",
+              "toolCallId" => "toolu_1"
             }
           }
         }

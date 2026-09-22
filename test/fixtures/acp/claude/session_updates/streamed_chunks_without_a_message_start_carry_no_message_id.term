@@ -145,13 +145,12 @@
     step: %{
       kind: :inbound,
       message: %{
-        "message" => %{
-          "content" => [%{"text" => "Hello", "type" => "text"}],
-          "id" => "msg_assistant_1",
-          "role" => "assistant"
+        "event" => %{
+          "delta" => %{"text" => "Hello", "type" => "text_delta"},
+          "index" => 0,
+          "type" => "content_block_delta"
         },
-        "session_id" => "00000001-0000-4000-8000-000000000001",
-        "type" => "assistant"
+        "type" => "stream_event"
       }
     },
     result: %{
@@ -163,8 +162,36 @@
             "sessionId" => "claude_sdk_<1>",
             "update" => %{
               "content" => %{"text" => "Hello", "type" => "text"},
-              "messageId" => "msg_assistant_1",
               "sessionUpdate" => "agent_message_chunk"
+            }
+          }
+        }
+      ],
+      tag: :messages
+    }
+  },
+  %ExMCP.Test.ClaudeGolden.Entry{
+    step: %{
+      kind: :inbound,
+      message: %{
+        "event" => %{
+          "delta" => %{"thinking" => "hmm", "type" => "thinking_delta"},
+          "index" => 0,
+          "type" => "content_block_delta"
+        },
+        "type" => "stream_event"
+      }
+    },
+    result: %{
+      messages: [
+        %{
+          "jsonrpc" => "2.0",
+          "method" => "session/update",
+          "params" => %{
+            "sessionId" => "claude_sdk_<1>",
+            "update" => %{
+              "content" => %{"text" => "hmm", "type" => "text"},
+              "sessionUpdate" => "agent_thought_chunk"
             }
           }
         }

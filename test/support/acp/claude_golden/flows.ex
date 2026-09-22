@@ -238,6 +238,21 @@ defmodule ExMCP.Test.ClaudeGolden.Flows do
   @spec stream_event(map()) :: ClaudeGolden.step()
   def stream_event(event), do: {:inbound, %{"type" => "stream_event", "event" => event}}
 
+  @doc """
+  A streamed `message_start` carrying the Anthropic API message id.
+
+  This is the only streamed event that carries it, so it is what the adapter
+  stamps on every `agent_message_chunk` / `agent_thought_chunk` of the message
+  that follows.
+  """
+  @spec message_start(String.t(), map()) :: ClaudeGolden.step()
+  def message_start(message_id, overrides \\ %{}) do
+    stream_event(%{
+      "type" => "message_start",
+      "message" => Map.merge(%{"id" => message_id, "role" => "assistant"}, overrides)
+    })
+  end
+
   @doc "A streamed `text_delta`."
   @spec text_delta(String.t()) :: ClaudeGolden.step()
   def text_delta(text) do

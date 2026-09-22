@@ -166,6 +166,7 @@
             "sessionId" => "claude_sdk_<1>",
             "update" => %{
               "content" => %{"text" => "one", "type" => "text"},
+              "messageId" => "msg_assistant_1",
               "sessionUpdate" => "agent_message_chunk"
             }
           }
@@ -177,6 +178,7 @@
             "sessionId" => "claude_sdk_<1>",
             "update" => %{
               "content" => %{"text" => "two", "type" => "text"},
+              "messageId" => "msg_assistant_1",
               "sessionUpdate" => "agent_message_chunk"
             }
           }

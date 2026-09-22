@@ -67,6 +67,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     thinking_blocks: [],
     current_block_type: nil,
     current_assistant_text_streamed?: false,
+    # Anthropic API message id of the assistant message currently streaming,
+    # captured from the `message_start` stream event so the deltas that follow
+    # (which never carry it) can be stamped with the same, transcript-stable
+    # id. Cleared wherever a turn ends or a session is dropped.
+    stream_message_id: nil,
     tool_calls: %{},
     message_ids: %{},
     background_subagents: MapSet.new(),
@@ -805,6 +810,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
         thinking_blocks: [],
         current_block_type: nil,
         current_assistant_text_streamed?: false,
+        stream_message_id: nil,
         tool_calls: %{},
         background_subagents: MapSet.new(),
         deferred_result: nil
@@ -827,6 +833,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
               thinking_blocks: [],
               current_block_type: nil,
               current_assistant_text_streamed?: false,
+              stream_message_id: nil,
               tool_calls: %{},
               background_subagents: MapSet.new(),
               deferred_result: nil,
@@ -874,6 +881,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
             thinking_blocks: [],
             current_block_type: nil,
             current_assistant_text_streamed?: false,
+            stream_message_id: nil,
             tool_calls: %{},
             background_subagents: MapSet.new(),
             deferred_result: nil
@@ -900,6 +908,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
           thinking_blocks: [],
           current_block_type: nil,
           current_assistant_text_streamed?: false,
+          stream_message_id: nil,
           tool_calls: %{},
           background_subagents: MapSet.new(),
           deferred_result: nil

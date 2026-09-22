@@ -4,6 +4,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
   """
 
   alias ExMCP.ACP.Adapters.ClaudeSDK.Protocol, as: ClaudeProtocol
+  alias ExMCP.ACP.Adapters.ClaudeSDK.SessionStore
   alias ExMCP.ACP.Adapters.ClaudeSDK.ToolInfo
   alias ExMCP.ACP.Protocol, as: ACPProtocol
   alias ExMCP.ACP.{AdapterEvents, Capabilities, Envelope, PendingRequests, PromptQueue}
@@ -254,7 +255,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
   def reduce_message(%{"type" => "assistant", "message" => message} = wrapper, state) do
     state = maybe_set_session(state, wrapper)
-    handle_assistant(message, state)
+    handle_assistant(message, SessionStore.message_grouping_id(wrapper), state)
   end
 
   def reduce_message(%{"type" => "user", "message" => message} = wrapper, state) do
@@ -415,7 +416,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     |> replay_content_blocks()
     |> Enum.map(fn content ->
       AdapterEvents.content_chunk(session_id(state), "user_message_chunk", content,
-        meta: replay_meta(event)
+        meta: replay_meta(event),
+        message_id: SessionStore.message_grouping_id(event)
       )
     end)
   end
@@ -817,6 +819,15 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     }
   end
 
+  # `message_start` is the only streamed event carrying the Anthropic API
+  # message id, and it is the same id the consolidated assistant message and
+  # the persisted transcript use, so every chunk of the message that follows is
+  # tagged with it. Mirrors `currentStreamMessageId` in claude-agent-acp
+  # `src/acp-agent.ts`.
+  defp handle_stream_event(%{"type" => "message_start", "message" => message}, state) do
+    {[], [], %{state | stream_message_id: stream_message_id(message)}}
+  end
+
   defp handle_stream_event(%{"type" => "content_block_start", "content_block" => block}, state) do
     case block do
       %{"type" => "tool_use"} ->
@@ -840,7 +851,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
             current_assistant_text_streamed?: true
         }
 
-        {[AdapterEvents.agent_message_chunk(session_id(state), text)], [], state}
+        {[
+           AdapterEvents.agent_message_chunk(session_id(state), text,
+             message_id: state.stream_message_id
+           )
+         ], [], state}
 
       %{"type" => "thinking_delta", "thinking" => thinking} ->
         state = %{
@@ -849,7 +864,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
             current_block_type: "thinking"
         }
 
-        {[AdapterEvents.agent_thought_chunk(session_id(state), thinking)], [], state}
+        {[
+           AdapterEvents.agent_thought_chunk(session_id(state), thinking,
+             message_id: state.stream_message_id
+           )
+         ], [], state}
 
       %{"type" => "input_json_delta"} ->
         {[], [], state}
@@ -865,7 +884,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
   defp handle_stream_event(_event, state), do: {[], [], state}
 
-  defp handle_assistant(%{"content" => content} = message, state) when is_list(content) do
+  defp stream_message_id(%{"id" => id}) when is_binary(id) and id != "", do: id
+  defp stream_message_id(_message), do: nil
+
+  defp handle_assistant(%{"content" => content} = message, message_id, state)
+       when is_list(content) do
     state =
       state
       |> maybe_set(:model, message["model"])
@@ -873,30 +896,32 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
 
     {messages, writes, state} =
       Enum.reduce(content, {[], [], state}, fn block, {messages, writes, acc} ->
-        {new_messages, new_writes, acc} = handle_assistant_block(block, acc)
+        {new_messages, new_writes, acc} = handle_assistant_block(block, message_id, acc)
         {messages ++ new_messages, writes ++ new_writes, acc}
       end)
 
     {messages, writes, %{state | current_assistant_text_streamed?: false}}
   end
 
-  defp handle_assistant(_message, state),
+  defp handle_assistant(_message, _message_id, state),
     do: {[], [], %{state | current_assistant_text_streamed?: false}}
 
   defp handle_assistant_block(
          %{"type" => "text"},
+         _message_id,
          %{current_assistant_text_streamed?: true} = state
        ) do
     {[], [], state}
   end
 
-  defp handle_assistant_block(%{"type" => "text", "text" => text}, state) do
+  defp handle_assistant_block(%{"type" => "text", "text" => text}, message_id, state) do
     state = %{state | text_acc: [text | state.text_acc]}
 
-    {[AdapterEvents.agent_message_chunk(session_id(state), text)], [], state}
+    {[AdapterEvents.agent_message_chunk(session_id(state), text, message_id: message_id)], [],
+     state}
   end
 
-  defp handle_assistant_block(%{"type" => "thinking", "thinking" => thinking}, state) do
+  defp handle_assistant_block(%{"type" => "thinking", "thinking" => thinking}, _message_id, state) do
     state = %{
       state
       | thinking_blocks: [%{text: thinking, signature: nil} | state.thinking_blocks]
@@ -905,7 +930,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     {[], [], state}
   end
 
-  defp handle_assistant_block(%{"type" => "tool_use"} = block, state) do
+  defp handle_assistant_block(%{"type" => "tool_use"} = block, _message_id, state) do
     {pending_messages, state} = emit_tool_pending(block, state)
     {update_messages, state} = emit_tool_update(block, state)
 
@@ -923,7 +948,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
     {pending_messages ++ update_messages ++ plan_messages, [], state}
   end
 
-  defp handle_assistant_block(_block, state), do: {[], [], state}
+  defp handle_assistant_block(_block, _message_id, state), do: {[], [], state}
 
   defp handle_user(%{"content" => content}, state) when is_list(content) do
     {messages, state} =
@@ -1064,6 +1089,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
         thinking_blocks: [],
         current_block_type: nil,
         current_assistant_text_streamed?: false,
+        stream_message_id: nil,
         session_id: acp_session_id,
         claude_session_id: claude_session_id,
         deferred_result: nil,

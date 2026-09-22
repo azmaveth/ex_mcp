@@ -20,6 +20,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Claude ACP adapter: `agent_message_chunk`, `agent_thought_chunk` and
+  `user_message_chunk` session updates now carry `messageId`, ported from
+  claude-agent-acp's `applyMessageId`. It is the same id `session/fork`'s
+  `_meta.jetbrains.air.fork` resolves, so a host can take a fork point
+  straight from a chunk it received instead of reading Claude's JSONL
+  transcript itself. Live streamed chunks are tagged with the id from the
+  `message_start` that opened the message, consolidated assistant text and
+  replayed `session/load` history with the persisted entry's grouping id (the
+  Anthropic API message id for an assistant turn, the transcript uuid for a
+  user message). **Wire-visible but additive:** the field is optional in the
+  ACP schema, no existing key changes, and no other update type gains it —
+  `tool_call`, `tool_call_update`, `plan`, usage and the session/mode/config
+  updates never carry one. Chunks ExMCP synthesizes rather than receives from
+  Claude (the Auto-mode fallback notice and the `result` fallback text) also
+  carry none, because no transcript entry backs them and a fork at such an id
+  would be rejected. Three golden scenarios assert the round trip: the
+  `messageId` read back off the wire is forked at verbatim and cuts the
+  transcript where expected. Codex, Pi and ZCode adapters are unaffected.
 - Claude ACP adapter: `session/fork` accepts an optional, explicitly
   versioned fork point at `_meta.jetbrains.air.fork`
   (`{"version": 1, "messageId": "..."}`), ported from claude-agent-acp#1046.
