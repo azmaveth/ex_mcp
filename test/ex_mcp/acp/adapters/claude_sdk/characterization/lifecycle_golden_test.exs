@@ -30,7 +30,16 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.LifecycleGoldenTest do
       cancelling the active and queued prompts, and the error replies for a
       missing session, a non-UUID id, and absent params;
     * `fork_session/2` copying the transcript under a new UUID with the
-      session ids rewritten, and its failure modes.
+      session ids rewritten, and its failure modes;
+    * the message-specific fork point at `_meta.jetbrains.air.fork`: an
+      assistant turn addressed by its Anthropic message id, a user message
+      addressed by its transcript uuid, the `:segment:<n>` suffix older
+      JetBrains AIR builds append, every entry sharing one message id being
+      kept, the fork point itself being *included*, an assistant uuid
+      shadowed by that entry's message id, an unknown id failing with
+      `{:invalid_params, _}` instead of silently copying everything, and a
+      blank id or an unsupported `version` falling back to the whole-session
+      copy.
 
   Prompt scheduling is characterized by the faults area, stream events by
   the session_updates area, and the mode/config catalogs by the catalog
@@ -39,6 +48,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.LifecycleGoldenTest do
   Mutation check (2026-09-21): in `claude_sdk.ex`, `cleanup_session/2` no
   longer clearing `session_id` (dropping that key from the struct update)
   fails `session_close_clears_session_identity`.
+
+  Mutation check (2026-09-22): in `claude_sdk/session_store.ex`, making the
+  fork point exclusive (`Enum.take(transcript, index)` in
+  `take_through_fork_point/3`) fails the four fork-point scenarios that read
+  the forked file back.
 
   To regenerate a fixture after an intentional behavior change, run the test
   with `CLAUDE_GOLDEN=update mix test <this file>[:line]`; that run rewrites
@@ -748,6 +762,126 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.LifecycleGoldenTest do
     end
   end
 
+  describe "fork_session/2 fork points" do
+    test "fork_session_at_an_assistant_message_id_keeps_that_message" do
+      steps = forkable_session() ++ [fork_at("msg_first"), read_forked()]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "fork_session_at_an_assistant_message_id_keeps_that_message",
+          steps
+        )
+
+      assert %{content: content} = ClaudeGolden.last_result(transcript)
+      assert Enum.map(content, & &1["uuid"]) == ["user-1", "assistant-1"]
+    end
+
+    test "fork_session_at_a_segment_suffixed_message_id_strips_the_suffix" do
+      steps = forkable_session() ++ [fork_at("msg_first:segment:3"), read_forked()]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "fork_session_at_a_segment_suffixed_message_id_strips_the_suffix",
+          steps
+        )
+
+      assert %{content: content} = ClaudeGolden.last_result(transcript)
+      assert Enum.map(content, & &1["uuid"]) == ["user-1", "assistant-1"]
+    end
+
+    test "fork_session_at_a_user_message_uuid_keeps_that_message" do
+      steps = forkable_session() ++ [fork_at("user-2"), read_forked()]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "fork_session_at_a_user_message_uuid_keeps_that_message",
+          steps
+        )
+
+      assert %{content: content} = ClaudeGolden.last_result(transcript)
+      assert Enum.map(content, & &1["uuid"]) == ["user-1", "assistant-1", "user-2"]
+    end
+
+    test "fork_session_keeps_every_entry_sharing_a_message_id" do
+      session = Flows.session_uuid(1)
+
+      entries = [
+        transcript_user("user-1", "first"),
+        transcript_assistant("assistant-1a", "msg_first", "answer "),
+        transcript_assistant("assistant-1b", "msg_first", "one"),
+        transcript_user("user-2", "second")
+      ]
+
+      steps = [Flows.session_jsonl(session, entries), fork_at("msg_first"), read_forked()]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "fork_session_keeps_every_entry_sharing_a_message_id",
+          steps
+        )
+
+      assert %{content: content} = ClaudeGolden.last_result(transcript)
+      assert Enum.map(content, & &1["uuid"]) == ["user-1", "assistant-1a", "assistant-1b"]
+    end
+
+    test "fork_session_ignores_an_assistant_uuid_that_has_a_message_id" do
+      steps = forkable_session() ++ [fork_at("assistant-1")]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "fork_session_ignores_an_assistant_uuid_that_has_a_message_id",
+          steps
+        )
+
+      assert %{tag: :error, error: {:invalid_params, _message}} =
+               ClaudeGolden.last_result(transcript)
+    end
+
+    test "fork_session_at_an_unknown_message_id_errors" do
+      steps = forkable_session() ++ [fork_at("msg_nope")]
+
+      transcript =
+        ClaudeGolden.assert_golden(@area, "fork_session_at_an_unknown_message_id_errors", steps)
+
+      assert %{tag: :error, error: {:invalid_params, _message}} =
+               ClaudeGolden.last_result(transcript)
+    end
+
+    test "fork_session_with_a_blank_message_id_copies_everything" do
+      steps = forkable_session() ++ [fork_at("   "), read_forked()]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "fork_session_with_a_blank_message_id_copies_everything",
+          steps
+        )
+
+      assert %{content: content} = ClaudeGolden.last_result(transcript)
+      assert length(content) == 4
+    end
+
+    test "fork_session_with_an_unsupported_fork_version_copies_everything" do
+      steps =
+        forkable_session() ++ [fork_at("msg_first", %{"version" => 2}), read_forked()]
+
+      transcript =
+        ClaudeGolden.assert_golden(
+          @area,
+          "fork_session_with_an_unsupported_fork_version_copies_everything",
+          steps
+        )
+
+      assert %{content: content} = ClaudeGolden.last_result(transcript)
+      assert length(content) == 4
+    end
+  end
+
   defp list_request(params \\ %{}) do
     %{
       "jsonrpc" => "2.0",
@@ -765,6 +899,63 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.LifecycleGoldenTest do
        "method" => "session/delete",
        "params" => %{"sessionId" => session_id, "cwd" => Flows.cwd()}
      }}
+  end
+
+  # A two-turn persisted transcript: user-1, assistant-1 ("msg_first"),
+  # user-2, assistant-2 ("msg_second").
+  defp forkable_session do
+    session = Flows.session_uuid(1)
+
+    entries = [
+      transcript_user("user-1", "first"),
+      transcript_assistant("assistant-1", "msg_first", "answer one"),
+      transcript_user("user-2", "second"),
+      transcript_assistant("assistant-2", "msg_second", "answer two")
+    ]
+
+    [Flows.session_jsonl(session, entries)]
+  end
+
+  defp transcript_user(uuid, text) do
+    %{
+      "type" => "user",
+      "uuid" => uuid,
+      "sessionId" => Flows.session_uuid(1),
+      "cwd" => Flows.cwd(),
+      "timestamp" => "2026-01-01T00:00:00Z",
+      "message" => %{"role" => "user", "content" => text}
+    }
+  end
+
+  defp transcript_assistant(uuid, message_id, text) do
+    %{
+      "type" => "assistant",
+      "uuid" => uuid,
+      "sessionId" => Flows.session_uuid(1),
+      "cwd" => Flows.cwd(),
+      "timestamp" => "2026-01-01T00:00:01Z",
+      "message" => %{
+        "id" => message_id,
+        "role" => "assistant",
+        "content" => [%{"type" => "text", "text" => text}]
+      }
+    }
+  end
+
+  # `session/fork` carrying the versioned fork point claude-agent-acp reads.
+  defp fork_at(message_id, overrides \\ %{}) do
+    fork = Map.merge(%{"version" => 1, "messageId" => message_id}, overrides)
+
+    {:fork_session,
+     %{
+       "sessionId" => Flows.session_uuid(1),
+       "cwd" => Flows.cwd(),
+       "_meta" => %{"jetbrains" => %{"air" => %{"fork" => fork}}}
+     }}
+  end
+
+  defp read_forked do
+    {:read_file, fn transcript -> Flows.session_path(forked_id(transcript)) end}
   end
 
   defp forked_id(transcript) do

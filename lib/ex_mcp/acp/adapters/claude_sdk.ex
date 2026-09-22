@@ -20,6 +20,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
   alias ExMCP.ACP.Envelope
   alias ExMCP.ACP.PromptQueue
 
+  # `session/fork` fork point, as claude-agent-acp reads it: an explicitly
+  # versioned object under `_meta.jetbrains.air.fork`.
+  @fork_meta_path ["_meta", "jetbrains", "air", "fork"]
+  @fork_meta_version 1
+
   defstruct [
     :session_id,
     # Claude Code's own session UUID (from the stream-json `init` event). Kept
@@ -183,6 +188,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
 
     params
     |> session_store_opts(state)
+    |> put_fork_message_id(params)
     |> then(&SessionStore.fork_session(session_id, &1))
     |> case do
       {:ok, forked_session_id} ->
@@ -750,6 +756,41 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
     |> Map.new()
   end
+
+  defp put_fork_message_id(opts, params) do
+    case fork_message_id(params) do
+      nil -> opts
+      message_id -> Map.put(opts, :fork_message_id, message_id)
+    end
+  end
+
+  # The fork point a client attaches to `session/fork`, in the shape
+  # claude-agent-acp reads (`forkPoint` in its `src/fork-session.ts`): an
+  # explicitly versioned object under `_meta.jetbrains.air.fork`. A missing
+  # object, any other version, a missing id and a blank id all mean "no fork
+  # point", which is the whole-session fork ExMCP has always performed.
+  defp fork_message_id(params) do
+    case fork_meta(params) do
+      %{"version" => @fork_meta_version, "messageId" => message_id}
+      when is_binary(message_id) ->
+        blank_to_nil(String.trim(message_id))
+
+      _ ->
+        nil
+    end
+  end
+
+  defp fork_meta(params) do
+    Enum.reduce_while(@fork_meta_path, params, fn key, acc ->
+      case acc do
+        %{^key => value} -> {:cont, value}
+        _ -> {:halt, nil}
+      end
+    end)
+  end
+
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(value), do: value
 
   defp clear_deleted_session(%{session_id: session_id} = state, session_id) do
     %{
