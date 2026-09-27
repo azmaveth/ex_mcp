@@ -106,10 +106,15 @@ defmodule ExMCP.Client.ConnectionManager do
   end
 
   defp establish_legacy_protocol(transport_mod, transport_state, opts, era_identity) do
+    # The transport adopts the server's selected version before anything else
+    # is sent, so notifications/initialized already carries it: a strict
+    # server rejects a protocol-version header that disagrees with the one it
+    # negotiated.
     with {:ok, result, state_after_handshake} <-
            do_handshake(transport_mod, transport_state, opts),
+         settled_state = settle_transport_era(transport_mod, state_after_handshake, result),
          {:ok, state_after_initialized} <-
-           send_initialized(transport_mod, state_after_handshake, result) do
+           send_initialized(transport_mod, settled_state, result) do
       emit_settled_era(:legacy, result["protocolVersion"])
       observe_era(era_identity, :legacy, result["protocolVersion"], opts)
       {:ok, result, state_after_initialized}
