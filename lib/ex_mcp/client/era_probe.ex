@@ -112,8 +112,10 @@ defmodule ExMCP.Client.EraProbe do
       {:error, {:probe_timeout, reason}} ->
         {:error, {:probe_timeout, reason}, transport_state}
 
-      {:error, {:http_error, 400, body}} ->
-        parse_http_probe_error(body, transport_state)
+      # MCP's backwards-compatibility guidance: a server that predates
+      # server/discover rejects the POST with 400, 404 or 405.
+      {:error, {:http_error, status, body}} when status in [400, 404, 405] ->
+        parse_http_probe_error(status, body, transport_state)
 
       {:error, {kind, _detail} = reason}
       when kind in [:invalid_meta, :invalid_meta_key, :invalid_meta_field, :missing_meta_field] ->
@@ -124,13 +126,13 @@ defmodule ExMCP.Client.EraProbe do
     end
   end
 
-  defp parse_http_probe_error(body, transport_state) do
+  defp parse_http_probe_error(status, body, transport_state) do
     case Protocol.parse_message(body) do
       {:error, error, _id} when is_map(error) ->
         {:error, {:json_rpc_error, error}, transport_state}
 
       other ->
-        {:error, {:http_probe_rejected, %{status: 400, response: other}}, transport_state}
+        {:error, {:http_probe_rejected, %{status: status, response: other}}, transport_state}
     end
   end
 
