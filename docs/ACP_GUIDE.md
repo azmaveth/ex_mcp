@@ -569,18 +569,7 @@ defmodule MyApp.CustomAgentAdapter do
   def translate_inbound(line, state) do
     case Jason.decode(line) do
       {:ok, %{"type" => "stream", "delta" => delta}} ->
-        notification = %{
-          "jsonrpc" => "2.0",
-          "method" => "session/update",
-          "params" => %{
-            "sessionId" => "default",
-            "update" => %{
-              "sessionUpdate" => "agent_message_chunk",
-              "content" => %{"type" => "text", "text" => delta}
-            }
-          }
-        }
-        {:messages, [notification], state}
+        {:messages, [ExMCP.ACP.AdapterEvents.agent_message_chunk("default", delta)], state}
 
       _ ->
         {:skip, state}
@@ -588,6 +577,10 @@ defmodule MyApp.CustomAgentAdapter do
   end
 end
 ```
+
+`ExMCP.ACP.AdapterEvents` builds the other ACP messages an adapter emits, such
+as thought chunks, tool calls, plans, mode changes, and the final
+`session/prompt` response, so adapters do not hand-assemble JSON-RPC maps.
 
 ### Adapter Callbacks
 

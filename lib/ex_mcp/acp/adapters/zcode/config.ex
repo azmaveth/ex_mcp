@@ -1,11 +1,11 @@
 defmodule ExMCP.ACP.Adapters.ZCode.Config do
-  @moduledoc """
-  Pure config and mode helpers for the ZCode ACP adapter.
+  @moduledoc false
 
-  ZCode has five operational modes (plan, build, edit, auto, yolo) that
-  correspond to ACP `SessionMode` IDs. Config options expose model selection
-  and thought-level (reasoning effort) control.
-  """
+  # Pure config and mode helpers for the ZCode ACP adapter.
+  #
+  # ZCode has five operational modes (plan, build, edit, auto, yolo) that
+  # correspond to ACP `SessionMode` IDs. Config options expose model selection
+  # and thought-level (reasoning effort) control.
 
   @default_mode "build"
 

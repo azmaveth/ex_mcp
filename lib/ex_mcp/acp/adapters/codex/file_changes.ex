@@ -1,7 +1,7 @@
 defmodule ExMCP.ACP.Adapters.Codex.FileChanges do
-  @moduledoc """
-  Pure mappings for Codex file change lifecycle notifications.
-  """
+  @moduledoc false
+
+  # Pure mappings for Codex file change lifecycle notifications.
 
   alias ExMCP.ACP.AdapterEvents
   alias ExMCP.ACP.Adapters.Codex.Events

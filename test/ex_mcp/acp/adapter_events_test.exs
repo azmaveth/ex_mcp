@@ -65,6 +65,23 @@ defmodule ExMCP.ACP.AdapterEventsTest do
            }
   end
 
+  test "content chunks accept map options" do
+    content = %{"type" => "text", "text" => "hi"}
+
+    assert get_in(
+             AdapterEvents.content_chunk("session-1", "agent_message_chunk", content, %{
+               "messageId" => "msg-4",
+               meta: %{"ex_mcp" => %{"replay" => true}}
+             }),
+             ["params", "update"]
+           ) == %{
+             "sessionUpdate" => "agent_message_chunk",
+             "content" => content,
+             "messageId" => "msg-4",
+             "_meta" => %{"ex_mcp" => %{"replay" => true}}
+           }
+  end
+
   test "builds resource link chunks" do
     update =
       get_in(

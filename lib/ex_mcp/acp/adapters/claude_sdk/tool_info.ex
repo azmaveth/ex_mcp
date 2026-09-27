@@ -1,7 +1,7 @@
 defmodule ExMCP.ACP.Adapters.ClaudeSDK.ToolInfo do
-  @moduledoc """
-  Pure Claude tool-use to ACP tool-call metadata conversion.
-  """
+  @moduledoc false
+
+  # Pure Claude tool-use to ACP tool-call metadata conversion.
 
   @tool_kinds %{
     "Read" => "read",
