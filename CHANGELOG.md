@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude ACP adapter: `session/load` now clamps an inherited Auto mode the
   model cannot support, matching `session/new` and `session/resume`. It
   applied only the bypass policy.
+- Pi ACP adapter: when the Pi subprocess exits, pending control requests
+  (such as `session/new`) are now failed in the order they were issued.
+  Previously the order followed the internal `"group-N"` id strings, so
+  requests could be reversed when N crossed a power of ten (`"group-1000"`
+  sorts before `"group-999"`).
 
 ### Added
 
