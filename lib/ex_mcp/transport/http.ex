@@ -46,7 +46,10 @@ defmodule ExMCP.Transport.HTTP do
         security: %{
           auth: {:bearer, "your-token"},
           validate_origin: true,
-          allowed_origins: ["https://app.example.com"]
+          allowed_origins: ["https://app.example.com"],
+          # Send credentials to this exact origin without consent, for this
+          # connection only (in addition to config :ex_mcp, :security).
+          trusted_origins: ["https://api.example.com"]
         }
       )
 
@@ -712,8 +715,10 @@ defmodule ExMCP.Transport.HTTP do
       user_id: extract_user_id(state)
     }
 
-    # Get transport-specific security configuration
-    config = SecurityConfig.get_transport_config(:http)
+    config =
+      :http
+      |> SecurityConfig.get_transport_config()
+      |> with_connection_trust(state)
 
     case SecurityGuard.validate_request(security_request, config) do
       {:ok, sanitized_request} ->
@@ -825,6 +830,16 @@ defmodule ExMCP.Transport.HTTP do
       end
     end)
   end
+
+  # The origins this connection was told to trust (`security:
+  # %{trusted_origins: [...]}`) join the VM-wide ones for its own requests
+  # only; no other connection is affected.
+  defp with_connection_trust(config, %{security: %{trusted_origins: origins}})
+       when is_list(origins) do
+    Map.update(config, :trusted_origins, origins, &Enum.uniq(&1 ++ origins))
+  end
+
+  defp with_connection_trust(config, _state), do: config
 
   defp extract_user_id(state) do
     config = SecurityConfig.get_transport_config(:http)
