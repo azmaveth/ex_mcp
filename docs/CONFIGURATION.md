@@ -81,8 +81,15 @@ forward "/mcp", ExMCP.HttpPlug,
 
 Client mode options:
 
-- `:era_probe_timeout` bounds the side-effect-free `server/discover` probe;
-  the default is `2_000` milliseconds.
+- `:era_probe_timeout` bounds the side-effect-free `server/discover` probe
+  exchange, including a synchronous HTTP POST; the default is `2_000`
+  milliseconds.
+- `:handshake_timeout` bounds the legacy `initialize` exchange the same way;
+  the default is `10_000` milliseconds.
+- `:establish_timeout` bounds establishing the connection as a whole, probe,
+  fallback, handshake and connection retries included; the default is
+  `:handshake_timeout` plus `:era_probe_timeout`, and on expiry
+  `start_link/1` fails with `{:error, :establish_timeout}`.
 - `:era_cache_legacy_ttl` controls how long a legacy observation is reused;
   the default is `300_000` milliseconds. Modern observations do not expire
   and cannot be replaced by automatic fallback.
@@ -614,12 +621,24 @@ Supported options:
 - `:env`
 - `:environment_policy` (`:isolated` by default; `:inherit` is an explicit
   compatibility opt-in)
+- `:process_group` (`false` by default): stop the server's whole process
+  group, not only the process the port started
 - `:timeout`
 
 The isolated policy passes a small runtime baseline and the explicitly supplied
 `:env` entries. It prevents unrelated API, cloud, and session credentials from
 being inherited by a third-party MCP or ACP subprocess; it does not provide a
 filesystem or network sandbox.
+
+The command is resolved against the `PATH` the child sees. When the VM runs as
+an OTP release, the release's own directories (under `RELEASE_ROOT`) are
+dropped from the inherited `PATH`, so a server that is itself an Erlang or
+Elixir program finds the host's `erl` rather than the release's.
+
+Set `process_group: true` for a server started through a wrapper (`npx`, a
+version-manager shim such as mise or asdf, a shell script): closing the
+connection then signals the wrapper and everything it started, instead of
+leaving the real server running once the wrapper is gone.
 
 ## Streamable HTTP
 
