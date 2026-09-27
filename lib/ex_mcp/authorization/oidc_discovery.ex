@@ -43,13 +43,16 @@ defmodule ExMCP.Authorization.OIDCDiscovery do
   - `{:error, reason}` - Failed to fetch metadata
 
   Discovery metadata is HTTPS-only, bounded, address-pinned, and issuer-checked
-  before it is returned.
+  before it is returned. A document whose `issuer` is missing or is not
+  byte-for-byte the requested issuer is not used (RFC 8414 §3.3): discovery
+  moves on to the next well-known URL, and reports the mismatch only when no
+  document names the issuer.
   """
   @spec discover(String.t(), keyword()) :: {:ok, oidc_metadata()} | {:error, term()}
   def discover(issuer, opts \\ []) do
     with :ok <- validate_issuer_url(issuer, opts),
          urls <- build_discovery_urls(issuer),
-         {:ok, metadata} <- try_urls(urls, metadata_options(opts), nil),
+         {:ok, metadata} <- try_urls(urls, issuer, metadata_options(opts), nil),
          :ok <- validate_metadata(metadata, issuer, opts) do
       {:ok, metadata}
     end
@@ -77,16 +80,37 @@ defmodule ExMCP.Authorization.OIDCDiscovery do
     end
   end
 
-  defp try_urls([], _opts, nil), do: {:error, :discovery_failed}
-  defp try_urls([], _opts, last_error), do: last_error
+  defp try_urls([], _issuer, _opts, nil), do: {:error, :discovery_failed}
+  defp try_urls([], _issuer, _opts, last_error), do: last_error
 
-  defp try_urls([url | rest], opts, _last_error) do
+  defp try_urls([url | rest], issuer, opts, last_error) do
     case fetch_metadata(url, opts) do
-      {:ok, metadata} -> {:ok, metadata}
-      {:error, {:metadata_fetch_error, _reason}} = error -> error
-      {:error, _reason} = error -> try_urls(rest, opts, error)
+      {:ok, metadata} ->
+        # A document for another issuer MUST NOT be used; skip it rather than
+        # letting it stop discovery before the issuer's own document is tried.
+        case validate_issuer(metadata, issuer) do
+          :ok -> {:ok, metadata}
+          {:error, _reason} = mismatch -> try_urls(rest, issuer, opts, mismatch)
+        end
+
+      {:error, {:metadata_fetch_error, _reason}} = error ->
+        error
+
+      {:error, _reason} = error ->
+        try_urls(rest, issuer, opts, keep_issuer_error(last_error, error))
     end
   end
+
+  # An issuer mismatch says more than a later 404, so it survives as the
+  # reported reason once every URL has been tried.
+  defp keep_issuer_error({:error, reason} = issuer_error, _error)
+       when reason in [:missing_issuer, :invalid_authorization_server_issuer],
+       do: issuer_error
+
+  defp keep_issuer_error({:error, {:issuer_mismatch, _details}} = issuer_error, _error),
+    do: issuer_error
+
+  defp keep_issuer_error(_last_error, error), do: error
 
   @doc """
   Validates that the discovered metadata contains required OIDC fields.

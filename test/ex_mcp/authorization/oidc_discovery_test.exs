@@ -105,6 +105,69 @@ defmodule ExMCP.Authorization.OIDCDiscoveryTest do
       assert {:error, _reason} = discover_with_client("https://auth.example.com", http_client)
     end
 
+    test "skips a document whose issuer does not match and uses the next one" do
+      foreign = %{
+        "issuer" => "https://attacker.example.com",
+        "authorization_endpoint" => "https://attacker.example.com/authorize",
+        "token_endpoint" => "https://attacker.example.com/token"
+      }
+
+      metadata = %{
+        "issuer" => "https://auth.example.com",
+        "authorization_endpoint" => "https://auth.example.com/authorize",
+        "token_endpoint" => "https://auth.example.com/token"
+      }
+
+      http_client =
+        mock_http_client(%{
+          "https://auth.example.com/.well-known/openid-configuration" =>
+            {:ok, %{status: 200, body: Jason.encode!(foreign)}},
+          "https://auth.example.com/.well-known/oauth-authorization-server" =>
+            {:ok, %{status: 200, body: Jason.encode!(metadata)}}
+        })
+
+      assert {:ok, ^metadata} = discover_with_client("https://auth.example.com", http_client)
+    end
+
+    test "reports the issuer mismatch when no document names the issuer" do
+      foreign = %{
+        "issuer" => "https://attacker.example.com",
+        "authorization_endpoint" => "https://attacker.example.com/authorize",
+        "token_endpoint" => "https://attacker.example.com/token"
+      }
+
+      http_client =
+        mock_http_client(%{
+          "https://auth.example.com/.well-known/openid-configuration" =>
+            {:ok, %{status: 200, body: Jason.encode!(foreign)}},
+          "https://auth.example.com/.well-known/oauth-authorization-server" =>
+            {:ok, %{status: 404}}
+        })
+
+      assert {:error,
+              {:issuer_mismatch,
+               expected: "https://auth.example.com", actual: "https://attacker.example.com"}} =
+               discover_with_client("https://auth.example.com", http_client)
+    end
+
+    test "skips a document that carries no issuer" do
+      metadata = %{
+        "issuer" => "https://auth.example.com",
+        "authorization_endpoint" => "https://auth.example.com/authorize",
+        "token_endpoint" => "https://auth.example.com/token"
+      }
+
+      http_client =
+        mock_http_client(%{
+          "https://auth.example.com/.well-known/openid-configuration" =>
+            {:ok, %{status: 200, body: Jason.encode!(Map.delete(metadata, "issuer"))}},
+          "https://auth.example.com/.well-known/oauth-authorization-server" =>
+            {:ok, %{status: 200, body: Jason.encode!(metadata)}}
+        })
+
+      assert {:ok, ^metadata} = discover_with_client("https://auth.example.com", http_client)
+    end
+
     test "preserves a trailing slash in exact issuer validation" do
       metadata = %{
         "issuer" => "https://auth.example.com/",
