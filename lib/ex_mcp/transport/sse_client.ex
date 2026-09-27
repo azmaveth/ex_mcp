@@ -44,6 +44,10 @@ defmodule ExMCP.Transport.SSEClient do
     :sse_15
   ]
 
+  # Request headers carry the connection's credentials and TLS options may
+  # carry key material: neither is printed, and format_status/1 keeps them
+  # out of crash reports too.
+  @derive {Inspect, except: [:headers, :ssl_opts]}
   defstruct [
     :url,
     :headers,
@@ -417,6 +421,22 @@ defmodule ExMCP.Transport.SSEClient do
 
   def handle_info(_msg, state) do
     {:noreply, state}
+  end
+
+  @impl true
+  def format_status(status) do
+    ExMCP.Internal.Redaction.status(status, fn
+      %__MODULE__{} = state ->
+        %{
+          state
+          | headers: ExMCP.Internal.Redaction.headers(state.headers),
+            ssl_opts: ExMCP.Internal.Redaction.secret(state.ssl_opts),
+            url: ExMCP.Internal.Redaction.url(state.url)
+        }
+
+      state ->
+        state
+    end)
   end
 
   @impl true

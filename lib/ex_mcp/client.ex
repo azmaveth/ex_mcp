@@ -51,7 +51,7 @@ defmodule ExMCP.Client do
   alias ExMCP.Client.NotificationListener.Worker
 
   alias ExMCP.Client.Operations.{Prompts, Resources, Tasks, Tools}
-  alias ExMCP.Internal.{Headers, Protocol, RequestParams, VersionInfo, VersionRegistry}
+  alias ExMCP.Internal.{Headers, Protocol, Redaction, RequestParams, VersionInfo, VersionRegistry}
   alias ExMCP.Reliability.Retry
   alias ExMCP.Response
   alias ExMCP.Server.Discover
@@ -2310,6 +2310,15 @@ defmodule ExMCP.Client do
 
   defp active_subscription?(_active, _candidate), do: false
 
+  # Crash reports and :sys.get_status/1 show the state with the connection's
+  # credentials replaced (headers, tokens, secrets, the server's env), for
+  # every log formatter, not only Elixir's Inspect.
+  @impl GenServer
+  def format_status(status), do: Redaction.status(status, &redact_state/1)
+
+  defp redact_state(%__MODULE__{} = state), do: Redaction.client(state)
+  defp redact_state(state), do: state
+
   @impl true
   def terminate(reason, state) do
     state
@@ -3432,4 +3441,10 @@ defmodule ExMCP.Client do
         {:ok, tool}
     end
   end
+end
+
+defimpl Inspect, for: ExMCP.Client do
+  # The connection's credentials never print; see ExMCP.Internal.Redaction.
+  def inspect(client, opts),
+    do: Inspect.Any.inspect(ExMCP.Internal.Redaction.client(client), opts)
 end

@@ -444,3 +444,10 @@ defmodule ExMCP.Transport.HTTP.LegacySSE do
 
   defp stop_sse(_pid), do: :ok
 end
+
+defimpl Inspect, for: ExMCP.Transport.HTTP.LegacySSE do
+  # Header values, the session id and the session query never print; see
+  # ExMCP.Internal.Redaction.
+  def inspect(state, opts),
+    do: Inspect.Any.inspect(ExMCP.Internal.Redaction.legacy_sse(state), opts)
+end

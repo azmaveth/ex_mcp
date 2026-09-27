@@ -1626,3 +1626,10 @@ defmodule ExMCP.Transport.HTTP do
     build_ssl_options(%{})
   end
 end
+
+defimpl Inspect, for: ExMCP.Transport.HTTP do
+  # Header values, tokens, the session id and auth configuration never print;
+  # see ExMCP.Internal.Redaction.
+  def inspect(state, opts),
+    do: Inspect.Any.inspect(ExMCP.Internal.Redaction.http(state), opts)
+end

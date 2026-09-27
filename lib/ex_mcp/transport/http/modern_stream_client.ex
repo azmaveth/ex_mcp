@@ -25,6 +25,11 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
     :ex_mcp_modern_stream_15
   ]
 
+  # Request headers and the auth provider's state carry the connection's
+  # credentials, the body the request's arguments, and the HTTP options TLS
+  # settings: none is printed, and format_status/1 keeps them out of crash
+  # reports too.
+  @derive {Inspect, except: [:headers, :body, :http_options, :auth_provider_state]}
   defstruct [
     :parent,
     :parent_monitor,
@@ -226,6 +231,23 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
       ) do
     cancel_request(state)
     {:stop, :normal, %{state | cancelled?: true}}
+  end
+
+  @impl true
+  def format_status(status) do
+    ExMCP.Internal.Redaction.status(status, fn
+      %__MODULE__{} = state ->
+        %{
+          state
+          | headers: ExMCP.Internal.Redaction.headers(state.headers),
+            body: ExMCP.Internal.Redaction.secret(state.body),
+            http_options: ExMCP.Internal.Redaction.secret(state.http_options),
+            auth_provider_state: ExMCP.Internal.Redaction.secret(state.auth_provider_state)
+        }
+
+      state ->
+        state
+    end)
   end
 
   @impl true
