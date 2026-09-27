@@ -455,6 +455,13 @@ defmodule ExMCP.Transport.Stdio do
     Port.info(port) != nil
   end
 
+  # The port is linked to the process that opened it, and stays linked to it
+  # after subscribe/2 hands ownership to the reader, which is spawn_linked.
+  @impl true
+  def linked_processes(%__MODULE__{port: port, reader_pid: reader_pid}) do
+    Enum.filter([port, reader_pid], &(is_port(&1) or is_pid(&1)))
+  end
+
   @doc """
   Subscribe to receive transport events (push model).
 

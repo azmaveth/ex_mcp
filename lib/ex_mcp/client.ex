@@ -97,6 +97,10 @@ defmodule ExMCP.Client do
     # Monitor refs of in-flight async POST tasks (Streamable HTTP transport),
     # mapped to the request id each task serves.
     async_post_tasks: %{},
+    # Linked processes of a transport (or receiver) this client has since
+    # dropped, and that were still alive when it did. Their exit signals are
+    # expected and are ignored rather than read as a foreign link's exit.
+    retired_links: MapSet.new(),
     # Memoized client handler: nil (not yet initialized), :none (no handler
     # configured) or {module, handler_state}. Initialized once; callback
     # returns update handler_state, so stateful client handlers work.
@@ -1294,6 +1298,10 @@ defmodule ExMCP.Client do
       Process.cancel_timer(state.reconnect_timer)
     end
 
+    # The receiver and transport processes are about to be stopped; their
+    # exits are expected, not a foreign link's.
+    state = retire_links(state)
+
     # Stop receiver task by killing the process directly
     if state.receiver_task && is_struct(state.receiver_task, Task) do
       if Process.alive?(state.receiver_task.pid) do
@@ -1341,24 +1349,19 @@ defmodule ExMCP.Client do
         :ok
     end)
 
-    # Close transport connection
-    if state.transport_mod && state.transport_state do
-      try do
-        state.transport_mod.close(state.transport_state)
-      rescue
-        # Ignore errors during cleanup
-        _ -> :ok
-      end
-    end
+    close_transport(state)
 
     NotificationListener.close_all(state.notification_listeners, :disconnected)
     reset_notification_worker(state)
 
     # Update state to disconnected. The manual_disconnect flag ensures a
     # late {:transport_closed, _} message does not trigger auto-reconnection.
+    # The closed transport state is dropped so terminate/2 cannot close it a
+    # second time; transport_mod stays for get_status/1.
     new_state = %{
       state
       | connection_status: :disconnected,
+        transport_state: nil,
         pending_requests: %{},
         pending_batches: %{},
         cancelled_requests: MapSet.new(),
@@ -1790,11 +1793,26 @@ defmodule ExMCP.Client do
     {:noreply, handle_transport_down({:receiver_task_died, reason}, state)}
   end
 
-  # Push mode: forwarder process died
-  def handle_info({:EXIT, _pid, reason}, %{receiver_task: :push} = state)
-      when reason != :normal do
-    Logger.error("Transport forwarder died: #{inspect(reason)}")
-    {:noreply, handle_transport_down({:transport_forwarder_died, reason}, state)}
+  # The client traps exits so it can tell its own links from everyone
+  # else's. The starter's exit never reaches here: GenServer handles the
+  # parent's exit itself and terminates, which closes the transport.
+  def handle_info({:EXIT, from, reason}, state) do
+    cond do
+      MapSet.member?(state.retired_links, from) ->
+        {:noreply, %{state | retired_links: MapSet.delete(state.retired_links, from)}}
+
+      from in ExMCP.Transport.linked_processes(state.transport_mod, state.transport_state) ->
+        handle_transport_link_exit(from, reason, state)
+
+      reason == :normal ->
+        # A normal exit does not take down a linked process that does not
+        # trap exits, so it does not take down the client either.
+        {:noreply, state}
+
+      true ->
+        # Any other link: behave as a process that does not trap exits.
+        {:stop, reason, state}
+    end
   end
 
   def handle_info({:transport_closed, reason}, state) do
@@ -1897,6 +1915,69 @@ defmodule ExMCP.Client do
     end
   end
 
+  # A normal exit of a transport-owned process is the transport's own
+  # business: it reports a real closure through {:transport_closed, _}. An
+  # abnormal one means the transport broke without saying so, and may still
+  # hold its connection or child process, so it is closed before the client
+  # moves on (and possibly reconnects, which would otherwise leave the old
+  # server running next to the new one).
+  defp handle_transport_link_exit(_from, :normal, state), do: {:noreply, state}
+
+  defp handle_transport_link_exit(_from, reason, state) do
+    Logger.error("Transport forwarder died: #{inspect(reason)}")
+    state = retire_links(state)
+    close_transport(state)
+    {:noreply, handle_transport_down({:transport_forwarder_died, reason}, state)}
+  end
+
+  # Remembers the links of the transport and receiver this client is about
+  # to drop, so their exits are not taken for a foreign link's. A link that
+  # is already gone is unlinked and its pending exit flushed instead, so the
+  # set only holds processes whose exit is still to come.
+  defp retire_links(state) do
+    receiver =
+      case state.receiver_task do
+        %Task{pid: pid} -> [pid]
+        _other -> []
+      end
+
+    links = receiver ++ ExMCP.Transport.linked_processes(state.transport_mod, state.transport_state)
+
+    retired =
+      Enum.reduce(links, state.retired_links, fn link, retired ->
+        if link_alive?(link) do
+          MapSet.put(retired, link)
+        else
+          Process.unlink(link)
+
+          receive do
+            {:EXIT, ^link, _reason} -> :ok
+          after
+            0 -> :ok
+          end
+
+          retired
+        end
+      end)
+
+    %{state | retired_links: retired}
+  end
+
+  defp link_alive?(pid) when is_pid(pid), do: Process.alive?(pid)
+  defp link_alive?(port) when is_port(port), do: Port.info(port) != nil
+
+  defp close_transport(%{transport_mod: mod, transport_state: transport_state})
+       when not is_nil(mod) and not is_nil(transport_state) do
+    mod.close(transport_state)
+    :ok
+  rescue
+    _error -> :ok
+  catch
+    :exit, _reason -> :ok
+  end
+
+  defp close_transport(_state), do: :ok
+
   # Transport teardown and reconnection
 
   # Already reconnecting with an attempt scheduled — nothing left to tear down.
@@ -1909,6 +1990,7 @@ defmodule ExMCP.Client do
   end
 
   defp handle_transport_down(reason, state) do
+    state = retire_links(state)
     reply_pending_with_close_error(reason, state)
     notify_subscription_processes(state, {:client_subscription_disconnected, reason})
 
@@ -2151,6 +2233,9 @@ defmodule ExMCP.Client do
     |> Map.get(:notification_listeners, %{})
     |> NotificationListener.close_all({:shutdown, reason})
 
+    # However the client stops (stop/2, its starter's exit, a linked
+    # process's crash), the connection and any child process go with it.
+    close_transport(state)
     :ok
   end
 

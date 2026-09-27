@@ -1137,6 +1137,13 @@ defmodule ExMCP.Transport.HTTP do
     :ok
   end
 
+  # The SSE client is start_linked by the process that opened it (the
+  # client). Modern request streams are started unlinked and monitor their
+  # parent instead, and async POST tasks are spawn_monitored.
+  @impl true
+  def linked_processes(%__MODULE__{sse_pid: sse_pid}) when is_pid(sse_pid), do: [sse_pid]
+  def linked_processes(%__MODULE__{}), do: []
+
   @doc false
   @spec settle_protocol_era(t(), :legacy | :modern | :unknown, String.t()) :: t()
   def settle_protocol_era(%__MODULE__{} = state, :modern, version) do

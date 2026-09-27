@@ -223,6 +223,10 @@ defmodule ExMCP.Transport.HTTP.LegacySSE do
   def connected?(%__MODULE__{sse_pid: sse_pid}) when is_pid(sse_pid), do: Process.alive?(sse_pid)
   def connected?(_state), do: false
 
+  @impl true
+  def linked_processes(%__MODULE__{sse_pid: sse_pid}) when is_pid(sse_pid), do: [sse_pid]
+  def linked_processes(_state), do: []
+
   defp start_sse(url, headers, timeouts, max_response_bytes, max_buffer_bytes, network_opts) do
     opts = [
       url: url,
