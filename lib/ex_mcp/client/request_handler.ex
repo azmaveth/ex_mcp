@@ -71,7 +71,7 @@ defmodule ExMCP.Client.RequestHandler do
   (the caller's deadline passed before it could go out) or `:caller_gone`.
   `ExMCP.Client.delivery_outcome/1` reads it as `:not_sent`.
   """
-  @spec not_sent_error(atom(), map()) :: Error.TransportError.t()
+  @spec not_sent_error(atom(), map()) :: %Error.TransportError{}
   def not_sent_error(cause, state) do
     Error.transport_error(transport_name(Map.get(state, :transport_mod)), :not_sent, %{
       cause: cause,

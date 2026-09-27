@@ -18,7 +18,7 @@ defmodule ExMCP.Transport.SSEClient do
   use GenServer
   require Logger
 
-  alias ExMCP.Internal.{Headers, LogSummary, SSE}
+  alias ExMCP.Internal.{Headers, LogSummary, Redaction, SSE}
   alias ExMCP.Transport.HTTP.BoundedStream
 
   @initial_retry_delay 1_000
@@ -425,13 +425,13 @@ defmodule ExMCP.Transport.SSEClient do
 
   @impl true
   def format_status(status) do
-    ExMCP.Internal.Redaction.status(status, fn
+    Redaction.status(status, fn
       %__MODULE__{} = state ->
         %{
           state
-          | headers: ExMCP.Internal.Redaction.headers(state.headers),
-            ssl_opts: ExMCP.Internal.Redaction.secret(state.ssl_opts),
-            url: ExMCP.Internal.Redaction.url(state.url)
+          | headers: Redaction.headers(state.headers),
+            ssl_opts: Redaction.secret(state.ssl_opts),
+            url: Redaction.url(state.url)
         }
 
       state ->

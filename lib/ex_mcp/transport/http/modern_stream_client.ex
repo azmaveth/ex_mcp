@@ -3,7 +3,7 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
 
   use GenServer
 
-  alias ExMCP.Internal.{Headers, SSE}
+  alias ExMCP.Internal.{Headers, Redaction, SSE}
   alias ExMCP.Transport.HTTP.BoundedStream
 
   @httpc_profiles [
@@ -235,14 +235,14 @@ defmodule ExMCP.Transport.HTTP.ModernStreamClient do
 
   @impl true
   def format_status(status) do
-    ExMCP.Internal.Redaction.status(status, fn
+    Redaction.status(status, fn
       %__MODULE__{} = state ->
         %{
           state
-          | headers: ExMCP.Internal.Redaction.headers(state.headers),
-            body: ExMCP.Internal.Redaction.secret(state.body),
-            http_options: ExMCP.Internal.Redaction.secret(state.http_options),
-            auth_provider_state: ExMCP.Internal.Redaction.secret(state.auth_provider_state)
+          | headers: Redaction.headers(state.headers),
+            body: Redaction.secret(state.body),
+            http_options: Redaction.secret(state.http_options),
+            auth_provider_state: Redaction.secret(state.auth_provider_state)
         }
 
       state ->
