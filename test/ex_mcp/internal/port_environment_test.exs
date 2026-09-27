@@ -50,4 +50,49 @@ defmodule ExMCP.Internal.PortEnvironmentTest do
     assert PortEnvironment.base([])[sentinel] == false
     assert PortEnvironment.base(environment_policy: :inherit) == %{}
   end
+
+  @release_host %{
+    "PATH" => "/srv/app/erts-16.3/bin:/srv/app/bin:/usr/local/bin:/usr/bin:/bin",
+    "RELEASE_ROOT" => "/srv/app",
+    "HOME" => "/home/app",
+    "SECRET_TOKEN" => "never-inherited"
+  }
+
+  describe "child PATH hygiene" do
+    test "an OTP release's own directories are removed from the inherited PATH" do
+      env = PortEnvironment.base([], @release_host)
+
+      assert env["PATH"] == "/usr/local/bin:/usr/bin:/bin"
+      assert env["HOME"] == "/home/app"
+      assert env["SECRET_TOKEN"] == false
+      assert env["RELEASE_ROOT"] == false
+    end
+
+    test "the inherit policy gets the same PATH" do
+      assert PortEnvironment.base([environment_policy: :inherit], @release_host) == %{
+               "PATH" => "/usr/local/bin:/usr/bin:/bin"
+             }
+    end
+
+    test "a directory that merely shares the release root's prefix is kept" do
+      host = %{@release_host | "PATH" => "/srv/app/bin:/srv/application/bin:/bin"}
+      assert PortEnvironment.base([], host)["PATH"] == "/srv/application/bin:/bin"
+    end
+
+    test "PATH is untouched outside a release" do
+      host = Map.delete(@release_host, "RELEASE_ROOT")
+
+      assert PortEnvironment.base([], host)["PATH"] == host["PATH"]
+      assert PortEnvironment.base([environment_policy: :inherit], host) == %{}
+    end
+
+    test "the child's PATH is an explicit one when given, else the cleaned inherited one" do
+      assert PortEnvironment.child_path([], @release_host) == "/usr/local/bin:/usr/bin:/bin"
+
+      assert PortEnvironment.child_path([env: [{"PATH", "/opt/tools"}]], @release_host) ==
+               "/opt/tools"
+
+      assert PortEnvironment.child_path([env: %{"PATH" => false}], @release_host) == nil
+    end
+  end
 end

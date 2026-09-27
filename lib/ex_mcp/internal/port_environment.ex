@@ -17,11 +17,37 @@ defmodule ExMCP.Internal.PortEnvironment do
     end
   end
 
-  @spec base(keyword()) :: normalized()
-  def base(opts) do
+  @doc """
+  The environment a child starts from, before its explicit `:env`.
+
+  Under either policy the inherited `PATH` is cleaned for a child: an OTP
+  release puts its own `erts-*/bin` and `bin` directories at the front of
+  `PATH` and names its root in `RELEASE_ROOT`, so a child that is itself an
+  Erlang or Elixir program would find the release's `erl`, which looks for
+  the release's boot files and fails to start. Entries under `RELEASE_ROOT`
+  are dropped. An explicit `PATH` in `:env` is used as given.
+  """
+  @spec base(keyword(), %{optional(String.t()) => String.t()}) :: normalized()
+  def base(opts, host_env \\ System.get_env()) do
     case Keyword.get(opts, :environment_policy, :isolated) do
-      :inherit -> %{}
-      :isolated -> isolated_base()
+      :inherit -> inherited_path_override(host_env)
+      :isolated -> isolated_base(host_env)
+    end
+  end
+
+  @doc """
+  The `PATH` the child will see (explicit `:env` first, then the cleaned
+  inherited one), or nil when it has none. Resolve the command against this,
+  not the VM's own `PATH`.
+  """
+  @spec child_path(keyword(), %{optional(String.t()) => String.t()}) :: String.t() | nil
+  def child_path(opts, host_env \\ System.get_env()) do
+    explicit = opts |> Keyword.get(:env, []) |> normalize()
+
+    case Map.fetch(explicit, "PATH") do
+      {:ok, false} -> nil
+      {:ok, path} -> path
+      :error -> clean_path(host_env)
     end
   end
 
@@ -53,9 +79,7 @@ defmodule ExMCP.Internal.PortEnvironment do
     end)
   end
 
-  defp isolated_base do
-    parent_env = System.get_env()
-
+  defp isolated_base(parent_env) do
     retained =
       Map.filter(parent_env, fn {name, _value} ->
         name in @isolated_allowlist or String.starts_with?(name, "LC_")
@@ -64,6 +88,36 @@ defmodule ExMCP.Internal.PortEnvironment do
     parent_env
     |> Map.new(fn {name, _value} -> {name, false} end)
     |> Map.merge(retained)
+    |> Map.merge(inherited_path_override(parent_env))
+  end
+
+  # The port inherits the VM's environment unless told otherwise, so PATH
+  # only needs overriding when cleaning it changed something.
+  defp inherited_path_override(host_env) do
+    case {Map.get(host_env, "PATH"), clean_path(host_env)} do
+      {same, same} -> %{}
+      {_original, cleaned} -> %{"PATH" => cleaned}
+    end
+  end
+
+  defp clean_path(host_env) do
+    case {Map.get(host_env, "PATH"), Map.get(host_env, "RELEASE_ROOT")} do
+      {nil, _root} -> nil
+      {path, root} when is_binary(root) and root != "" -> without_release(path, root)
+      {path, _no_release} -> path
+    end
+  end
+
+  defp without_release(path, root) do
+    root = Path.expand(root)
+
+    path
+    |> String.split(":")
+    |> Enum.reject(fn entry ->
+      entry != "" and Path.type(entry) == :absolute and
+        (Path.expand(entry) == root or String.starts_with?(Path.expand(entry), root <> "/"))
+    end)
+    |> Enum.join(":")
   end
 
   defp normalize_value(false), do: false

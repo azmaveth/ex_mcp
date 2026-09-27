@@ -19,6 +19,27 @@ defmodule ExMCP.Transport.Stdio do
     for explicitly trusted deployments
   - `:max_frame_bytes` - maximum inbound or outbound JSON-RPC frame size
     (default: 1 MiB)
+  - `:process_group` - when `true`, stopping the server signals its whole
+    process group rather than the one process the port started (default:
+    `false`). See "Process groups" below.
+
+  The command is resolved against the `PATH` the child will see (an explicit
+  `PATH` in `:env`, else the inherited one), not the VM's own. When the VM
+  runs as an OTP release, the release's own directories are dropped from the
+  inherited `PATH` (see `RELEASE_ROOT`), so a server that is itself an Erlang
+  or Elixir program does not pick up the release's `erl`.
+
+  ## Process groups
+
+  ERTS starts every port program as the leader of a new process group. By
+  default `close/1` sends SIGTERM, then SIGKILL, to that one process, so a
+  server's own children (an `npx` wrapper's `node`, a shell script's
+  commands) and a child that ignores SIGTERM can outlive the connection.
+  With `process_group: true`, `close/1` signals the whole group instead, and
+  when the server exits on its own, whatever it left running in its group is
+  signalled too. A descendant that leaves the group on purpose (`setsid`) is
+  not reached. Process groups are a Unix feature; on Windows the option has
+  no effect and `taskkill /T` already stops the tree.
 
   ## Example
 
@@ -46,13 +67,22 @@ defmodule ExMCP.Transport.Stdio do
     :line_buffer,
     :subscriber,
     :reader_pid,
-    max_frame_bytes: @default_max_frame_bytes
+    max_frame_bytes: @default_max_frame_bytes,
+    process_group: false
   ]
 
   @impl true
   def connect(opts) do
-    with :ok <- PortEnvironment.validate_policy(opts) do
+    with :ok <- PortEnvironment.validate_policy(opts),
+         :ok <- validate_process_group(opts) do
       do_connect(opts)
+    end
+  end
+
+  defp validate_process_group(opts) do
+    case Keyword.get(opts, :process_group, false) do
+      flag when is_boolean(flag) -> :ok
+      invalid -> {:error, {:invalid_process_group, invalid}}
     end
   end
 
@@ -83,7 +113,7 @@ defmodule ExMCP.Transport.Stdio do
       if Path.type(executable) == :absolute do
         executable
       else
-        case System.find_executable(executable) do
+        case find_executable(executable, PortEnvironment.child_path(opts)) do
           nil ->
             # Try common locations for node/npm/npx on macOS
             common_paths = [
@@ -108,7 +138,8 @@ defmodule ExMCP.Transport.Stdio do
         os_pid: port_os_pid(port),
         line_buffer: "",
         max_frame_bytes:
-          Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes)
+          Options.positive_integer(opts, :max_frame_bytes, @default_max_frame_bytes),
+        process_group: Keyword.get(opts, :process_group, false)
       }
 
       :telemetry.execute([:ex_mcp, :transport, :connection, :opened], %{}, %{
@@ -348,16 +379,25 @@ defmodule ExMCP.Transport.Stdio do
   @spec receive_message(%__MODULE__{}, timeout()) ::
           {:ok, binary(), %__MODULE__{}} | {:error, any()}
   def receive_message(%__MODULE__{port: port} = state, timeout) do
-    # Transfer port ownership to this process if needed
-    if Port.info(port, :connected) != {:connected, self()} do
-      Port.connect(port, self())
-    end
-
+    take_ownership(port)
     receive_loop(state, timeout)
   end
 
+  # Transfer port ownership to this process if needed. A port that has
+  # already closed cannot be connected; its last messages (the exit status
+  # among them) are already in the owner's mailbox for receive_loop/2.
+  defp take_ownership(port) do
+    case Port.info(port, :connected) do
+      {:connected, owner} when owner == self() -> :ok
+      {:connected, _other} -> Port.connect(port, self())
+      nil -> :ok
+    end
+  rescue
+    ArgumentError -> :ok
+  end
+
   @impl true
-  def close(%__MODULE__{port: port, os_pid: os_pid, reader_pid: reader_pid}) do
+  def close(%__MODULE__{port: port, os_pid: os_pid, reader_pid: reader_pid} = state) do
     :telemetry.execute([:ex_mcp, :transport, :connection, :closed], %{}, %{transport: :stdio})
 
     # Close the port before killing the reader: port_close exits the port
@@ -379,10 +419,35 @@ defmodule ExMCP.Transport.Stdio do
     # guarantee that the spawned OS process exits. Explicitly terminate the
     # child after detaching the reader so repeated stdio connections cannot
     # leak servers and exhaust the runner's process/thread budget.
-    terminate_os_process(os_pid)
+    terminate_os_process(signal_target(os_pid, state.process_group))
 
     :ok
   end
+
+  # A negative pid addresses the process group the port program leads.
+  defp signal_target(nil, _process_group), do: nil
+  defp signal_target(os_pid, true), do: {:group, os_pid}
+  defp signal_target(os_pid, false), do: os_pid
+
+  # A server that exits on its own is not signalled by anyone, so what it
+  # left running in its group would outlive the connection. The group keeps
+  # the leader's pid as its id after the leader is gone; a pid is not reused
+  # while a group with that id still has members, so the risk accepted here
+  # is only a group that emptied and whose id was handed to a new group
+  # leader within the grace period. Runs in its own process so neither the
+  # client nor the reader waits for it.
+  defp reap_group(%__MODULE__{process_group: true, os_pid: os_pid}) when is_integer(os_pid) do
+    reap_group(os_pid)
+  end
+
+  defp reap_group(%__MODULE__{}), do: :ok
+
+  defp reap_group(os_pid) when is_integer(os_pid) do
+    spawn(fn -> terminate_os_process({:group, os_pid}) end)
+    :ok
+  end
+
+  defp reap_group(_os_pid), do: :ok
 
   # Tolerate a port that is nil or already closed (e.g. the spawned process
   # exited on its own before close/1 was called).
@@ -402,21 +467,29 @@ defmodule ExMCP.Transport.Stdio do
 
   defp terminate_os_process(nil), do: :ok
 
-  defp terminate_os_process(os_pid) when is_integer(os_pid) do
+  defp terminate_os_process(target) do
     case :os.type() do
       {:win32, _name} ->
-        run_command("taskkill", ["/PID", Integer.to_string(os_pid), "/T", "/F"])
+        run_command("taskkill", ["/PID", Integer.to_string(target_pid(target)), "/T", "/F"])
 
       {:unix, _name} ->
-        signal_process(os_pid, "TERM")
+        signal_process(target, "TERM")
 
-        unless wait_for_process_exit(os_pid, @termination_grace_attempts) do
-          signal_process(os_pid, "KILL")
+        unless wait_for_process_exit(target, @termination_grace_attempts) do
+          signal_process(target, "KILL")
         end
     end
 
     :ok
   end
+
+  defp target_pid({:group, os_pid}), do: os_pid
+  defp target_pid(os_pid), do: os_pid
+
+  # `kill` addresses a process group by the negated group id; `--` keeps the
+  # negative number from being read as an option.
+  defp kill_args(signal, {:group, os_pid}), do: ["-#{signal}", "--", "-#{os_pid}"]
+  defp kill_args(signal, os_pid), do: ["-#{signal}", Integer.to_string(os_pid)]
 
   defp wait_for_process_exit(_os_pid, 0), do: false
 
@@ -429,16 +502,37 @@ defmodule ExMCP.Transport.Stdio do
     end
   end
 
-  defp os_process_alive?(os_pid) do
-    case run_command("kill", ["-0", Integer.to_string(os_pid)]) do
+  # For a group, true while any member is left.
+  defp os_process_alive?(target) do
+    case run_command("kill", kill_args("0", target)) do
       {_output, 0} -> true
       _other -> false
     end
   end
 
-  defp signal_process(os_pid, signal) do
-    run_command("kill", ["-#{signal}", Integer.to_string(os_pid)])
+  defp signal_process(target, signal) do
+    run_command("kill", kill_args(signal, target))
     :ok
+  end
+
+  defp find_executable(name, nil), do: System.find_executable(name)
+
+  defp find_executable(name, path) do
+    if String.contains?(name, "/") do
+      System.find_executable(name)
+    else
+      path
+      |> String.split(":", trim: true)
+      |> Enum.map(&Path.join(&1, name))
+      |> Enum.find(&executable_file?/1)
+    end
+  end
+
+  defp executable_file?(path) do
+    case File.stat(path) do
+      {:ok, %File.Stat{type: :regular, mode: mode}} -> Bitwise.band(mode, 0o111) != 0
+      _other -> false
+    end
   end
 
   defp run_command(command, args) do
@@ -474,10 +568,12 @@ defmodule ExMCP.Transport.Stdio do
     # (the current port owner). Transferring from the caller instead of from
     # inside the reader avoids a race where the port dies before the reader
     # is scheduled, which would crash the subscriber through the link.
+    group = if state.process_group, do: state.os_pid
+
     reader =
       spawn_link(fn ->
         receive do
-          :port_transferred -> stdio_reader_loop(port, "", pid, state.max_frame_bytes)
+          :port_transferred -> stdio_reader_loop(port, "", pid, state.max_frame_bytes, group)
         end
       end)
 
@@ -513,6 +609,7 @@ defmodule ExMCP.Transport.Stdio do
         do_process_data(data, state, remaining(timeout, started))
 
       {port, {:exit_status, status}} when port == state.port ->
+        reap_group(state)
         Error.connection_error({:process_exited, status})
 
       {port, :eof} when port == state.port ->
@@ -580,7 +677,7 @@ defmodule ExMCP.Transport.Stdio do
 
   # Internal reader process for push mode.
   # Reads port data, buffers lines, parses JSON, pushes to subscriber.
-  defp stdio_reader_loop(port, line_buffer, subscriber, max_frame_bytes) do
+  defp stdio_reader_loop(port, line_buffer, subscriber, max_frame_bytes, group) do
     receive do
       {^port, {:data, data}} ->
         binary_data =
@@ -594,7 +691,7 @@ defmodule ExMCP.Transport.Stdio do
         case append_frame(line_buffer, binary_data, max_frame_bytes) do
           {:ok, new_buffer} ->
             remaining = process_buffer(new_buffer, subscriber, max_frame_bytes)
-            stdio_reader_loop(port, remaining, subscriber, max_frame_bytes)
+            stdio_reader_loop(port, remaining, subscriber, max_frame_bytes, group)
 
           {:error, :frame_too_large} ->
             Kernel.send(subscriber, {:transport_closed, :frame_too_large})
@@ -603,6 +700,7 @@ defmodule ExMCP.Transport.Stdio do
 
       {^port, {:exit_status, status}} ->
         Kernel.send(subscriber, {:transport_closed, {:process_exited, status}})
+        reap_group(group)
 
       {^port, :eof} ->
         Kernel.send(subscriber, {:transport_closed, :eof})
