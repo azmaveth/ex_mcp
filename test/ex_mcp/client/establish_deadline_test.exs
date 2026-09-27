@@ -98,7 +98,7 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
   end
 
   test "an invalid :establish_timeout is refused" do
-    assert {:error, _reason} =
+    assert {:error, {:invalid_establish_timeout, -1}} =
              Client.start_link(
                transport: :test,
                establish_timeout: -1,

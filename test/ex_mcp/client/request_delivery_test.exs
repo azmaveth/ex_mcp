@@ -9,6 +9,8 @@ defmodule ExMCP.Client.RequestDeliveryTest do
 
   use ExUnit.Case, async: false
 
+  import ExMCP.TestHelpers, only: [wait_until: 2]
+
   alias ExMCP.Client
   alias ExMCP.Error
 
@@ -55,6 +57,9 @@ defmodule ExMCP.Client.RequestDeliveryTest do
       assert_receive {:tool_call_started, "slow", handler}
 
       {caller, monitor} = spawn_monitor(fn -> Client.call_tool(client, "orphan", %{}) end)
+
+      # Kill the caller only once its request is queued in the busy client.
+      wait_until(fn -> queued_request?(client, caller) end, timeout: 2_000)
       Process.exit(caller, :kill)
       assert_receive {:DOWN, ^monitor, :process, ^caller, :killed}
 
@@ -128,6 +133,15 @@ defmodule ExMCP.Client.RequestDeliveryTest do
         assert Client.delivery_outcome(reason) == :unknown, inspect(reason)
       end
     end
+  end
+
+  defp queued_request?(client, caller) do
+    {:messages, messages} = Process.info(client, :messages)
+
+    Enum.any?(messages, fn
+      {:"$gen_call", {^caller, _tag}, {:request, "tools/call", _params, _meta}} -> true
+      _other -> false
+    end)
   end
 
   defp respond(conn, %{"method" => "initialize", "id" => id}, _test_pid) do
