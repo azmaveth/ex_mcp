@@ -8,6 +8,7 @@ defmodule ExMCP.Client.EraProbe do
   explicit, policy-controlled legacy fallback decision.
   """
 
+  alias ExMCP.Client.Deadline
   alias ExMCP.Internal.{JSONRPC, Protocol, RequestParams, VersionInfo, VersionRegistry}
   alias ExMCP.Protocol.ResultEnvelope
   alias ExMCP.Server.Discover
@@ -32,7 +33,18 @@ defmodule ExMCP.Client.EraProbe do
           discovery: map()
         }
 
-  @doc "Runs a bounded modern discovery probe over a connected transport."
+  @doc "The probe's own timeout: `:era_probe_timeout`, default #{@default_timeout} ms."
+  @spec timeout(keyword()) :: timeout()
+  def timeout(opts), do: Keyword.get(opts, :era_probe_timeout, @default_timeout)
+
+  @doc """
+  Runs a bounded modern discovery probe over a connected transport.
+
+  `:era_probe_timeout` bounds each probe exchange as a whole, the send (a
+  synchronous HTTP POST included) as well as the wait for the response, and
+  the connection's `:establish_deadline` caps it further. A send cut short by
+  that bound is a `{:probe_timeout, reason}`, like a response that never came.
+  """
   @spec probe(module(), term(), keyword()) ::
           {:ok, result(), term()} | {:error, failure(), term()}
   def probe(transport_mod, transport_state, opts) do
@@ -94,7 +106,7 @@ defmodule ExMCP.Client.EraProbe do
          request = JSONRPC.request("server/discover", params, request_id),
          {:ok, outbound} <- encode_for_transport(transport_mod, request),
          {:ok, response, updated_state} <-
-           send_and_receive(transport_mod, outbound, transport_state, probe_timeout(opts)) do
+           bounded_send_and_receive(transport_mod, outbound, transport_state, opts) do
       parse_response(response, request_id, mode, updated_state)
     else
       {:error, {:probe_timeout, reason}} ->
@@ -207,16 +219,36 @@ defmodule ExMCP.Client.EraProbe do
     end
   end
 
-  defp send_and_receive(transport_mod, outbound, transport_state, timeout) do
+  defp bounded_send_and_receive(transport_mod, outbound, transport_state, opts) do
+    establish_deadline = Deadline.on_transport(transport_mod, transport_state)
+
+    exchange_deadline =
+      Deadline.earliest(Deadline.after_ms(timeout(opts)), Keyword.get(opts, :establish_deadline))
+
+    bounded_state = Deadline.put_on_transport(transport_mod, transport_state, exchange_deadline)
+
+    case send_and_receive(transport_mod, outbound, bounded_state, exchange_deadline) do
+      {:ok, response, updated_state} ->
+        {:ok, response,
+         Deadline.put_on_transport(transport_mod, updated_state, establish_deadline)}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp send_and_receive(transport_mod, outbound, transport_state, deadline) do
     case transport_mod.send_message(outbound, transport_state) do
       {:ok, updated_state, response} ->
         {:ok, response, updated_state}
 
       {:ok, updated_state} ->
-        receive_response(transport_mod, updated_state, timeout)
+        receive_response(transport_mod, updated_state, Deadline.remaining(deadline))
 
       {:error, reason} ->
-        {:error, reason}
+        if Deadline.expired?(deadline),
+          do: {:error, {:probe_timeout, reason}},
+          else: {:error, reason}
     end
   end
 
@@ -255,10 +287,6 @@ defmodule ExMCP.Client.EraProbe do
       |> VersionRegistry.enabled_versions()
       |> Enum.find(&VersionRegistry.modern?/1)
     end
-  end
-
-  defp probe_timeout(opts) do
-    Keyword.get(opts, :era_probe_timeout, @default_timeout)
   end
 
   defp encode_for_transport(Local, request), do: {:ok, request}

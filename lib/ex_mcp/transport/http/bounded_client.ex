@@ -15,7 +15,8 @@ defmodule ExMCP.Transport.HTTP.BoundedClient do
   def request(method, url, headers, content_type, body, opts)
       when method in [:get, :post, :put, :patch, :delete] and is_binary(url) and
              is_binary(content_type) and is_binary(body) do
-    with {:ok, uri, address} <- TargetPolicy.resolve(url, opts),
+    with {:ok, opts} <- apply_deadline(opts),
+         {:ok, uri, address} <- TargetPolicy.resolve(url, opts),
          :ok <- request_within_limit(body, opts),
          {:ok, conn} <- connect(uri, address, opts) do
       do_request(conn, method, uri, headers, content_type, body, opts)
@@ -24,6 +25,42 @@ defmodule ExMCP.Transport.HTTP.BoundedClient do
     exception -> {:error, {:http_client_error, exception.__struct__}}
   catch
     kind, _reason -> {:error, {:http_client_error, kind}}
+  end
+
+  # An absolute `:deadline` (monotonic milliseconds) caps the whole exchange:
+  # DNS, connect and the response all have to fit before it. A deadline that
+  # has already passed refuses the request before anything is resolved or
+  # connected, so `:deadline_expired` always means nothing was sent.
+  defp apply_deadline(opts) do
+    case Keyword.get(opts, :deadline) do
+      nil ->
+        {:ok, opts}
+
+      deadline when is_integer(deadline) ->
+        case deadline - System.monotonic_time(:millisecond) do
+          remaining when remaining > 0 ->
+            {:ok, opts |> cap(:connect_timeout, remaining) |> cap(:dns_timeout_ms, remaining)}
+
+          _expired ->
+            {:error, :deadline_expired}
+        end
+    end
+  end
+
+  defp cap(opts, key, limit) do
+    case Keyword.fetch(opts, key) do
+      {:ok, value} when is_integer(value) -> Keyword.put(opts, key, min(value, limit))
+      _other -> opts
+    end
+  end
+
+  defp response_deadline(opts) do
+    from_timeout = System.monotonic_time(:millisecond) + Keyword.fetch!(opts, :request_timeout)
+
+    case Keyword.get(opts, :deadline) do
+      deadline when is_integer(deadline) -> min(from_timeout, deadline)
+      nil -> from_timeout
+    end
   end
 
   defp request_within_limit(body, opts) do
@@ -65,7 +102,7 @@ defmodule ExMCP.Transport.HTTP.BoundedClient do
     result =
       case Mint.HTTP1.request(conn, Reducer.method_name(method), target, headers, body) do
         {:ok, next_conn, request_ref} ->
-          deadline = System.monotonic_time(:millisecond) + Keyword.fetch!(opts, :request_timeout)
+          deadline = response_deadline(opts)
           max_bytes = Keyword.fetch!(opts, :max_response_bytes)
           limits = [max_bytes: max_bytes, validate_headers: header_policy(max_bytes)]
           receive_response(next_conn, request_ref, Reducer.empty_response(), deadline, limits)

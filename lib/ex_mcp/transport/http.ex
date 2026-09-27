@@ -124,6 +124,10 @@ defmodule ExMCP.Transport.HTTP do
     :dns_timeout_ms,
     :dns_resolver,
     :allowed_private_hosts,
+    # Absolute monotonic-millisecond deadline for the synchronous exchanges
+    # made with this state (see put_deadline/2); nil when only the configured
+    # timeouts apply.
+    :deadline,
     tool_headers: %{},
     modern_streams: %{},
     sse_deferred_attempted: false,
@@ -155,7 +159,8 @@ defmodule ExMCP.Transport.HTTP do
           max_request_bytes: pos_integer(),
           dns_timeout_ms: pos_integer(),
           dns_resolver: module() | function(),
-          allowed_private_hosts: [String.t()]
+          allowed_private_hosts: [String.t()],
+          deadline: integer() | nil
         }
 
   @default_endpoint "/mcp/v1"
@@ -727,6 +732,7 @@ defmodule ExMCP.Transport.HTTP do
       end
 
     BoundedClient.request(:post, url, headers, "application/json", body,
+      deadline: state.deadline,
       connect_timeout: state.timeouts.connect,
       request_timeout: state.timeouts.request,
       max_request_bytes: state.max_request_bytes,
@@ -1079,6 +1085,7 @@ defmodule ExMCP.Transport.HTTP do
           end
 
         BoundedClient.request(:delete, url, sanitized_headers, "application/json", "",
+          deadline: state.deadline,
           connect_timeout: state.timeouts.connect,
           request_timeout: state.timeouts.request,
           max_request_bytes: state.max_request_bytes,
@@ -1136,6 +1143,17 @@ defmodule ExMCP.Transport.HTTP do
 
     :ok
   end
+
+  @doc false
+  # Caps every synchronous HTTP exchange made with this state (DNS, connect
+  # and response together) at an absolute monotonic-millisecond deadline, or
+  # removes the cap with nil. A request whose deadline has already passed is
+  # refused with `:deadline_expired` before anything is sent. The client sets
+  # it while establishing a connection and for a request whose caller gave
+  # it a timeout, and clears it afterwards.
+  @spec put_deadline(t(), integer() | nil) :: t()
+  def put_deadline(%__MODULE__{} = state, deadline) when is_integer(deadline) or is_nil(deadline),
+    do: %{state | deadline: deadline}
 
   # The SSE client is start_linked by the process that opened it (the
   # client). Modern request streams are started unlinked and monitor their

@@ -150,13 +150,22 @@ defmodule ExMCP.Client do
   - `:transport` - Transport type (`:stdio`, `:http`, `:sse`, `:beam`, etc.)
   - `:transports` - List of transports for fallback
   - `:name` - Optional GenServer name
-  - `:handshake_timeout` - Maximum time in milliseconds to wait for the
-    server's `initialize` response during connection (default: 10_000).
+  - `:handshake_timeout` - Maximum time in milliseconds for the `initialize`
+    exchange during connection, sending the request (a synchronous HTTP POST
+    included) and waiting for the server's response (default: 10_000).
     On expiry `start_link/1` fails with `{:error, :handshake_timeout}`.
   - `:protocol_mode` - Era policy: `:modern_only`, `:legacy_only`,
     `:prefer_modern`, or `:prefer_legacy`.
   - `:era_probe_timeout` - Dedicated timeout for the side-effect-free modern
-    discovery probe (default: 2_000 milliseconds).
+    discovery probe exchange, send included (default: 2_000 milliseconds).
+  - `:establish_timeout` - Upper bound in milliseconds (or `:infinity`) on
+    establishing the connection as a whole: opening the transport, the probe,
+    any legacy fallback, `initialize` and `notifications/initialized`, and
+    connection retries under `:retry_policy`. Defaults to
+    `:handshake_timeout` plus `:era_probe_timeout`. On expiry `start_link/1`
+    fails with `{:error, :establish_timeout}`, and each reconnection attempt is
+    bounded the same way. A failed attempt closes the transport it opened, so
+    a spawned stdio server does not outlive it.
   - `:era_cache_legacy_ttl` - How long a successful legacy observation is
     reused before probing for an upgrade again (default: 300_000 milliseconds).
   - `:reset_era_cache` - Clear the observation for this exact transport,
@@ -1087,6 +1096,9 @@ defmodule ExMCP.Client do
 
   # Normalize various error formats to consistent structure
   defp normalize_connection_error(:handshake_timeout), do: :handshake_timeout
+  defp normalize_connection_error(:establish_timeout), do: :establish_timeout
+
+  defp normalize_connection_error({:invalid_establish_timeout, _value} = reason), do: reason
 
   defp normalize_connection_error(:invalid_request) do
     {:initialize_error, %{"code" => ErrorCodes.invalid_request()}}

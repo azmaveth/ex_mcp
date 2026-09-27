@@ -8,7 +8,7 @@ defmodule ExMCP.Client.ConnectionManager do
 
   require Logger
   # alias ExMCP.TransportManager  # Not using full manager for now
-  alias ExMCP.Client.{EraCache, EraProbe}
+  alias ExMCP.Client.{Deadline, EraCache, EraProbe}
   alias ExMCP.Internal.{Protocol, VersionInfo, VersionRegistry}
   alias ExMCP.Reliability.Retry
   alias ExMCP.Transport.{HTTP, Local, ReliabilityWrapper, Stdio, Test}
@@ -23,14 +23,43 @@ defmodule ExMCP.Client.ConnectionManager do
   and returns the updated state with connection information.
 
   Supports retry policies for connection establishment through the :retry_policy option.
+
+  The whole call, retries included, is bounded by `:establish_timeout`
+  (milliseconds or `:infinity`; default `:handshake_timeout` plus
+  `:era_probe_timeout`). Each exchange inside it is additionally bounded by
+  its own timeout: the `server/discover` probe by `:era_probe_timeout` and the
+  `initialize` exchange by `:handshake_timeout`, including a synchronous HTTP
+  POST. When the overall deadline is what ran out, the result is
+  `{:error, :establish_timeout}`.
   """
   def establish_connection(state, opts) do
-    retry_policy = Keyword.get(opts, :retry_policy, [])
+    with {:ok, timeout} <- establish_timeout(opts) do
+      opts = Keyword.put(opts, :establish_deadline, Deadline.after_ms(timeout))
+      retry_policy = Keyword.get(opts, :retry_policy, [])
 
-    if retry_policy != [] do
-      establish_connection_with_retry(state, opts, retry_policy)
-    else
-      do_establish_connection(state, opts)
+      if retry_policy != [] do
+        establish_connection_with_retry(state, opts, retry_policy)
+      else
+        do_establish_connection(state, opts)
+      end
+    end
+  end
+
+  defp establish_timeout(opts) do
+    case Keyword.get(opts, :establish_timeout) do
+      nil ->
+        {:ok,
+         Keyword.get(opts, :handshake_timeout, @default_handshake_timeout) +
+           EraProbe.timeout(opts)}
+
+      :infinity ->
+        {:ok, :infinity}
+
+      timeout when is_integer(timeout) and timeout > 0 ->
+        {:ok, timeout}
+
+      invalid ->
+        {:error, {:invalid_establish_timeout, invalid}}
     end
   end
 
@@ -48,13 +77,19 @@ defmodule ExMCP.Client.ConnectionManager do
 
   defp do_establish_connection(state, opts) do
     opts = maybe_default_legacy_sse_opts(opts)
+    deadline = Keyword.get(opts, :establish_deadline)
 
-    with {:ok, transport_manager_opts} <- prepare_transport_config(opts),
+    with :ok <- check_deadline(deadline),
+         {:ok, transport_manager_opts} <- prepare_transport_config(opts),
          {:ok, {transport_mod, transport_state}} <- connect_transport(transport_manager_opts),
+         transport_state = Deadline.put_on_transport(transport_mod, transport_state, deadline),
          era_identity = EraCache.identity(transport_mod, transport_state, opts),
          :ok <- maybe_reset_era_cache(era_identity, opts),
          {:ok, result, state_after_protocol} <-
-           establish_protocol(transport_mod, transport_state, opts, era_identity),
+           transport_mod
+           |> establish_protocol(transport_state, opts, era_identity)
+           |> close_on_failure(transport_mod, transport_state),
+         state_after_protocol = Deadline.put_on_transport(transport_mod, state_after_protocol, nil),
          state_after_protocol = settle_transport_era(transport_mod, state_after_protocol, result),
          {:ok, receiver_result} <-
            start_receiver_task(self(), transport_mod, state_after_protocol) do
@@ -77,11 +112,31 @@ defmodule ExMCP.Client.ConnectionManager do
       {:ok, new_state}
     else
       {:error, reason} ->
-        {:error, reason}
+        if Deadline.expired?(deadline), do: {:error, :establish_timeout}, else: {:error, reason}
 
       error ->
         {:error, "Unexpected error during connection: #{inspect(error)}"}
     end
+  end
+
+  defp check_deadline(deadline) do
+    if Deadline.expired?(deadline), do: {:error, :establish_timeout}, else: :ok
+  end
+
+  # A connection attempt that fails after the transport was opened must not
+  # leave it behind: a spawned stdio server, or a port and reader linked to
+  # the client, would otherwise outlive the attempt (and pile up across
+  # connection retries and reconnects).
+  defp close_on_failure({:ok, _result, _state} = success, _transport_mod, _transport_state),
+    do: success
+
+  defp close_on_failure({:error, _reason} = error, transport_mod, transport_state) do
+    transport_mod.close(transport_state)
+    error
+  rescue
+    _exception -> error
+  catch
+    :exit, _reason -> error
   end
 
   defp establish_protocol(transport_mod, transport_state, opts, era_identity) do
@@ -555,10 +610,25 @@ defmodule ExMCP.Client.ConnectionManager do
     end
   end
 
+  # `:handshake_timeout` bounds the whole initialize exchange: the send
+  # (a synchronous HTTP POST included) and the wait for the response. The
+  # connection's overall deadline caps it further.
   defp do_handshake(transport_mod, transport_state, opts) do
     protocol_version = Keyword.get(opts, :protocol_version)
     handshake_timeout = Keyword.get(opts, :handshake_timeout, @default_handshake_timeout)
+    establish_deadline = Deadline.on_transport(transport_mod, transport_state)
 
+    exchange_deadline =
+      Deadline.earliest(Deadline.after_ms(handshake_timeout), Keyword.get(opts, :establish_deadline))
+
+    transport_state = Deadline.put_on_transport(transport_mod, transport_state, exchange_deadline)
+
+    transport_mod
+    |> exchange_initialize(transport_state, protocol_version, exchange_deadline)
+    |> restore_deadline(transport_mod, establish_deadline)
+  end
+
+  defp exchange_initialize(transport_mod, transport_state, protocol_version, deadline) do
     case send_initialize_request(
            transport_mod,
            transport_state,
@@ -571,14 +641,26 @@ defmodule ExMCP.Client.ConnectionManager do
       {:ok, state_after_send} ->
         # SSE mode or other transports - need to receive separately
         with {:ok, response_data, state_after_receive} <-
-               receive_handshake_message(transport_mod, state_after_send, handshake_timeout) do
+               receive_handshake_message(
+                 transport_mod,
+                 state_after_send,
+                 Deadline.remaining(deadline)
+               ) do
           parse_handshake_response(response_data, state_after_receive)
         end
+
+      {:error, _reason} = error ->
+        if Deadline.expired?(deadline), do: {:error, :handshake_timeout}, else: error
 
       error ->
         error
     end
   end
+
+  defp restore_deadline({:ok, result, transport_state}, transport_mod, deadline),
+    do: {:ok, result, Deadline.put_on_transport(transport_mod, transport_state, deadline)}
+
+  defp restore_deadline(error, _transport_mod, _deadline), do: error
 
   defp send_initialize_request(
          transport_mod,
