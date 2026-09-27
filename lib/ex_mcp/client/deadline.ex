@@ -41,7 +41,10 @@ defmodule ExMCP.Client.Deadline do
   def put_on_transport(HTTP, %HTTP{} = state, deadline), do: HTTP.put_deadline(state, deadline)
 
   def put_on_transport(ReliabilityWrapper, %ReliabilityWrapper{} = state, deadline) do
-    %{state | wrapped_state: put_on_transport(state.wrapped_module, state.wrapped_state, deadline)}
+    %{
+      state
+      | wrapped_state: put_on_transport(state.wrapped_module, state.wrapped_state, deadline)
+    }
   end
 
   def put_on_transport(_transport_mod, transport_state, _deadline), do: transport_state

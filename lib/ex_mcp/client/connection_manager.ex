@@ -89,7 +89,8 @@ defmodule ExMCP.Client.ConnectionManager do
            transport_mod
            |> establish_protocol(transport_state, opts, era_identity)
            |> close_on_failure(transport_mod, transport_state),
-         state_after_protocol = Deadline.put_on_transport(transport_mod, state_after_protocol, nil),
+         state_after_protocol =
+           Deadline.put_on_transport(transport_mod, state_after_protocol, nil),
          state_after_protocol = settle_transport_era(transport_mod, state_after_protocol, result),
          {:ok, receiver_result} <-
            start_receiver_task(self(), transport_mod, state_after_protocol) do
@@ -619,7 +620,10 @@ defmodule ExMCP.Client.ConnectionManager do
     establish_deadline = Deadline.on_transport(transport_mod, transport_state)
 
     exchange_deadline =
-      Deadline.earliest(Deadline.after_ms(handshake_timeout), Keyword.get(opts, :establish_deadline))
+      Deadline.earliest(
+        Deadline.after_ms(handshake_timeout),
+        Keyword.get(opts, :establish_deadline)
+      )
 
     transport_state = Deadline.put_on_transport(transport_mod, transport_state, exchange_deadline)
 

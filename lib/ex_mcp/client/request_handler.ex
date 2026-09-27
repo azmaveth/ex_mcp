@@ -7,7 +7,7 @@ defmodule ExMCP.Client.RequestHandler do
   """
 
   require Logger
-  alias ExMCP.Client.{InputDispatcher, MRTR, NotificationListener}
+  alias ExMCP.Client.{Deadline, InputDispatcher, MRTR, NotificationListener}
   alias ExMCP.Error
   alias ExMCP.Internal.{JSONRPC, LogSummary, Maps, Protocol, RequestParams, VersionRegistry}
   alias ExMCP.Protocol.{ErrorCodes, ResponseBuilder, ResultEnvelope}
@@ -33,11 +33,60 @@ defmodule ExMCP.Client.RequestHandler do
     (via the `GenServer.call/3` timeout), so no timer is scheduled
   - `%{timeout: :caller_enforced}` - legacy `{:request, method, params}`
     calls; no timer is scheduled
+
+  An explicit timeout comes with `deadline:`, the caller's absolute
+  monotonic-millisecond deadline. A request is sent only while its caller
+  still waits: one whose deadline passed while it sat in the client's
+  mailbox, or whose caller has exited, is answered with a `:not_sent`
+  transport error instead (see `not_sent_error/2`), and a synchronous HTTP
+  send is itself capped at the deadline.
   """
   def handle_request(method, params, from, state, meta \\ %{timeout: :caller_enforced}) do
-    id = Protocol.generate_id()
-    send_built_request(method, params, id, from, state, meta)
+    case undeliverable(from, meta) do
+      nil ->
+        id = Protocol.generate_id()
+        send_built_request(method, params, id, from, state, meta)
+
+      cause ->
+        {:reply, {:error, not_sent_error(cause, state)}, state}
+    end
   end
+
+  # Liveness and monotonic time are only comparable on the caller's own node.
+  defp undeliverable({caller, _tag}, meta) when is_pid(caller) and node(caller) == node() do
+    cond do
+      not Process.alive?(caller) -> :caller_gone
+      Deadline.expired?(request_deadline(meta)) -> :deadline_expired
+      true -> nil
+    end
+  end
+
+  defp undeliverable(_from, _meta), do: nil
+
+  defp request_deadline(%{deadline: deadline}) when is_integer(deadline), do: deadline
+  defp request_deadline(_meta), do: nil
+
+  @doc """
+  The error for a request ExMCP did not send: `cause` is `:deadline_expired`
+  (the caller's deadline passed before it could go out) or `:caller_gone`.
+  `ExMCP.Client.delivery_outcome/1` reads it as `:not_sent`.
+  """
+  @spec not_sent_error(atom(), map()) :: Error.TransportError.t()
+  def not_sent_error(cause, state) do
+    Error.transport_error(transport_name(Map.get(state, :transport_mod)), :not_sent, %{
+      cause: cause,
+      message: "The request was not sent (#{cause})."
+    })
+  end
+
+  @doc false
+  @spec transport_name(module() | nil) :: atom()
+  def transport_name(HTTP), do: :http
+  def transport_name(ExMCP.Transport.HTTP.LegacySSE), do: :sse
+  def transport_name(ExMCP.Transport.Stdio), do: :stdio
+  def transport_name(ExMCP.Transport.Local), do: :beam
+  def transport_name(ExMCP.Transport.Test), do: :test
+  def transport_name(transport_mod), do: transport_mod
 
   @doc false
   def open_subscription(subscription_pid, filter, state)
@@ -179,7 +228,9 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   defp send_request(request, method, id, from, state, meta) do
-    case send_request_message(request, state) do
+    deadline = request_deadline(meta)
+
+    case send_by_deadline(request, state, deadline) do
       {:ok, updated_state, response_data} ->
         # Non-SSE HTTP returns response immediately
         case Protocol.parse_message(response_data) do
@@ -215,13 +266,60 @@ defmodule ExMCP.Client.RequestHandler do
       {:error, :not_connected} ->
         {:reply, {:error, :not_connected}, state}
 
-      {:error, reason} ->
-        response =
-          {:error,
-           %{type: :transport_error, message: "Failed to send request: #{inspect(reason)}"}}
+      {:error, :deadline_expired} ->
+        # Refused before anything was sent (see BoundedClient).
+        {:reply, {:error, not_sent_error(:deadline_expired, state)}, state}
 
-        {:reply, response, state}
+      {:error, reason} ->
+        if Deadline.expired?(deadline) do
+          # The caller's own timeout: it may already have reported one.
+          {:reply, {:error, :timeout}, state}
+        else
+          {:reply, {:error, send_failure(reason, state)}, state}
+        end
     end
+  end
+
+  # The transport's reason is kept as a term, so a caller can tell a request
+  # that never left (see ExMCP.Client.delivery_outcome/1) from one that may
+  # have; `message` is kept for callers that read the text.
+  defp send_failure(reason, state) do
+    %{
+      type: :transport_error,
+      transport: transport_name(state.transport_mod),
+      reason: reason,
+      message: "Failed to send request: #{inspect(reason)}"
+    }
+  end
+
+  # A synchronous send (HTTP without a stream) runs in the client process;
+  # capping it at the caller's deadline frees the client when the caller has
+  # given up, instead of holding it for the transport's own request timeout.
+  defp send_by_deadline(request, state, nil), do: send_request_message(request, state)
+
+  defp send_by_deadline(request, state, deadline) do
+    previous = Deadline.on_transport(state.transport_mod, state.transport_state)
+
+    request
+    |> send_request_message(put_transport_deadline(state, deadline))
+    |> case do
+      {:ok, updated_state, response_data} ->
+        {:ok, put_transport_deadline(updated_state, previous), response_data}
+
+      {:ok, updated_state} ->
+        {:ok, put_transport_deadline(updated_state, previous)}
+
+      error ->
+        error
+    end
+  end
+
+  defp put_transport_deadline(state, deadline) do
+    %{
+      state
+      | transport_state:
+          Deadline.put_on_transport(state.transport_mod, state.transport_state, deadline)
+    }
   end
 
   defp send_request_message(

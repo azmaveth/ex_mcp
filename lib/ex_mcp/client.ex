@@ -988,6 +988,76 @@ defmodule ExMCP.Client do
     GenServer.stop(client, reason)
   end
 
+  @doc """
+  Says whether a failed request can have reached the server.
+
+  Takes the error a request function returned (`{:error, reason}` or the
+  bare `reason`) and returns:
+
+    * `:not_sent` - ExMCP knows the request never left the client: the client
+      was not connected, the request failed validation, the caller's deadline
+      passed or the caller exited before it went out, or the transport
+      refused it before writing anything (the connection could not be opened,
+      the address could not be resolved or was not permitted, the request was
+      too large, a security policy blocked it).
+    * `:unknown` - the request was, or may have been, delivered, and whether
+      the server acted on it is not known. This covers the caller's own
+      timeout, a connection that failed after sending, a broken response
+      stream, and any error the server answered with. A JSON-RPC error
+      response proves delivery but not that nothing ran: a server may report
+      invalid params after its tool has acted.
+
+  Only `:not_sent` makes repeating the request safe without knowing more.
+  Deciding whether to retry, and telling a server's refusal apart from a
+  failure after it acted, stays with the caller.
+
+      case ExMCP.Client.call_tool(client, "charge", args, timeout: 5_000) do
+        {:ok, result} -> {:ok, result}
+        {:error, reason} = error ->
+          if ExMCP.Client.delivery_outcome(reason) == :not_sent,
+            do: retry(),
+            else: error
+      end
+  """
+  @spec delivery_outcome(term()) :: :not_sent | :unknown
+  def delivery_outcome({:error, reason}), do: delivery_outcome(reason)
+  def delivery_outcome(:not_connected), do: :not_sent
+  def delivery_outcome(%Error.ValidationError{}), do: :not_sent
+  def delivery_outcome(%{type: :invalid_request_meta}), do: :not_sent
+  def delivery_outcome(%Error.TransportError{reason: :not_sent}), do: :not_sent
+  def delivery_outcome(%Error.TransportError{reason: reason}), do: send_outcome(reason)
+  def delivery_outcome(%{type: :transport_error, reason: reason}), do: send_outcome(reason)
+  # A streaming (async) HTTP POST reports its transport's reason this way.
+  def delivery_outcome({:transport_error, reason}), do: send_outcome(reason)
+  def delivery_outcome(_reason), do: :unknown
+
+  # Transport reasons that are raised before a byte is written.
+  @unsent_transport_reasons [
+    :deadline_expired,
+    :not_connected,
+    :request_too_large,
+    :frame_too_large,
+    :invalid_http_url,
+    :invalid_network_policy,
+    :dns_failed,
+    :dns_timeout,
+    :non_public_address,
+    :non_loopback_address
+  ]
+
+  defp send_outcome(reason) when reason in @unsent_transport_reasons, do: :not_sent
+  # BoundedClient returns a bare Mint error only from opening the connection;
+  # failures after that are wrapped as :http_request_failed/:http_receive_failed.
+  defp send_outcome(%Mint.TransportError{}), do: :not_sent
+  defp send_outcome(%Mint.HTTPError{}), do: :not_sent
+  defp send_outcome({:security_violation, _error}), do: :not_sent
+  # stdio refuses an invalid frame before writing it, and a closed port
+  # before Port.command/2 writes anything.
+  defp send_outcome({:validation_error, _reason}), do: :not_sent
+  defp send_outcome({:transport_error, {:send_failed, _reason}}), do: :not_sent
+  defp send_outcome({:transport_error, reason}), do: send_outcome(reason)
+  defp send_outcome(_reason), do: :unknown
+
   # GenServer callbacks
 
   @impl GenServer
@@ -1953,7 +2023,8 @@ defmodule ExMCP.Client do
         _other -> []
       end
 
-    links = receiver ++ ExMCP.Transport.linked_processes(state.transport_mod, state.transport_state)
+    links =
+      receiver ++ ExMCP.Transport.linked_processes(state.transport_mod, state.transport_state)
 
     retired =
       Enum.reduce(links, state.retired_links, fn link, retired ->
@@ -2812,8 +2883,12 @@ defmodule ExMCP.Client do
 
   defp client_mrtr_failure_class(_reason, _round, _maximum), do: :input_fulfillment_failed
 
+  # The absolute deadline travels with the request so the client does not
+  # send it after the caller has given up (see RequestHandler.handle_request/5).
   defp request_once(client, method, params, timeout) when is_integer(timeout) do
-    GenServer.call(client, {:request, method, params, %{timeout: timeout}}, timeout)
+    deadline = System.monotonic_time(:millisecond) + timeout
+    meta = %{timeout: timeout, deadline: deadline}
+    GenServer.call(client, {:request, method, params, meta}, timeout)
   catch
     :exit, {:timeout, _} -> {:error, :timeout}
   end
@@ -3060,6 +3135,21 @@ defmodule ExMCP.Client do
             ] do
     # Already an ExMCP.Error struct, return as-is
     error
+  end
+
+  # A failed send carries the transport's reason as a term. The :map format
+  # keeps the map (with its message text); :struct gives a TransportError.
+  defp handle_request_result({:error, %{type: :transport_error, reason: reason} = error}, opts) do
+    case Keyword.get(opts, :format, :struct) do
+      :map ->
+        {:error, error}
+
+      _struct ->
+        {:error,
+         Error.transport_error(Map.get(error, :transport), reason, %{
+           message: Map.get(error, :message)
+         })}
+    end
   end
 
   defp handle_request_result({:error, error_data}, opts) when is_map(error_data) do
