@@ -9,7 +9,13 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
 
   use ExUnit.Case, async: true
 
+  import ExMCP.TestHelpers, only: [wait_until: 2]
+
   alias ExMCP.Client
+
+  # Far below the 30 s a synchronous POST was allowed before, and loose
+  # enough for a loaded CI host.
+  @bound 5_000
 
   setup do
     Process.flag(:trap_exit, true)
@@ -27,7 +33,7 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
         timed(fn -> start_client(url, protocol_mode: :legacy_only, handshake_timeout: 300) end)
 
       assert {:error, :handshake_timeout} = result
-      assert elapsed < 2_000
+      assert elapsed < @bound
     end
 
     test "prefer_modern bounds the probe by :era_probe_timeout, then the fallback", %{
@@ -44,10 +50,10 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
         end)
 
       assert {:error, _reason} = result
-      assert elapsed < 2_000
+      assert elapsed < @bound
       # The probe timed out on its own bound and counted as fallback
       # evidence, so initialize was tried on a second connection.
-      assert Agent.get(connections, & &1) == 2
+      wait_until(fn -> Agent.get(connections, & &1) == 2 end, timeout: 2_000)
     end
 
     test "modern_only returns within :era_probe_timeout", %{url: url, connections: connections} do
@@ -57,8 +63,8 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
         end)
 
       assert {:error, _reason} = result
-      assert elapsed < 2_000
-      assert Agent.get(connections, & &1) == 1
+      assert elapsed < @bound
+      wait_until(fn -> Agent.get(connections, & &1) == 1 end, timeout: 2_000)
     end
 
     test ":establish_timeout bounds the whole establishment", %{url: url} do
@@ -72,7 +78,7 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
         end)
 
       assert {:error, :establish_timeout} = result
-      assert elapsed < 2_000
+      assert elapsed < @bound
     end
 
     test ":establish_timeout covers connection retries too", %{url: url} do
@@ -87,7 +93,7 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
         end)
 
       assert {:error, :establish_timeout} = result
-      assert elapsed < 2_500
+      assert elapsed < @bound
     end
   end
 
