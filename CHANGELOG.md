@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ExMCP.ACP.AdapterEvents.content_chunk/4` accepts a map for `opts`, as its
   spec always said. A map raised `FunctionClauseError` in `Keyword.get/3`
   because `:meta` was read as a keyword list; keyword options are unchanged.
+- Pi ACP adapter: when the Pi subprocess exits, pending control requests
+  (such as `session/new`) are now failed in the order they were issued.
+  Previously the order followed the internal `"group-N"` id strings, so
+  requests could be reversed when N crossed a power of ten (`"group-1000"`
+  sorts before `"group-999"`).
 
 ### Added
 
