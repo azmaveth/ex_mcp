@@ -86,6 +86,22 @@ defmodule ExMCP.Internal.PortEnvironmentTest do
       assert PortEnvironment.base([environment_policy: :inherit], host) == %{}
     end
 
+    test "on Windows, entries are split on ; and compared without case or slash direction" do
+      host = %{
+        "PATH" => "C:\\app\\erts-16.3\\bin;c:/APP/bin;C:\\Windows\\system32;C:\\application\\bin",
+        "RELEASE_ROOT" => "C:\\App\\"
+      }
+
+      windows = {:win32, :nt}
+
+      assert PortEnvironment.child_path([], host, windows) ==
+               "C:\\Windows\\system32;C:\\application\\bin"
+
+      assert PortEnvironment.base([environment_policy: :inherit], host, windows) == %{
+               "PATH" => "C:\\Windows\\system32;C:\\application\\bin"
+             }
+    end
+
     test "the child's PATH is an explicit one when given, else the cleaned inherited one" do
       assert PortEnvironment.child_path([], @release_host) == "/usr/local/bin:/usr/bin:/bin"
 

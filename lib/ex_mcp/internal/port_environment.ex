@@ -7,6 +7,7 @@ defmodule ExMCP.Internal.PortEnvironment do
   )
 
   @type value :: String.t() | false
+  @type os_type :: {:unix | :win32, atom()}
   @type normalized :: %{optional(String.t()) => value()}
 
   @spec validate_policy(keyword()) :: :ok | {:error, {:invalid_environment_policy, term()}}
@@ -27,11 +28,11 @@ defmodule ExMCP.Internal.PortEnvironment do
   the release's boot files and fails to start. Entries under `RELEASE_ROOT`
   are dropped. An explicit `PATH` in `:env` is used as given.
   """
-  @spec base(keyword(), %{optional(String.t()) => String.t()}) :: normalized()
-  def base(opts, host_env \\ System.get_env()) do
+  @spec base(keyword(), %{optional(String.t()) => String.t()}, os_type()) :: normalized()
+  def base(opts, host_env \\ System.get_env(), os_type \\ :os.type()) do
     case Keyword.get(opts, :environment_policy, :isolated) do
-      :inherit -> inherited_path_override(host_env)
-      :isolated -> isolated_base(host_env)
+      :inherit -> inherited_path_override(host_env, os_type)
+      :isolated -> isolated_base(host_env, os_type)
     end
   end
 
@@ -40,14 +41,15 @@ defmodule ExMCP.Internal.PortEnvironment do
   inherited one), or nil when it has none. Resolve the command against this,
   not the VM's own `PATH`.
   """
-  @spec child_path(keyword(), %{optional(String.t()) => String.t()}) :: String.t() | nil
-  def child_path(opts, host_env \\ System.get_env()) do
+  @spec child_path(keyword(), %{optional(String.t()) => String.t()}, os_type()) ::
+          String.t() | nil
+  def child_path(opts, host_env \\ System.get_env(), os_type \\ :os.type()) do
     explicit = opts |> Keyword.get(:env, []) |> normalize()
 
     case Map.fetch(explicit, "PATH") do
       {:ok, false} -> nil
       {:ok, path} -> path
-      :error -> clean_path(host_env)
+      :error -> clean_path(host_env, os_type)
     end
   end
 
@@ -79,7 +81,7 @@ defmodule ExMCP.Internal.PortEnvironment do
     end)
   end
 
-  defp isolated_base(parent_env) do
+  defp isolated_base(parent_env, os_type) do
     retained =
       Map.filter(parent_env, fn {name, _value} ->
         name in @isolated_allowlist or String.starts_with?(name, "LC_")
@@ -88,36 +90,54 @@ defmodule ExMCP.Internal.PortEnvironment do
     parent_env
     |> Map.new(fn {name, _value} -> {name, false} end)
     |> Map.merge(retained)
-    |> Map.merge(inherited_path_override(parent_env))
+    |> Map.merge(inherited_path_override(parent_env, os_type))
   end
 
   # The port inherits the VM's environment unless told otherwise, so PATH
   # only needs overriding when cleaning it changed something.
-  defp inherited_path_override(host_env) do
-    case {Map.get(host_env, "PATH"), clean_path(host_env)} do
+  defp inherited_path_override(host_env, os_type) do
+    case {Map.get(host_env, "PATH"), clean_path(host_env, os_type)} do
       {same, same} -> %{}
       {_original, cleaned} -> %{"PATH" => cleaned}
     end
   end
 
-  defp clean_path(host_env) do
+  defp clean_path(host_env, os_type) do
     case {Map.get(host_env, "PATH"), Map.get(host_env, "RELEASE_ROOT")} do
       {nil, _root} -> nil
-      {path, root} when is_binary(root) and root != "" -> without_release(path, root)
+      {path, root} when is_binary(root) and root != "" -> without_release(path, root, os_type)
       {path, _no_release} -> path
     end
   end
 
-  defp without_release(path, root) do
-    root = Path.expand(root)
+  defp without_release(path, root, os_type) do
+    separator = path_separator(os_type)
+    root = directory_key(root, os_type)
 
     path
-    |> String.split(":")
+    |> String.split(separator)
     |> Enum.reject(fn entry ->
-      entry != "" and Path.type(entry) == :absolute and
-        (Path.expand(entry) == root or String.starts_with?(Path.expand(entry), root <> "/"))
+      key = directory_key(entry, os_type)
+      key != nil and root != nil and (key == root or String.starts_with?(key, root <> "/"))
     end)
-    |> Enum.join(":")
+    |> Enum.join(separator)
+  end
+
+  defp path_separator({:win32, _name}), do: ";"
+  defp path_separator(_unix), do: ":"
+
+  # A comparable form of an absolute directory, or nil for anything else.
+  # Windows paths compare case-insensitively with either slash.
+  defp directory_key(dir, {:win32, _name}) do
+    normalized = dir |> String.replace("\\", "/") |> String.trim_trailing("/")
+
+    if Regex.match?(~r{^([A-Za-z]:/|//)}, normalized <> "/"),
+      do: String.downcase(normalized),
+      else: nil
+  end
+
+  defp directory_key(dir, _unix) do
+    if dir != "" and Path.type(dir) == :absolute, do: Path.expand(dir), else: nil
   end
 
   defp normalize_value(false), do: false

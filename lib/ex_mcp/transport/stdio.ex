@@ -517,21 +517,17 @@ defmodule ExMCP.Transport.Stdio do
 
   defp find_executable(name, nil), do: System.find_executable(name)
 
+  # :os.find_executable/2 searches an explicit path with the platform's own
+  # rules: its path separator, the execute bit on Unix, and the executable
+  # extensions on Windows. A name with a directory is not searched for.
   defp find_executable(name, path) do
-    if String.contains?(name, "/") do
+    if String.contains?(name, ["/", "\\"]) do
       System.find_executable(name)
     else
-      path
-      |> String.split(":", trim: true)
-      |> Enum.map(&Path.join(&1, name))
-      |> Enum.find(&executable_file?/1)
-    end
-  end
-
-  defp executable_file?(path) do
-    case File.stat(path) do
-      {:ok, %File.Stat{type: :regular, mode: mode}} -> Bitwise.band(mode, 0o111) != 0
-      _other -> false
+      case :os.find_executable(String.to_charlist(name), String.to_charlist(path)) do
+        false -> nil
+        found -> List.to_string(found)
+      end
     end
   end
 
