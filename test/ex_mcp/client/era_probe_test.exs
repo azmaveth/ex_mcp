@@ -86,11 +86,13 @@ defmodule ExMCP.Client.EraProbeTest do
       status = Keyword.fetch!(state.opts, :probe_status)
 
       body =
-        Jason.encode!(%{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "error" => %{"code" => -32601, "message" => "Method not found"}
-        })
+        Keyword.get_lazy(state.opts, :probe_body, fn ->
+          Jason.encode!(%{
+            "jsonrpc" => "2.0",
+            "id" => id,
+            "error" => %{"code" => -32601, "message" => "Method not found"}
+          })
+        end)
 
       {:error, {:http_error, status, body}}
     end
@@ -390,6 +392,68 @@ defmodule ExMCP.Client.EraProbeTest do
     assert {:ok, "2025-11-25"} = Client.negotiated_version(client)
     :ok = Client.disconnect(client)
   end
+
+  # MCP's backwards-compatibility guidance: a server that predates the
+  # method answers the probe POST with 400, 404 or 405.
+  for status <- [404, 405], body <- [:json_rpc, :plain_text] do
+    test "HTTP #{status} to the probe (#{body} body) is legacy fallback evidence" do
+      {:ok, client} =
+        Client.start_link(
+          [
+            transport: HTTPProbeTransport,
+            test_pid: self(),
+            probe_status: unquote(status),
+            protocol_mode: :prefer_modern,
+            health_check_interval: nil
+          ] ++ probe_body(unquote(body))
+        )
+
+      assert_receive {:http_probe_transport_request, "server/discover"}
+      assert_receive {:http_probe_transport_request, "initialize"}
+      assert {:ok, "2025-11-25"} = Client.negotiated_version(client)
+      :ok = Client.disconnect(client)
+    end
+
+    test "HTTP #{status} to the probe (#{body} body) never downgrades modern_only" do
+      Process.flag(:trap_exit, true)
+
+      assert {:error, _reason} =
+               Client.start_link(
+                 [
+                   transport: HTTPProbeTransport,
+                   test_pid: self(),
+                   probe_status: unquote(status),
+                   protocol_mode: :modern_only,
+                   health_check_interval: nil
+                 ] ++ probe_body(unquote(body))
+               )
+
+      assert_receive {:http_probe_transport_request, "server/discover"}
+      refute_receive {:http_probe_transport_request, "initialize"}
+    end
+  end
+
+  for status <- [403, 500] do
+    test "HTTP #{status} to the probe is not downgrade evidence" do
+      Process.flag(:trap_exit, true)
+
+      assert {:error, _reason} =
+               Client.start_link(
+                 transport: HTTPProbeTransport,
+                 test_pid: self(),
+                 probe_status: unquote(status),
+                 probe_body: "nope",
+                 protocol_mode: :prefer_modern,
+                 health_check_interval: nil
+               )
+
+      assert_receive {:http_probe_transport_request, "server/discover"}
+      refute_receive {:http_probe_transport_request, "initialize"}
+    end
+  end
+
+  defp probe_body(:json_rpc), do: []
+  defp probe_body(:plain_text), do: [probe_body: "Not Found"]
 
   test "HTTP authentication failures are not downgrade evidence" do
     Process.flag(:trap_exit, true)

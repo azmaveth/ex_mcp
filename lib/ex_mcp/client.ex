@@ -41,6 +41,7 @@ defmodule ExMCP.Client do
 
   alias ExMCP.Client.{
     ConnectionManager,
+    Deadline,
     EraCache,
     MRTR,
     NotificationListener,
@@ -51,7 +52,7 @@ defmodule ExMCP.Client do
   alias ExMCP.Client.NotificationListener.Worker
 
   alias ExMCP.Client.Operations.{Prompts, Resources, Tasks, Tools}
-  alias ExMCP.Internal.{Headers, Protocol, RequestParams, VersionInfo, VersionRegistry}
+  alias ExMCP.Internal.{Headers, Protocol, Redaction, RequestParams, VersionInfo, VersionRegistry}
   alias ExMCP.Reliability.Retry
   alias ExMCP.Response
   alias ExMCP.Server.Discover
@@ -97,6 +98,10 @@ defmodule ExMCP.Client do
     # Monitor refs of in-flight async POST tasks (Streamable HTTP transport),
     # mapped to the request id each task serves.
     async_post_tasks: %{},
+    # Linked processes of a transport (or receiver) this client has since
+    # dropped, and that were still alive when it did. Their exit signals are
+    # expected and are ignored rather than read as a foreign link's exit.
+    retired_links: MapSet.new(),
     # Memoized client handler: nil (not yet initialized), :none (no handler
     # configured) or {module, handler_state}. Initialized once; callback
     # returns update handler_state, so stateful client handlers work.
@@ -146,13 +151,23 @@ defmodule ExMCP.Client do
   - `:transport` - Transport type (`:stdio`, `:http`, `:sse`, `:beam`, etc.)
   - `:transports` - List of transports for fallback
   - `:name` - Optional GenServer name
-  - `:handshake_timeout` - Maximum time in milliseconds to wait for the
-    server's `initialize` response during connection (default: 10_000).
+  - `:handshake_timeout` - Maximum time in milliseconds for the `initialize`
+    exchange during connection, sending the request (a synchronous HTTP POST
+    included) and waiting for the server's response (default: 10_000).
     On expiry `start_link/1` fails with `{:error, :handshake_timeout}`.
   - `:protocol_mode` - Era policy: `:modern_only`, `:legacy_only`,
     `:prefer_modern`, or `:prefer_legacy`.
   - `:era_probe_timeout` - Dedicated timeout for the side-effect-free modern
-    discovery probe (default: 2_000 milliseconds).
+    discovery probe exchange, send included (default: 2_000 milliseconds).
+  - `:establish_timeout` - Upper bound in milliseconds (or `:infinity`) on
+    establishing the connection as a whole: opening the transport, the probe,
+    any legacy fallback, `initialize` and `notifications/initialized`, and
+    connection retries under `:retry_policy`. Defaults to
+    `:handshake_timeout` plus `:era_probe_timeout`. On expiry `start_link/1`
+    fails with `{:error, :establish_timeout}`, and each reconnection attempt is
+    bounded the same way. A failed attempt closes the transport it opened, so
+    a spawned stdio server does not outlive it; ending an HTTP session it
+    opened may take up to one more second past the deadline.
   - `:era_cache_legacy_ttl` - How long a successful legacy observation is
     reused before probing for an upgrade again (default: 300_000 milliseconds).
   - `:reset_era_cache` - Clear the observation for this exact transport,
@@ -975,6 +990,78 @@ defmodule ExMCP.Client do
     GenServer.stop(client, reason)
   end
 
+  @doc """
+  Says whether a failed request can have reached the server.
+
+  Takes the error a request function returned (`{:error, reason}` or the
+  bare `reason`) and returns:
+
+    * `:not_sent` - ExMCP knows the request never left the client: the client
+      was not connected, the request failed validation, the caller's deadline
+      passed or the caller exited before it went out, or the transport
+      refused it before writing anything (the connection could not be opened,
+      the address could not be resolved or was not permitted, the request was
+      too large, a security policy blocked it).
+    * `:unknown` - the request was, or may have been, delivered, and whether
+      the server acted on it is not known. This covers the caller's own
+      timeout, a connection that failed after sending, a broken response
+      stream, and any error the server answered with. A JSON-RPC error
+      response proves delivery but not that nothing ran: a server may report
+      invalid params after its tool has acted.
+
+  Only `:not_sent` makes repeating the request safe without knowing more.
+  Deciding whether to retry, and telling a server's refusal apart from a
+  failure after it acted, stays with the caller.
+
+      case ExMCP.Client.call_tool(client, "charge", args, timeout: 5_000) do
+        {:ok, result} -> {:ok, result}
+        {:error, reason} = error ->
+          if ExMCP.Client.delivery_outcome(reason) == :not_sent,
+            do: retry(),
+            else: error
+      end
+  """
+  @spec delivery_outcome(term()) :: :not_sent | :unknown
+  def delivery_outcome({:error, reason}), do: delivery_outcome(reason)
+  def delivery_outcome(:not_connected), do: :not_sent
+  def delivery_outcome(%Error.ValidationError{}), do: :not_sent
+  def delivery_outcome(%{type: :invalid_request_meta}), do: :not_sent
+  def delivery_outcome(%Error.TransportError{reason: :not_sent}), do: :not_sent
+  def delivery_outcome(%Error.TransportError{reason: reason}), do: send_outcome(reason)
+  def delivery_outcome(%{type: :transport_error, reason: reason}), do: send_outcome(reason)
+  # A streaming (async) HTTP POST reports its transport's reason this way.
+  def delivery_outcome({:transport_error, reason}), do: send_outcome(reason)
+  def delivery_outcome(_reason), do: :unknown
+
+  # Transport reasons that are raised before a byte is written.
+  @unsent_transport_reasons [
+    :deadline_expired,
+    :not_connected,
+    :request_too_large,
+    :frame_too_large,
+    :invalid_http_url,
+    :invalid_network_policy,
+    :dns_failed,
+    :dns_timeout,
+    :non_public_address,
+    :non_loopback_address
+  ]
+
+  defp send_outcome(reason) when reason in @unsent_transport_reasons, do: :not_sent
+  # BoundedClient returns a bare Mint error only from opening the connection;
+  # failures after that are wrapped as :http_request_failed/:http_receive_failed.
+  defp send_outcome(%Mint.TransportError{}), do: :not_sent
+  defp send_outcome(%Mint.HTTPError{}), do: :not_sent
+  defp send_outcome({:security_violation, _error}), do: :not_sent
+  # The OS trust store could not be loaded, so no TLS connection was opened.
+  defp send_outcome({:trust_store_unavailable, _reason}), do: :not_sent
+  # stdio refuses an invalid frame before writing it, and a closed port
+  # before Port.command/2 writes anything.
+  defp send_outcome({:validation_error, _reason}), do: :not_sent
+  defp send_outcome({:transport_error, {:send_failed, _reason}}), do: :not_sent
+  defp send_outcome({:transport_error, reason}), do: send_outcome(reason)
+  defp send_outcome(_reason), do: :unknown
+
   # GenServer callbacks
 
   @impl GenServer
@@ -1083,6 +1170,9 @@ defmodule ExMCP.Client do
 
   # Normalize various error formats to consistent structure
   defp normalize_connection_error(:handshake_timeout), do: :handshake_timeout
+  defp normalize_connection_error(:establish_timeout), do: :establish_timeout
+
+  defp normalize_connection_error({:invalid_establish_timeout, _value} = reason), do: reason
 
   defp normalize_connection_error(:invalid_request) do
     {:initialize_error, %{"code" => ErrorCodes.invalid_request()}}
@@ -1294,6 +1384,10 @@ defmodule ExMCP.Client do
       Process.cancel_timer(state.reconnect_timer)
     end
 
+    # The receiver and transport processes are about to be stopped; their
+    # exits are expected, not a foreign link's.
+    state = retire_links(state)
+
     # Stop receiver task by killing the process directly
     if state.receiver_task && is_struct(state.receiver_task, Task) do
       if Process.alive?(state.receiver_task.pid) do
@@ -1341,24 +1435,19 @@ defmodule ExMCP.Client do
         :ok
     end)
 
-    # Close transport connection
-    if state.transport_mod && state.transport_state do
-      try do
-        state.transport_mod.close(state.transport_state)
-      rescue
-        # Ignore errors during cleanup
-        _ -> :ok
-      end
-    end
+    close_transport(state)
 
     NotificationListener.close_all(state.notification_listeners, :disconnected)
     reset_notification_worker(state)
 
     # Update state to disconnected. The manual_disconnect flag ensures a
     # late {:transport_closed, _} message does not trigger auto-reconnection.
+    # The closed transport state is dropped so terminate/2 cannot close it a
+    # second time; transport_mod stays for get_status/1.
     new_state = %{
       state
       | connection_status: :disconnected,
+        transport_state: nil,
         pending_requests: %{},
         pending_batches: %{},
         cancelled_requests: MapSet.new(),
@@ -1784,17 +1873,37 @@ defmodule ExMCP.Client do
     end
   end
 
+  # The receiver reports a closed transport with {:transport_closed, _}
+  # before it exits, so its exit while it is still the receiver means it
+  # crashed with the connection (a stdio server, an HTTP session) possibly
+  # still up: close that before moving on.
   def handle_info({:EXIT, pid, reason}, %{receiver_task: %Task{pid: task_pid}} = state)
       when pid == task_pid do
     Logger.error("Receiver task died: #{inspect(reason)}")
+    state = abandon_transport(state)
     {:noreply, handle_transport_down({:receiver_task_died, reason}, state)}
   end
 
-  # Push mode: forwarder process died
-  def handle_info({:EXIT, _pid, reason}, %{receiver_task: :push} = state)
-      when reason != :normal do
-    Logger.error("Transport forwarder died: #{inspect(reason)}")
-    {:noreply, handle_transport_down({:transport_forwarder_died, reason}, state)}
+  # The client traps exits so it can tell its own links from everyone
+  # else's. The starter's exit never reaches here: GenServer handles the
+  # parent's exit itself and terminates, which closes the transport.
+  def handle_info({:EXIT, from, reason}, state) do
+    cond do
+      MapSet.member?(state.retired_links, from) ->
+        {:noreply, %{state | retired_links: MapSet.delete(state.retired_links, from)}}
+
+      from in ExMCP.Transport.linked_processes(state.transport_mod, state.transport_state) ->
+        handle_transport_link_exit(from, reason, state)
+
+      reason == :normal ->
+        # A normal exit does not take down a linked process that does not
+        # trap exits, so it does not take down the client either.
+        {:noreply, state}
+
+      true ->
+        # Any other link: behave as a process that does not trap exits.
+        {:stop, reason, state}
+    end
   end
 
   def handle_info({:transport_closed, reason}, state) do
@@ -1897,6 +2006,78 @@ defmodule ExMCP.Client do
     end
   end
 
+  # A normal exit of a transport-owned process is the transport's own
+  # business: it reports a real closure through {:transport_closed, _}. An
+  # abnormal one means the transport broke without saying so, and may still
+  # hold its connection or child process, so it is closed before the client
+  # moves on (and possibly reconnects, which would otherwise leave the old
+  # server running next to the new one).
+  defp handle_transport_link_exit(_from, :normal, state), do: {:noreply, state}
+
+  defp handle_transport_link_exit(_from, reason, state) do
+    Logger.error("Transport forwarder died: #{inspect(reason)}")
+    state = abandon_transport(state)
+    {:noreply, handle_transport_down({:transport_forwarder_died, reason}, state)}
+  end
+
+  defp abandon_transport(state) do
+    state = retire_links(state)
+    close_transport(state)
+    state
+  end
+
+  # Remembers the links of the transport and receiver this client is about
+  # to drop, so their exits are not taken for a foreign link's. A link that
+  # is already gone is unlinked and its pending exit flushed instead, so the
+  # set only holds processes whose exit is still to come.
+  defp retire_links(state) do
+    receiver =
+      case state.receiver_task do
+        %Task{pid: pid} -> [pid]
+        _other -> []
+      end
+
+    links =
+      receiver ++ ExMCP.Transport.linked_processes(state.transport_mod, state.transport_state)
+
+    retired =
+      Enum.reduce(links, state.retired_links, fn link, retired ->
+        if link_alive?(link) do
+          MapSet.put(retired, link)
+        else
+          Process.unlink(link)
+
+          receive do
+            {:EXIT, ^link, _reason} -> :ok
+          after
+            0 -> :ok
+          end
+
+          retired
+        end
+      end)
+
+    %{state | retired_links: retired}
+  end
+
+  defp link_alive?(pid) when is_pid(pid), do: Process.alive?(pid)
+  defp link_alive?(port) when is_port(port), do: Port.info(port) != nil
+
+  # Closing is bounded (see Deadline.cleanup_timeout/0): a best-effort
+  # session DELETE to a peer that stopped answering must not hold stop/2,
+  # disconnect/1 or the client loop for the transport's request timeout.
+  defp close_transport(%{transport_mod: mod, transport_state: transport_state})
+       when not is_nil(mod) and not is_nil(transport_state) do
+    mod.close(Deadline.for_cleanup(mod, transport_state))
+    :ok
+  rescue
+    _error -> :ok
+  catch
+    :exit, _reason -> :ok
+  end
+
+  defp close_transport(_state), do: :ok
+
   # Transport teardown and reconnection
 
   # Already reconnecting with an attempt scheduled — nothing left to tear down.
@@ -1909,6 +2090,7 @@ defmodule ExMCP.Client do
   end
 
   defp handle_transport_down(reason, state) do
+    state = retire_links(state)
     reply_pending_with_close_error(reason, state)
     notify_subscription_processes(state, {:client_subscription_disconnected, reason})
 
@@ -2145,12 +2327,24 @@ defmodule ExMCP.Client do
 
   defp active_subscription?(_active, _candidate), do: false
 
+  # Crash reports and :sys.get_status/1 show the state with the connection's
+  # credentials replaced (headers, tokens, secrets, the server's env), for
+  # every log formatter, not only Elixir's Inspect.
+  @impl GenServer
+  def format_status(status), do: Redaction.status(status, &redact_state/1)
+
+  defp redact_state(%__MODULE__{} = state), do: Redaction.client(state)
+  defp redact_state(state), do: state
+
   @impl true
   def terminate(reason, state) do
     state
     |> Map.get(:notification_listeners, %{})
     |> NotificationListener.close_all({:shutdown, reason})
 
+    # However the client stops (stop/2, its starter's exit, a linked
+    # process's crash), the connection and any child process go with it.
+    close_transport(state)
     :ok
   end
 
@@ -2715,8 +2909,12 @@ defmodule ExMCP.Client do
 
   defp client_mrtr_failure_class(_reason, _round, _maximum), do: :input_fulfillment_failed
 
+  # The absolute deadline travels with the request so the client does not
+  # send it after the caller has given up (see RequestHandler.handle_request/5).
   defp request_once(client, method, params, timeout) when is_integer(timeout) do
-    GenServer.call(client, {:request, method, params, %{timeout: timeout}}, timeout)
+    deadline = System.monotonic_time(:millisecond) + timeout
+    meta = %{timeout: timeout, deadline: deadline}
+    GenServer.call(client, {:request, method, params, meta}, timeout)
   catch
     :exit, {:timeout, _} -> {:error, :timeout}
   end
@@ -2963,6 +3161,21 @@ defmodule ExMCP.Client do
             ] do
     # Already an ExMCP.Error struct, return as-is
     error
+  end
+
+  # A failed send carries the transport's reason as a term. The :map format
+  # keeps the map (with its message text); :struct gives a TransportError.
+  defp handle_request_result({:error, %{type: :transport_error, reason: reason} = error}, opts) do
+    case Keyword.get(opts, :format, :struct) do
+      :map ->
+        {:error, error}
+
+      _struct ->
+        {:error,
+         Error.transport_error(Map.get(error, :transport), reason, %{
+           message: Map.get(error, :message)
+         })}
+    end
   end
 
   defp handle_request_result({:error, error_data}, opts) when is_map(error_data) do
@@ -3245,4 +3458,10 @@ defmodule ExMCP.Client do
         {:ok, tool}
     end
   end
+end
+
+defimpl Inspect, for: ExMCP.Client do
+  # The connection's credentials never print; see ExMCP.Internal.Redaction.
+  def inspect(client, opts),
+    do: Inspect.Any.inspect(ExMCP.Internal.Redaction.client(client), opts)
 end

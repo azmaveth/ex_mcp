@@ -46,7 +46,10 @@ defmodule ExMCP.Transport.HTTP do
         security: %{
           auth: {:bearer, "your-token"},
           validate_origin: true,
-          allowed_origins: ["https://app.example.com"]
+          allowed_origins: ["https://app.example.com"],
+          # Send credentials to this exact origin without consent, for this
+          # connection only (in addition to config :ex_mcp, :security).
+          trusted_origins: ["https://api.example.com"]
         }
       )
 
@@ -135,6 +138,10 @@ defmodule ExMCP.Transport.HTTP do
     :dns_timeout_ms,
     :dns_resolver,
     :allowed_private_hosts,
+    # Absolute monotonic-millisecond deadline for the synchronous exchanges
+    # made with this state (see put_deadline/2); nil when only the configured
+    # timeouts apply.
+    :deadline,
     tool_headers: %{},
     modern_streams: %{},
     sse_deferred_attempted: false,
@@ -166,7 +173,8 @@ defmodule ExMCP.Transport.HTTP do
           max_request_bytes: pos_integer(),
           dns_timeout_ms: pos_integer(),
           dns_resolver: module() | function(),
-          allowed_private_hosts: [String.t()]
+          allowed_private_hosts: [String.t()],
+          deadline: integer() | nil
         }
 
   @default_endpoint "/mcp/v1"
@@ -718,8 +726,10 @@ defmodule ExMCP.Transport.HTTP do
       user_id: extract_user_id(state)
     }
 
-    # Get transport-specific security configuration
-    config = SecurityConfig.get_transport_config(:http)
+    config =
+      :http
+      |> SecurityConfig.get_transport_config()
+      |> with_connection_trust(state)
 
     case SecurityGuard.validate_request(security_request, config) do
       {:ok, sanitized_request} ->
@@ -733,6 +743,7 @@ defmodule ExMCP.Transport.HTTP do
   defp make_http_request(url, headers, body, state) do
     with {:ok, transport_opts} <- https_transport_opts(url, state) do
       BoundedClient.request(:post, url, headers, "application/json", body,
+        deadline: state.deadline,
         connect_timeout: state.timeouts.connect,
         request_timeout: state.timeouts.request,
         max_request_bytes: state.max_request_bytes,
@@ -826,6 +837,16 @@ defmodule ExMCP.Transport.HTTP do
       end
     end)
   end
+
+  # The origins this connection was told to trust (`security:
+  # %{trusted_origins: [...]}`) join the VM-wide ones for its own requests
+  # only; no other connection is affected.
+  defp with_connection_trust(config, %{security: %{trusted_origins: origins}})
+       when is_list(origins) do
+    Map.update(config, :trusted_origins, origins, &Enum.uniq(&1 ++ origins))
+  end
+
+  defp with_connection_trust(config, _state), do: config
 
   defp extract_user_id(state) do
     config = SecurityConfig.get_transport_config(:http)
@@ -1081,6 +1102,7 @@ defmodule ExMCP.Transport.HTTP do
       with {:ok, sanitized_headers} <- sanitize_http_request("DELETE", url, headers, state),
            {:ok, transport_opts} <- https_transport_opts(url, state) do
         BoundedClient.request(:delete, url, sanitized_headers, "application/json", "",
+          deadline: state.deadline,
           connect_timeout: state.timeouts.connect,
           request_timeout: state.timeouts.request,
           max_request_bytes: state.max_request_bytes,
@@ -1140,6 +1162,24 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   @doc false
+  # Caps every synchronous HTTP exchange made with this state (DNS, connect
+  # and response together) at an absolute monotonic-millisecond deadline, or
+  # removes the cap with nil. A request whose deadline has already passed is
+  # refused with `:deadline_expired` before anything is sent. The client sets
+  # it while establishing a connection and for a request whose caller gave
+  # it a timeout, and clears it afterwards.
+  @spec put_deadline(t(), integer() | nil) :: t()
+  def put_deadline(%__MODULE__{} = state, deadline) when is_integer(deadline) or is_nil(deadline),
+    do: %{state | deadline: deadline}
+
+  # The SSE client is start_linked by the process that opened it (the
+  # client). Modern request streams are started unlinked and monitor their
+  # parent instead, and async POST tasks are spawn_monitored.
+  @impl true
+  def linked_processes(%__MODULE__{sse_pid: sse_pid}) when is_pid(sse_pid), do: [sse_pid]
+  def linked_processes(%__MODULE__{}), do: []
+
+  @doc false
   @spec settle_protocol_era(t(), :legacy | :modern | :unknown, String.t()) :: t()
   def settle_protocol_era(%__MODULE__{} = state, :modern, version) do
     if is_pid(state.sse_pid), do: stop_sse_client(state.sse_pid)
@@ -1159,6 +1199,23 @@ defmodule ExMCP.Transport.HTTP do
 
   def settle_protocol_era(%__MODULE__{} = state, era, version) do
     %{state | protocol_version: version, protocol_era: era}
+  end
+
+  @doc false
+  # Ends what a failed legacy handshake left in `attempt` that `snapshot` did
+  # not have: the session the server handed out and a deferred SSE client.
+  # The DELETE is bounded by `attempt`'s deadline.
+  @spec abandon_attempt(t(), t()) :: :ok
+  def abandon_attempt(%__MODULE__{} = attempt, %__MODULE__{} = snapshot) do
+    if is_binary(attempt.session_id) and attempt.session_id != snapshot.session_id do
+      terminate_session(attempt)
+    end
+
+    if is_pid(attempt.sse_pid) and attempt.sse_pid != snapshot.sse_pid do
+      stop_sse_client(attempt.sse_pid)
+    end
+
+    :ok
   end
 
   defp stop_sse_client(pid) do
@@ -1602,4 +1659,11 @@ defmodule ExMCP.Transport.HTTP do
   defp build_ssl_options_from_state(_state) do
     build_ssl_options(%{})
   end
+end
+
+defimpl Inspect, for: ExMCP.Transport.HTTP do
+  # Header values, tokens, the session id and auth configuration never print;
+  # see ExMCP.Internal.Redaction.
+  def inspect(state, opts),
+    do: Inspect.Any.inspect(ExMCP.Internal.Redaction.http(state), opts)
 end

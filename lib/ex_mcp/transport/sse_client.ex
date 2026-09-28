@@ -18,7 +18,7 @@ defmodule ExMCP.Transport.SSEClient do
   use GenServer
   require Logger
 
-  alias ExMCP.Internal.{Headers, LogSummary, SSE}
+  alias ExMCP.Internal.{Headers, LogSummary, Redaction, SSE}
   alias ExMCP.Transport.HTTP.BoundedStream
 
   @initial_retry_delay 1_000
@@ -44,6 +44,10 @@ defmodule ExMCP.Transport.SSEClient do
     :sse_15
   ]
 
+  # Request headers carry the connection's credentials and TLS options may
+  # carry key material: neither is printed, and format_status/1 keeps them
+  # out of crash reports too.
+  @derive {Inspect, except: [:headers, :ssl_opts]}
   defstruct [
     :url,
     :headers,
@@ -417,6 +421,22 @@ defmodule ExMCP.Transport.SSEClient do
 
   def handle_info(_msg, state) do
     {:noreply, state}
+  end
+
+  @impl true
+  def format_status(status) do
+    Redaction.status(status, fn
+      %__MODULE__{} = state ->
+        %{
+          state
+          | headers: Redaction.headers(state.headers),
+            ssl_opts: Redaction.secret(state.ssl_opts),
+            url: Redaction.url(state.url)
+        }
+
+      state ->
+        state
+    end)
   end
 
   @impl true

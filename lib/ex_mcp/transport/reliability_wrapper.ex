@@ -235,6 +235,12 @@ defmodule ExMCP.Transport.ReliabilityWrapper do
   end
 
   @impl true
+  def linked_processes(%__MODULE__{} = state) do
+    Enum.filter([state.circuit_breaker_pid, state.health_check_pid], &is_pid/1) ++
+      ExMCP.Transport.linked_processes(state.wrapped_module, state.wrapped_state)
+  end
+
+  @impl true
   def capabilities(%__MODULE__{} = state) do
     # Pass through capabilities from wrapped transport
     if function_exported?(state.wrapped_module, :capabilities, 1) do

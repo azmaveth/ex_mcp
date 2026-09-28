@@ -9,6 +9,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Security:** `ExMCP.Authorization.ProtectedResourceMetadata.discover/2`
+  dropped the document's `resource`, so the RFC 9728 §3.3 check could not be
+  made and metadata naming another resource was used. It now keeps
+  `resource` and top-level `scopes_supported` in the result and uses a
+  document only when its `resource` names the identifier its well-known URL
+  was built from (the requested URL for the path-specific document; the
+  origin or the requested URL for the root document; scheme and host
+  case-insensitive, default port and a trailing `/` ignored). A document
+  that omits `resource` or names another resource is skipped;
+  `{:error, {:resource_mismatch, expected: ..., actual: ...}}` or
+  `{:error, {:invalid_metadata, "Missing resource"}}` is returned when none
+  is usable, and an invalid `scopes_supported` is an error. **Behavior
+  change:** a server whose metadata omits the REQUIRED `resource` is no
+  longer accepted.
+- **Security:** `ExMCP.Authorization.OIDCDiscovery.discover/2` took the
+  first metadata document that fetched and checked its issuer afterwards,
+  so a foreign-issuer document at the first well-known URL stopped
+  discovery. Each document is now issuer-checked, and a mismatched one is
+  skipped (RFC 8414 §3.3); the mismatch is reported only when no document
+  names the issuer.
+- `notifications/initialized` over HTTP carried the client's requested
+  `MCP-Protocol-Version` (2025-11-25 by default) instead of the version the
+  server selected, because the transport settled the version only after the
+  handshake; a strict server that negotiated an older version rejected the
+  session. This affected every legacy handshake, `:legacy_only` included.
+- `ExMCP.Client` link handling. In push mode any non-normal `EXIT` from any
+  linked process was taken for the transport's forwarder dying and
+  triggered a reconnect that respawned a stdio server; every other `EXIT`
+  was ignored, so a process linked to the client could crash without taking
+  it down. Exits are now matched against the receiver and the transport's
+  own links (`ExMCP.Transport.linked_processes/1`): an abnormal exit of a
+  transport-owned process closes that transport and takes the
+  transport-down path, and an abnormal exit of any other link stops the
+  client, as it would stop a process that does not trap exits. **Behavior
+  change:** a custom transport that links helper processes to the client
+  without listing them in `linked_processes/1` now stops the client when
+  one crashes.
+- A stopping client now closes its transport in `terminate/2` (its
+  starter's exit, `stop/2`, a linked crash), so a stdio server or HTTP
+  session no longer outlives it. For a legacy HTTP session this sends the
+  best-effort `DELETE` on stop, as `disconnect/1` already did. Closing is
+  capped at one second (the `DELETE` included) on stop, on `disconnect/1`
+  and after a transport crash, so a peer that stopped answering cannot hold
+  `stop/2` or the client loop; `disconnect/1` previously waited up to the
+  transport's request timeout. A crashed pull-mode receiver now also closes
+  the transport before the client reconnects.
+- Connection establishment is bounded. A host that accepted the connection
+  and then answered nothing was bounded by neither `:handshake_timeout` nor
+  `:era_probe_timeout`, because a synchronous HTTP POST (the probe, and the
+  legacy handshake before an SSE stream exists) ran under the transport's
+  30 s request timeout inside `init/1`. `:era_probe_timeout` now bounds the
+  probe exchange and `:handshake_timeout` the initialize exchange, the send
+  included, and the new `:establish_timeout` bounds the whole
+  establishment; see Added. **Behavior change:** a legacy HTTP server that
+  takes longer than `:handshake_timeout` (10 s by default) to answer
+  `initialize` now fails with `{:error, :handshake_timeout}`, as the option
+  was documented to do.
+- A connection attempt that fails after opening its transport now closes it,
+  so a stdio server that never answered is stopped instead of outliving the
+  attempt and piling up across connection retries and reconnects. What is
+  closed is the state the attempt reached, so an HTTP session opened by
+  `initialize` (or by a failed `initialize` before a `:prefer_legacy`
+  fallback) is ended with its `DELETE`, which gets up to one second of its
+  own when the establishment deadline is what failed the attempt.
+- A request whose caller had given up was still sent: a synchronous HTTP
+  client sends from its own process, so a request queued behind a slow one
+  went out after its caller's `GenServer.call` timed out, or after the
+  caller exited. A request with an explicit `:timeout` now carries its
+  caller's deadline, and the client answers a request whose deadline has
+  passed, or whose caller is gone, with an `ExMCP.Error.TransportError`
+  whose reason is `:not_sent` instead of sending it. A synchronous send is
+  capped at that deadline, so the client is freed when the caller gives up
+  rather than after the transport's own request timeout.
+- A failed send kept the transport's reason only inside a message string,
+  and the `:struct` format turned it into an `ExMCP.Error` with no reason at
+  all. The `:map` format now returns
+  `%{type: :transport_error, transport: ..., reason: term, message: ...}`
+  (`message` unchanged); the `:struct` format returns an
+  `ExMCP.Error.TransportError` carrying the reason. **Changed shape** for
+  `:struct`-format callers of a failed send.
+- An HTTP 404 or 405 answer to the modern `server/discover` probe now counts
+  as legacy-fallback evidence, like 400, per MCP's backwards-compatibility
+  guidance. `:modern_only` still never falls back, and 401, 403 and 5xx are
+  still not evidence.
+- The HTTP transport ignored a connection's own
+  `security: %{trusted_origins: [...]}`: the SecurityGuard check read only
+  the VM-wide `config :ex_mcp, :security`, so credentials to that origin
+  were stripped and the default consent handler refused the request. See
+  Added.
+- Credentials no longer appear when a client's state is inspected, returned
+  by `:sys.get_status/1`, or written to a crash report: request header
+  values (an `Authorization` bearer, an API-key header of any name), OAuth
+  tokens, auth configuration and client secrets, the session id, a stdio
+  server's environment and command. `ExMCP.Client`,
+  `ExMCP.Transport.HTTP` and `ExMCP.Transport.HTTP.LegacySSE` implement
+  `Inspect`, and `ExMCP.Client`, `ExMCP.Transport.SSEClient` and the modern
+  HTTP stream client implement `format_status/1`, so every log formatter,
+  Erlang's included, gets the redacted state. Header names stay visible;
+  of the client's start options only a known-safe set is shown.
+  **Breaking for hosts that shipped their own implementation:** a
+  `defimpl Inspect, for: ExMCP.Client` or `for: ExMCP.Transport.HTTP` in
+  application code (for example Imp's `lib/imp/mcp/redacted_inspect.ex`)
+  now redefines ExMCP's module `Inspect.ExMCP.Client` /
+  `Inspect.ExMCP.Transport.HTTP`: compilation warns (and fails under
+  `--warnings-as-errors`) and a release refuses the duplicate module.
+  Remove that implementation when upgrading.
+- `ExMCP.Transport.Stdio.receive_message/2` raised `ArgumentError` when the
+  port had already closed; it now returns the server's exit waiting in the
+  owner's mailbox.
+
 - `ExMCP.ACP.AdapterBridge` now handles the documented
   `{:messages_and_reply_and_write, ...}` adapter translation on every request
   path, not only the session lifecycle. Returning it from `session/set_mode`,
@@ -42,6 +152,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the OS store when `tls: %{cacerts: ...}` is given.
 
 ### Added
+
+- `ExMCP.Client.delivery_outcome/1` reads a request's error as `:not_sent`
+  (the request provably never left the client: not connected, failed
+  validation, the caller's deadline passed or the caller exited before it
+  went out, or the transport refused it before writing, such as a
+  connection that could not be opened or an address that could not be
+  resolved) or `:unknown` (it was or may have been delivered; a timeout, a
+  failure after sending, or any error the server answered with). Retry
+  policy stays with the caller.
+- `:establish_timeout` client option: one deadline, in milliseconds or
+  `:infinity`, around establishing the connection (opening the transport,
+  the probe, any legacy fallback, `initialize`, `notifications/initialized`
+  and connection retries). Defaults to `:handshake_timeout` plus
+  `:era_probe_timeout`; each reconnection attempt is bounded the same way.
+  On expiry `start_link/1` fails with `{:error, :establish_timeout}`.
+- `process_group: true` stdio option. ERTS starts every port program as the
+  leader of a new process group; with this option `close/1` sends SIGTERM,
+  then SIGKILL, to the whole group, and when the server exits on its own
+  whatever it left running in its group is signalled too. Use it for a
+  server that starts processes of its own (a launcher or shell script that
+  spawns the real server, a server that forks workers), which otherwise
+  outlive the connection. The default is unchanged.
+- `ExMCP.Transport.linked_processes/1`, an optional transport callback
+  naming the processes and ports a transport links to its caller, and
+  `ExMCP.Transport.linked_processes/2` to read it. The stdio, HTTP, legacy
+  SSE and reliability-wrapper transports implement it.
+- `security: %{trusted_origins: [...]}` on an HTTP connection: exact
+  HTTP(S) origins that connection may send credentials to without consent,
+  joined to the VM-wide `trusted_origins` for its own requests only. Entries
+  are validated at connect.
 
 - Claude ACP adapter: `agent_message_chunk`, `agent_thought_chunk` and
   `user_message_chunk` session updates now carry `messageId`, ported from
@@ -108,6 +248,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Security:** minimum dependency versions now exclude two known
+  vulnerabilities, so applications using ExMCP resolve fixed versions:
+  `mint` `~> 1.10 and >= 1.10.1` (was `~> 1.6`; 1.10.1 fixes
+  EEF-CVE-2026-82672, HTTP/1 response smuggling through unvalidated
+  chunk-size lines), and a new direct requirement on `cowlib` `~> 2.20`
+  (previously only transitive through `plug_cowboy`, which still allows
+  older releases; 2.20.0 fixes EEF-CVE-2026-43971, Link header directive
+  smuggling in `cow_link`). ExMCP's own lock already used these versions.
+  **Breaking for applications that lock older versions:** dependency
+  resolution now fails until they upgrade `mint` and `cowlib`.
+- Stdio servers and ACP agent subprocesses: the command is resolved against
+  the `PATH` the child will see (an explicit `PATH` in `:env` first) rather
+  than the VM's own, and when the VM runs as an OTP release, `PATH` entries
+  under `RELEASE_ROOT` are dropped from the inherited `PATH`, so a child
+  that is itself an Erlang or Elixir program does not pick up the release's
+  `erl`. An explicit `PATH` in `:env` is used as given.
 - **Twenty ACP helper modules are no longer public API.** They were never
   intended to be: each is a pure helper behind a public module, and their
   sibling helpers (for example `ExMCP.ACP.Adapters.Pi.Config` and

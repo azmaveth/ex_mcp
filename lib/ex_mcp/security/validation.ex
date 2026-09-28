@@ -7,6 +7,7 @@ defmodule ExMCP.Security.Validation do
   """
 
   alias ExMCP.Internal.Headers
+  alias ExMCP.Security.TokenHandler
 
   require Logger
 
@@ -18,6 +19,11 @@ defmodule ExMCP.Security.Validation do
 
   Supports bearer tokens, API keys, basic auth, OAuth 2.1, custom headers,
   origin validation, CORS, and TLS configuration.
+
+  `:trusted_origins` lists exact HTTP(S) origins this one connection may send
+  credentials to without consent, in addition to the VM-wide
+  `config :ex_mcp, :security, trusted_origins: [...]` (see
+  `ExMCP.Transport.SecurityGuard`).
   """
   @type security_config :: %{
           optional(:auth) => auth_method(),
@@ -25,7 +31,8 @@ defmodule ExMCP.Security.Validation do
           optional(:validate_origin) => boolean(),
           optional(:allowed_origins) => [String.t()],
           optional(:cors) => map(),
-          optional(:tls) => map()
+          optional(:tls) => map(),
+          optional(:trusted_origins) => [String.t()]
         }
 
   @type auth_method ::
@@ -377,10 +384,21 @@ defmodule ExMCP.Security.Validation do
   def validate_config(config) do
     with :ok <- validate_auth(Map.get(config, :auth)),
          :ok <- validate_cors(Map.get(config, :cors)),
-         :ok <- validate_tls(Map.get(config, :tls)) do
+         :ok <- validate_tls(Map.get(config, :tls)),
+         :ok <- validate_trusted_origins(Map.get(config, :trusted_origins)) do
       validate_security_requirements(config)
     end
   end
+
+  defp validate_trusted_origins(nil), do: :ok
+
+  defp validate_trusted_origins(origins) when is_list(origins) do
+    if Enum.all?(origins, &TokenHandler.valid_trusted_origin?/1),
+      do: :ok,
+      else: {:error, :invalid_trusted_origins}
+  end
+
+  defp validate_trusted_origins(_origins), do: {:error, :invalid_trusted_origins}
 
   defp validate_auth(nil), do: :ok
   defp validate_auth({:bearer, token}) when is_binary(token), do: :ok

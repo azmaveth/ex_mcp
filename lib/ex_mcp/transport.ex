@@ -181,7 +181,23 @@ defmodule ExMCP.Transport do
   Default implementation returns an empty list (no special capabilities).
   """
   @callback capabilities(state()) :: [atom()]
-  @optional_callbacks connected?: 1, capabilities: 1, subscribe: 2
+
+  @doc """
+  Optional: the processes and ports this transport has linked to the process
+  that called `connect/1` or `subscribe/2` (for example a reader it
+  `spawn_link`ed, or a port it opened).
+
+  `ExMCP.Client` traps exits. An abnormal exit signal from one of these is
+  treated as the transport failing (pending requests fail and the reconnect
+  path takes over); an abnormal exit signal from any other linked process
+  stops the client, exactly as it would stop a process that does not trap
+  exits. A transport that links helpers to its caller without listing them
+  here makes their crash stop the client.
+
+  Default implementation returns an empty list.
+  """
+  @callback linked_processes(state()) :: [pid() | port()]
+  @optional_callbacks connected?: 1, capabilities: 1, subscribe: 2, linked_processes: 1
 
   @doc """
   Check if a transport module supports the push (subscribe) model.
@@ -189,6 +205,26 @@ defmodule ExMCP.Transport do
   @spec supports_push?(module()) :: boolean()
   def supports_push?(transport_mod) do
     function_exported?(transport_mod, :subscribe, 2)
+  end
+
+  @doc """
+  Returns the processes and ports `transport_mod` linked to its caller for
+  `transport_state`, or `[]` when the transport does not say.
+  """
+  @spec linked_processes(module() | nil, state()) :: [pid() | port()]
+  def linked_processes(nil, _transport_state), do: []
+  def linked_processes(_transport_mod, nil), do: []
+
+  def linked_processes(transport_mod, transport_state) do
+    if function_exported?(transport_mod, :linked_processes, 1) do
+      transport_state
+      |> transport_mod.linked_processes()
+      |> Enum.filter(&(is_pid(&1) or is_port(&1)))
+    else
+      []
+    end
+  rescue
+    _error -> []
   end
 
   @doc """

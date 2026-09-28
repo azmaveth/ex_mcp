@@ -223,6 +223,10 @@ defmodule ExMCP.Transport.HTTP.LegacySSE do
   def connected?(%__MODULE__{sse_pid: sse_pid}) when is_pid(sse_pid), do: Process.alive?(sse_pid)
   def connected?(_state), do: false
 
+  @impl true
+  def linked_processes(%__MODULE__{sse_pid: sse_pid}) when is_pid(sse_pid), do: [sse_pid]
+  def linked_processes(_state), do: []
+
   defp start_sse(url, headers, timeouts, max_response_bytes, max_buffer_bytes, network_opts) do
     opts = [
       url: url,
@@ -439,4 +443,11 @@ defmodule ExMCP.Transport.HTTP.LegacySSE do
   end
 
   defp stop_sse(_pid), do: :ok
+end
+
+defimpl Inspect, for: ExMCP.Transport.HTTP.LegacySSE do
+  # Header values, the session id and the session query never print; see
+  # ExMCP.Internal.Redaction.
+  def inspect(state, opts),
+    do: Inspect.Any.inspect(ExMCP.Internal.Redaction.legacy_sse(state), opts)
 end

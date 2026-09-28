@@ -106,6 +106,17 @@ mistake — it would otherwise grant consent for decades — so implausible valu
 For OAuth flows, use the authorization modules or `:auth` / `:auth_provider`
 options on the HTTP transport.
 
+A connection can also trust the exact origin it was configured for, without
+changing the VM-wide policy that every other client shares:
+
+```elixir
+security: %{trusted_origins: ["https://api.example.com"]}
+```
+
+Those origins join `config :ex_mcp, :security, trusted_origins: [...]` for
+that connection's own requests only. Entries must be exact HTTP(S) origins
+(scheme, host and optional port, no path); anything else fails at connect.
+
 The HTTP transport applies finite connection/request deadlines, disables
 automatic redirects, requests identity encoding, and enforces request,
 response, and incomplete-stream limits incrementally. Configure

@@ -294,6 +294,51 @@ defmodule ExMCP.Transport.HTTP.BoundedClientTest do
     end
   end
 
+  describe "an absolute :deadline" do
+    test "refuses a request whose deadline has already passed, before connecting" do
+      bypass = Bypass.open()
+      test_pid = self()
+
+      Bypass.stub(bypass, "POST", "/mcp", fn conn ->
+        send(test_pid, :received) && Plug.Conn.resp(conn, 200, "")
+      end)
+
+      deadline = System.monotonic_time(:millisecond) - 1
+      assert {:error, :deadline_expired} = request(bypass, deadline: deadline)
+      refute_received :received
+    end
+
+    test "is checked again after DNS, so a request is not sent late" do
+      bypass = Bypass.open()
+      test_pid = self()
+
+      Bypass.stub(bypass, "POST", "/mcp", fn conn ->
+        send(test_pid, :received) && Plug.Conn.resp(conn, 200, "")
+      end)
+
+      deadline = System.monotonic_time(:millisecond) + 50
+
+      # A resolver that answers only after the whole budget is spent (the
+      # test is about the deadline passing mid-request).
+      slow_dns = fn _host, _timeout ->
+        Process.sleep(150)
+        {:ok, [{127, 0, 0, 1}]}
+      end
+
+      assert {:error, :deadline_expired} =
+               BoundedClient.request(
+                 :post,
+                 "http://localhost:#{bypass.port}/mcp",
+                 [],
+                 "application/json",
+                 "{}",
+                 Keyword.merge(base_opts(), deadline: deadline, dns_resolver: slow_dns)
+               )
+
+      refute_received :received
+    end
+  end
+
   defp request(bypass, overrides) do
     body = Keyword.get(overrides, :body, "{}")
 
