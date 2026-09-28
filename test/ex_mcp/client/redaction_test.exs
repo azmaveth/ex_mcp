@@ -7,7 +7,12 @@ defmodule ExMCP.Client.RedactionTest do
   crash report, whether the report is formatted by Elixir or by Erlang.
   """
 
-  use ExUnit.Case, async: true
+  # Not async: the crash-report test adds and removes a global :logger
+  # handler, and OTP's logger can lose track of a handler when handlers are
+  # added or removed concurrently (remove_handler writes back a handler list
+  # it read before its asynchronous removal callback ran). A handler id left
+  # without a config breaks every other test's capture_log.
+  use ExUnit.Case, async: false
 
   alias ExMCP.Client
   alias ExMCP.Transport.HTTP

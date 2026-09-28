@@ -63,7 +63,7 @@ defmodule ExMCP.Transport.StdioProcessGroupTest do
       on_exit(fn -> kill(child) end)
 
       assert_receive {:transport_closed, {:process_exited, 0}}, 10_000
-      wait_until(fn -> not alive?(child) end, timeout: 5_000)
+      assert_stopped(child, state.os_pid)
     end
 
     test "has the children it left behind stopped (pull)", %{pid_file: pid_file} do
@@ -77,7 +77,7 @@ defmodule ExMCP.Transport.StdioProcessGroupTest do
       assert {:error, {:connection_error, {:process_exited, 0}}} =
                Stdio.receive_message(state, 10_000)
 
-      wait_until(fn -> not alive?(child) end, timeout: 5_000)
+      assert_stopped(child, state.os_pid)
     end
   end
 
@@ -119,6 +119,33 @@ defmodule ExMCP.Transport.StdioProcessGroupTest do
   defp await_pid(pid_file) do
     wait_until(fn -> match?({:ok, <<_, _::binary>>}, File.read(pid_file)) end, timeout: 2_000)
     pid_file |> File.read!() |> String.trim() |> String.to_integer()
+  end
+
+  # Waits for `child` to stop; if it does not, the failure says where it is
+  # (its parent, group and state) and what is left in the server's group.
+  defp assert_stopped(child, group) do
+    wait_until(fn -> not alive?(child) end, timeout: 5_000)
+  rescue
+    ExUnit.AssertionError ->
+      table = ps(["-eo", "pid,ppid,pgid,stat,args"])
+      group_id = Integer.to_string(group)
+
+      in_group =
+        table
+        |> String.split("\n")
+        |> Enum.filter(&match?([_pid, _ppid, ^group_id | _rest], String.split(&1)))
+
+      flunk("""
+      child #{child} of the server whose group is #{group} is still running.
+      child: #{ps(["-o", "pid,ppid,pgid,stat,args", "-p", "#{child}"])}
+      members of group #{group}:
+      #{Enum.join(in_group, "\n")}
+      """)
+  end
+
+  defp ps(args) do
+    {output, _status} = System.cmd("ps", args, stderr_to_stdout: true)
+    output
   end
 
   # A killed process whose parent has already exited stays a zombie until
