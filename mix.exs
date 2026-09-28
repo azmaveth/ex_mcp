@@ -89,7 +89,9 @@ defmodule ExMCP.MixProject do
   defp deps do
     [
       {:jason, "~> 1.4"},
-      {:mint, "~> 1.6"},
+      # Security floor: 1.10.1 fixes EEF-CVE-2026-82672 (HTTP/1 response
+      # smuggling through unvalidated chunk-size lines).
+      {:mint, "~> 1.10 and >= 1.10.1"},
       {:mint_web_socket, "~> 1.0"},
       {:castore, "~> 1.0"},
       {:telemetry, "~> 1.2"},
@@ -100,6 +102,10 @@ defmodule ExMCP.MixProject do
       {:excoveralls, "~> 0.18", only: :test},
       {:git_hooks, "~> 0.7", only: [:dev], runtime: false},
       {:plug_cowboy, "~> 2.7"},
+      # Not used directly; declared so consumers resolve a cowlib that fixes
+      # EEF-CVE-2026-43971 (Link header directive smuggling in cow_link),
+      # which plug_cowboy's own requirements still allow.
+      {:cowlib, "~> 2.20"},
       {:plug, "~> 1.16"},
       {:fuse, "~> 2.4", optional: true},
       # MCP protocol support

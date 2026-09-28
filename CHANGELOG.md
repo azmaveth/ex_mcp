@@ -216,6 +216,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Security:** minimum dependency versions now exclude two known
+  vulnerabilities, so applications using ExMCP resolve fixed versions:
+  `mint` `~> 1.10 and >= 1.10.1` (was `~> 1.6`; 1.10.1 fixes
+  EEF-CVE-2026-82672, HTTP/1 response smuggling through unvalidated
+  chunk-size lines), and a new direct requirement on `cowlib` `~> 2.20`
+  (previously only transitive through `plug_cowboy`, which still allows
+  older releases; 2.20.0 fixes EEF-CVE-2026-43971, Link header directive
+  smuggling in `cow_link`). ExMCP's own lock already used these versions.
+  **Breaking for applications that lock older versions:** dependency
+  resolution now fails until they upgrade `mint` and `cowlib`.
+
 - Stdio servers and ACP agent subprocesses: the command is resolved against
   the `PATH` the child will see (an explicit `PATH` in `:env` first) rather
   than the VM's own, and when the VM runs as an OTP release, `PATH` entries
