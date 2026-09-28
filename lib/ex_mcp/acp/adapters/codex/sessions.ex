@@ -1,7 +1,7 @@
 defmodule ExMCP.ACP.Adapters.Codex.Sessions do
-  @moduledoc """
-  Pure session and thread helpers for the Codex ACP adapter.
-  """
+  @moduledoc false
+
+  # Pure session and thread helpers for the Codex ACP adapter.
 
   alias ExMCP.ACP.Adapters.Codex.Config
 

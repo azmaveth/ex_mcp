@@ -305,9 +305,12 @@ defmodule ExMCP.Content.ProtocolPropertyTest do
   property "confidence outside valid range fails annotation validation" do
     forall {type, invalid_confidence} <- {
              non_empty_string_gen(),
+             # Build out-of-range values directly. Filtering float() with
+             # such_that gave up with :cant_generate at small sizes, where
+             # float() rarely leaves [-1.0, 1.0].
              oneof([
-               such_that(f <- float(), when: f < 0.0),
-               such_that(f <- float(), when: f > 1.0)
+               let(f <- float(), do: -abs(f) - 1.0e-6),
+               let(f <- float(), do: 1.0 + abs(f) + 1.0e-6)
              ])
            } do
       content = Protocol.annotation(type, confidence: invalid_confidence)

@@ -1,14 +1,14 @@
 defmodule ExMCP.ACP.Adapters.ZCode.Protocol do
-  @moduledoc """
-  Pure helpers for ZCode's `app-server` stdio protocol.
+  @moduledoc false
 
-  ZCode Protocol v1 is NDJSON over stdio. Messages are JSON-RPC-shaped but
-  omit the `jsonrpc` field — the envelope is `{id?, method?, params?, result?,
-  error?}`. IDs may be strings or integers.
-
-  This module owns only wire-shape construction and parsing. Translation
-  between ACP and ZCode message semantics lives in `ZCode.Mapper`.
-  """
+  # Pure helpers for ZCode's `app-server` stdio protocol.
+  #
+  # ZCode Protocol v1 is NDJSON over stdio. Messages are JSON-RPC-shaped but
+  # omit the `jsonrpc` field — the envelope is `{id?, method?, params?, result?,
+  # error?}`. IDs may be strings or integers.
+  #
+  # This module owns only wire-shape construction and parsing. Translation
+  # between ACP and ZCode message semantics lives in `ZCode.Mapper`.
 
   alias ExMCP.Internal.Maps
 

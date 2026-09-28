@@ -1,7 +1,7 @@
 defmodule ExMCP.ACP.Meta do
-  @moduledoc """
-  Pure helpers for ACP `_meta` extension placement.
-  """
+  @moduledoc false
+
+  # Pure helpers for ACP `_meta` extension placement.
 
   @spec put_ex_mcp(map(), map()) :: map()
   def put_ex_mcp(result, extensions) when is_map(result) and is_map(extensions) do

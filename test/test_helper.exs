@@ -26,6 +26,24 @@ end)
 {:ok, _} = Application.ensure_all_started(:ranch)
 {:ok, _} = Application.ensure_all_started(:cowboy)
 
+# Load the OS trust store once, with a deadline. Every HTTPS code path calls
+# :public_key.cacerts_get/0, which caches the store per VM only after a
+# successful load. On macOS that load shells out to `/usr/bin/security` and
+# waits with no timeout, and the tool can stall while the session is locked or
+# asleep. Without this, each HTTPS test then times out separately after 60s.
+case Task.yield(Task.async(&:public_key.cacerts_get/0), 15_000) do
+  {:ok, _cacerts} ->
+    :ok
+
+  _stalled ->
+    raise """
+    loading the OS CA certificate store did not finish within 15s.
+    On macOS this usually means `/usr/bin/security` is stalled on the
+    keychain (for example while the screen is locked). Unlock the session
+    and rerun the tests.
+    """
+end
+
 # Start test consent handler agent
 {:ok, _} = ExMCP.ConsentHandler.Test.start_link()
 

@@ -1,11 +1,11 @@
 defmodule ExMCP.ACP.Adapters.Pi.RPC do
-  @moduledoc """
-  Pure native RPC protocol helpers for the Pi ACP adapter.
+  @moduledoc false
 
-  Owns NDJSON envelope construction, command type names, inbound response
-  classification, and request-id correlation shapes. The root adapter retains
-  process ownership, Port I/O, and lifecycle state.
-  """
+  # Pure native RPC protocol helpers for the Pi ACP adapter.
+  #
+  # Owns NDJSON envelope construction, command type names, inbound response
+  # classification, and request-id correlation shapes. The root adapter retains
+  # process ownership, Port I/O, and lifecycle state.
 
   @type request_id :: String.t()
   @type command :: String.t()

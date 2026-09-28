@@ -1,7 +1,7 @@
 defmodule ExMCP.ACP.LifecycleParams do
-  @moduledoc """
-  Pure normalization and validation for ACP session lifecycle parameters.
-  """
+  @moduledoc false
+
+  # Pure normalization and validation for ACP session lifecycle parameters.
 
   alias ExMCP.ACP.{Capabilities, Maps}
 

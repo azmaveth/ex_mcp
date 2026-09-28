@@ -1,14 +1,14 @@
 defmodule ExMCP.ACP.Envelope do
-  @moduledoc """
-  Pure JSON-RPC 2.0 envelope builders for ACP messages.
+  @moduledoc false
 
-  Method-specific modules should own their payload shapes. This module owns
-  only the repeated JSON-RPC frame so request builders can stay pipe-friendly:
-
-      Envelope.request("session/new")
-      |> Envelope.with_params(params)
-      |> Envelope.with_id(id)
-  """
+  # Pure JSON-RPC 2.0 envelope builders for ACP messages.
+  #
+  # Method-specific modules should own their payload shapes. This module owns
+  # only the repeated JSON-RPC frame so request builders can stay pipe-friendly:
+  #
+  #     Envelope.request("session/new")
+  #     |> Envelope.with_params(params)
+  #     |> Envelope.with_id(id)
 
   alias ExMCP.Internal.JSONRPC
 

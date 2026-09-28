@@ -540,6 +540,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
     control_messages =
       state.control_groups
       |> Map.values()
+      |> Enum.sort_by(& &1.seq)
       |> Enum.map(& &1.acp_id)
       |> Enum.uniq()
       |> Enum.map(&Envelope.error(&1, -32_603, "Pi process exited: #{inspect(reason)}"))
@@ -1696,12 +1697,18 @@ defmodule ExMCP.ACP.Adapters.Pi do
     end
   end
 
+  # `seq` records creation order. Never order groups by `group_id`: map order
+  # is lexicographic on the id string, so "group-1000" sorts before
+  # "group-999".
   defp put_group(state, group) do
-    group_id =
-      Map.get(group, :group_id) || "group-#{System.unique_integer([:positive, :monotonic])}"
+    seq = System.unique_integer([:positive, :monotonic])
 
-    group = Map.put(group, :group_id, group_id)
-    %{state | control_groups: Map.put(state.control_groups, group_id, group)}
+    group =
+      group
+      |> Map.put_new(:seq, seq)
+      |> Map.put_new(:group_id, "group-#{seq}")
+
+    %{state | control_groups: Map.put(state.control_groups, group.group_id, group)}
   end
 
   defp put_control(state, rpc_id, kind, group) do
@@ -1717,9 +1724,10 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   defp latest_group_id(state, group) do
     state.control_groups
-    |> Enum.find_value(fn {id, existing} ->
-      if existing.acp_id == group.acp_id and existing.type == group.type, do: id
-    end)
+    |> Map.values()
+    |> Enum.filter(&(&1.acp_id == group.acp_id and &1.type == group.type))
+    |> Enum.max_by(& &1.seq, fn -> %{group_id: nil} end)
+    |> Map.fetch!(:group_id)
   end
 
   defp delete_group(state, group) do

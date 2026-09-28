@@ -1,7 +1,7 @@
 defmodule ExMCP.ACP.NameValue do
-  @moduledoc """
-  Pure normalizers for ACP name/value list shapes.
-  """
+  @moduledoc false
+
+  # Pure normalizers for ACP name/value list shapes.
 
   @spec list(map() | list(), (String.t(), String.t() -> map())) :: [map()]
   def list(values, builder \\ &entry/2) do

@@ -1,11 +1,11 @@
 defmodule ExMCP.ACP.Adapters.Codex.Protocol do
-  @moduledoc """
-  Pure native app-server protocol helpers for the Codex ACP adapter.
+  @moduledoc false
 
-  Owns envelope construction, method names, inbound response classification,
-  and pending-request correlation shapes. The root adapter retains process
-  ownership, Port I/O, and lifecycle state.
-  """
+  # Pure native app-server protocol helpers for the Codex ACP adapter.
+  #
+  # Owns envelope construction, method names, inbound response classification,
+  # and pending-request correlation shapes. The root adapter retains process
+  # ownership, Port I/O, and lifecycle state.
 
   alias ExMCP.Internal.Maps
 

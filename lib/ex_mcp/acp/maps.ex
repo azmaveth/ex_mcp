@@ -1,10 +1,10 @@
 defmodule ExMCP.ACP.Maps do
-  @moduledoc """
-  Small pure map helpers used by ACP protocol, client, agent, and adapters.
+  @moduledoc false
 
-  The functions intentionally work with string and atom keys because ACP data
-  crosses JSON boundaries while local Elixir call sites often use atom keys.
-  """
+  # Small pure map helpers used by ACP protocol, client, agent, and adapters.
+  #
+  # The functions intentionally work with string and atom keys because ACP data
+  # crosses JSON boundaries while local Elixir call sites often use atom keys.
 
   @spec get(map() | nil, String.t() | atom()) :: any()
   def get(map, key) when is_map(map) and is_binary(key) do
