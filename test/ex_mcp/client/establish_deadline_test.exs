@@ -9,8 +9,6 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
 
   use ExUnit.Case, async: true
 
-  import ExMCP.TestHelpers, only: [wait_until: 2]
-
   alias ExMCP.Client
 
   # Far below the 30 s a synchronous POST was allowed before, and loose
@@ -24,8 +22,8 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
 
   describe "a silent HTTP host" do
     setup do
-      {port, connections} = start_silent_listener()
-      %{url: "http://127.0.0.1:#{port}/mcp", connections: connections}
+      port = start_silent_listener()
+      %{url: "http://127.0.0.1:#{port}/mcp"}
     end
 
     test "legacy_only returns within :handshake_timeout", %{url: url} do
@@ -36,10 +34,7 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
       assert elapsed < @bound
     end
 
-    test "prefer_modern bounds the probe by :era_probe_timeout, then the fallback", %{
-      url: url,
-      connections: connections
-    } do
+    test "prefer_modern bounds the probe by :era_probe_timeout, then the fallback", %{url: url} do
       {elapsed, result} =
         timed(fn ->
           start_client(url,
@@ -51,12 +46,14 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
 
       assert {:error, _reason} = result
       assert elapsed < @bound
-      # The probe timed out on its own bound and counted as fallback
-      # evidence, so initialize was tried on a second connection.
-      wait_until(fn -> Agent.get(connections, & &1) == 2 end, timeout: 2_000)
+      # A probe that timed out on its own bound counts as fallback evidence,
+      # so initialize may follow it; nothing else is ever sent. (On a loaded
+      # host a deadline can pass before a request is written, and then that
+      # request is rightly not sent at all.)
+      assert received_requests() in [[], ["server/discover"], ["server/discover", "initialize"]]
     end
 
-    test "modern_only returns within :era_probe_timeout", %{url: url, connections: connections} do
+    test "modern_only returns within :era_probe_timeout", %{url: url} do
       {elapsed, result} =
         timed(fn ->
           start_client(url, protocol_mode: :modern_only, era_probe_timeout: 200)
@@ -64,7 +61,8 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
 
       assert {:error, _reason} = result
       assert elapsed < @bound
-      wait_until(fn -> Agent.get(connections, & &1) == 1 end, timeout: 2_000)
+      # Never falls back to initialize.
+      assert received_requests() in [[], ["server/discover"]]
     end
 
     test ":establish_timeout bounds the whole establishment", %{url: url} do
@@ -361,6 +359,9 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
 
       {:ok, :http_eoh} ->
         {:ok, method, length, headers}
+
+      {:error, _reason} = error ->
+        error
     end
   end
 
@@ -377,17 +378,22 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
     ])
   end
 
-  # Accepts every connection and reads from it, but never writes a byte.
+  # Accepts every connection and reads each request, reporting its JSON-RPC
+  # method as {:request, method}, but never writes a byte back.
   defp start_silent_listener do
+    test_pid = self()
+
     {:ok, listener} =
-      :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, ip: {127, 0, 0, 1}])
+      :gen_tcp.listen(0, [
+        :binary,
+        packet: :http_bin,
+        active: false,
+        reuseaddr: true,
+        ip: {127, 0, 0, 1}
+      ])
 
     {:ok, port} = :inet.port(listener)
-    {:ok, connections} = Agent.start_link(fn -> 0 end)
-
-    acceptor =
-      spawn_link(fn -> accept_loop(listener, connections, []) end)
-
+    acceptor = spawn_link(fn -> silent_accept_loop(listener, test_pid) end)
     :ok = :gen_tcp.controlling_process(listener, acceptor)
 
     on_exit(fn ->
@@ -395,17 +401,44 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
       :gen_tcp.close(listener)
     end)
 
-    {port, connections}
+    port
   end
 
-  defp accept_loop(listener, connections, sockets) do
+  defp silent_accept_loop(listener, test_pid) do
     case :gen_tcp.accept(listener) do
       {:ok, socket} ->
-        Agent.update(connections, &(&1 + 1))
-        accept_loop(listener, connections, [socket | sockets])
+        reader = spawn(fn -> silent_read(socket, test_pid) end)
+        :ok = :gen_tcp.controlling_process(socket, reader)
+        send(reader, :go)
+        silent_accept_loop(listener, test_pid)
 
       {:error, _closed} ->
         :ok
+    end
+  end
+
+  defp silent_read(socket, test_pid) do
+    receive do
+      :go -> :ok
+    end
+
+    with {:ok, _method, length, _headers} <- read_request_head(socket, nil, 0, %{}),
+         :ok <- :inet.setopts(socket, packet: :raw),
+         {:ok, body} <- :gen_tcp.recv(socket, length, 5_000) do
+      send(test_pid, {:request, Jason.decode!(body)["method"]})
+    end
+
+    # Hold the connection, unanswered, until the client gives up on it.
+    :gen_tcp.recv(socket, 0, 15_000)
+  end
+
+  # The methods the silent host received, in order. Reading lags the client
+  # slightly, so this collects until nothing more arrives for a moment.
+  defp received_requests(acc \\ []) do
+    receive do
+      {:request, method} -> received_requests([method | acc])
+    after
+      300 -> Enum.reverse(acc)
     end
   end
 end
