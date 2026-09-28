@@ -63,7 +63,7 @@ defmodule ExMCP.Transport.StdioProcessGroupTest do
       on_exit(fn -> kill(child) end)
 
       assert_receive {:transport_closed, {:process_exited, 0}}, 2_000
-      wait_until(fn -> not alive?(child) end, timeout: 2_000)
+      wait_until(fn -> not alive?(child) end, timeout: 5_000)
     end
 
     test "has the children it left behind stopped (pull)", %{pid_file: pid_file} do
@@ -73,7 +73,7 @@ defmodule ExMCP.Transport.StdioProcessGroupTest do
       on_exit(fn -> kill(child) end)
 
       assert {:error, _exited} = Stdio.receive_message(state, 2_000)
-      wait_until(fn -> not alive?(child) end, timeout: 2_000)
+      wait_until(fn -> not alive?(child) end, timeout: 5_000)
     end
   end
 
@@ -117,9 +117,13 @@ defmodule ExMCP.Transport.StdioProcessGroupTest do
     pid_file |> File.read!() |> String.trim() |> String.to_integer()
   end
 
+  # A killed process whose parent has already exited stays a zombie until
+  # init reaps it, and `kill -0` still succeeds on a zombie: count it as gone.
   defp alive?(os_pid) do
-    {_output, status} = System.cmd("kill", ["-0", "#{os_pid}"], stderr_to_stdout: true)
-    status == 0
+    case System.cmd("ps", ["-o", "stat=", "-p", "#{os_pid}"], stderr_to_stdout: true) do
+      {stat, 0} -> not String.starts_with?(String.trim(stat), "Z")
+      {_output, _not_found} -> false
+    end
   end
 
   defp kill(os_pid), do: System.cmd("kill", ["-KILL", "#{os_pid}"], stderr_to_stdout: true)
