@@ -58,9 +58,11 @@ defmodule ExMCP.Transport.StdioProcessGroupTest do
     test "has the children it left behind stopped (push)", %{pid_file: pid_file} do
       command = sh(orphaning_server(), pid_file)
       {:ok, state} = Stdio.connect(command: command, process_group: true)
-      {:ok, _state} = Stdio.subscribe(self(), state)
+      {:ok, state} = Stdio.subscribe(self(), state)
       child = await_pid(pid_file)
       on_exit(fn -> kill(child) end)
+
+      tell_server_to_exit(state)
 
       assert_receive {:transport_closed, {:process_exited, 0}}, 10_000
       assert_stopped(child, state.os_pid)
@@ -71,6 +73,8 @@ defmodule ExMCP.Transport.StdioProcessGroupTest do
       {:ok, state} = Stdio.connect(command: command, process_group: true)
       child = await_pid(pid_file)
       on_exit(fn -> kill(child) end)
+
+      tell_server_to_exit(state)
 
       # The exit is what triggers the reaping, so wait for that exact error
       # (allowing for a loaded host) rather than any timeout.
@@ -107,10 +111,17 @@ defmodule ExMCP.Transport.StdioProcessGroupTest do
 
   defp server_with_child(pid_file), do: sh("sleep 30 & echo $! > \"$1\"; wait", pid_file)
 
-  # The child lets go of the server's stdout: ERTS reports the server's exit
-  # only once that pipe reaches EOF, so a child still holding it keeps the
-  # connection open (and is then, in effect, the server).
-  defp orphaning_server, do: "sleep 30 </dev/null >/dev/null 2>&1 & echo $! > \"$1\"; exit 0"
+  # Starts a child and exits once it reads a line, so the test decides when:
+  # exiting at once could close the port before the test has subscribed to
+  # it. The child lets go of the server's stdout: ERTS reports the server's
+  # exit only once that pipe reaches EOF, so a child still holding it keeps
+  # the connection open (and is then, in effect, the server).
+  defp orphaning_server,
+    do: "sleep 30 </dev/null >/dev/null 2>&1 & echo $! > \"$1\"; read _line; exit 0"
+
+  defp tell_server_to_exit(state) do
+    {:ok, _state} = Stdio.send_message(~s({"jsonrpc":"2.0","method":"exit"}), state)
+  end
 
   # The pid file's path (derived from the test name) goes in as $1, not into
   # the script text, so no character in it can change the script.
