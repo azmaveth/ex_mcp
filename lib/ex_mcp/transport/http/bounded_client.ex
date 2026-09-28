@@ -15,10 +15,15 @@ defmodule ExMCP.Transport.HTTP.BoundedClient do
   def request(method, url, headers, content_type, body, opts)
       when method in [:get, :post, :put, :patch, :delete] and is_binary(url) and
              is_binary(content_type) and is_binary(body) do
+    # The deadline is applied before each step that can wait (DNS, connect)
+    # with what is left of it at that point, and checked once more before a
+    # byte is written.
     with {:ok, opts} <- apply_deadline(opts),
          {:ok, uri, address} <- TargetPolicy.resolve(url, opts),
          :ok <- request_within_limit(body, opts),
-         {:ok, conn} <- connect(uri, address, opts) do
+         {:ok, opts} <- apply_deadline(opts),
+         {:ok, conn} <- connect(uri, address, opts),
+         {:ok, conn} <- before_send(conn, opts) do
       do_request(conn, method, uri, headers, content_type, body, opts)
     end
   rescue
@@ -44,6 +49,21 @@ defmodule ExMCP.Transport.HTTP.BoundedClient do
           _expired ->
             {:error, :deadline_expired}
         end
+    end
+  end
+
+  defp before_send(conn, opts) do
+    case Keyword.get(opts, :deadline) do
+      deadline when is_integer(deadline) ->
+        if System.monotonic_time(:millisecond) < deadline do
+          {:ok, conn}
+        else
+          _ = Mint.HTTP1.close(conn)
+          {:error, :deadline_expired}
+        end
+
+      nil ->
+        {:ok, conn}
     end
   end
 
