@@ -199,10 +199,11 @@ defmodule ExMCP.Client.ConnectionManager do
     # The transport adopts the server's selected version before anything else
     # is sent, so notifications/initialized already carries it: a strict
     # server rejects a protocol-version header that disagrees with the one it
-    # negotiated.
+    # negotiated. Only the version: the handshake stays in the legacy era (and
+    # keeps the session initialize minted) until establishment settles it.
     with {:ok, result, state_after_handshake} <-
            do_handshake(transport_mod, transport_state, opts) do
-      settled_state = settle_transport_era(transport_mod, state_after_handshake, result)
+      settled_state = adopt_negotiated_version(transport_mod, state_after_handshake, result)
 
       case send_initialized(transport_mod, settled_state, result) do
         {:ok, state_after_initialized} ->
@@ -418,6 +419,28 @@ defmodule ExMCP.Client.ConnectionManager do
   end
 
   defp settle_transport_era(_transport_mod, transport_state, _result), do: transport_state
+
+  defp adopt_negotiated_version(transport_mod, transport_state, %{"protocolVersion" => version})
+       when is_binary(version) do
+    case {transport_mod, transport_state} do
+      {HTTP, %HTTP{} = http_state} ->
+        HTTP.settle_protocol_era(http_state, :legacy, version)
+
+      {ReliabilityWrapper, %ReliabilityWrapper{} = wrapper} ->
+        case ReliabilityWrapper.unwrap(wrapper) do
+          {HTTP, http_state} ->
+            %{wrapper | wrapped_state: HTTP.settle_protocol_era(http_state, :legacy, version)}
+
+          _other ->
+            wrapper
+        end
+
+      _other ->
+        transport_state
+    end
+  end
+
+  defp adopt_negotiated_version(_transport_mod, transport_state, _result), do: transport_state
 
   @doc """
   The message receiving loop.
