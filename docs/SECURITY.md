@@ -184,7 +184,12 @@ endpoint.
 ### TLS
 
 HTTPS connections verify the peer against the OS trust store with TLS 1.2/1.3
-and HTTPS hostname matching by default. `tls: %{verify: :verify_none}` is
+and HTTPS hostname matching by default. The OS store is loaded with a
+deadline; if it cannot be loaded, HTTPS requests fail closed rather than hang
+or silently trust a different CA set. A fallback to the `castore` bundle is
+available as an opt-in, with the trade-offs described under "TLS trust store"
+in the configuration guide.
+`tls: %{verify: :verify_none}` is
 accepted for local development against self-signed certificates, but it makes
 the connection unauthenticated — encrypted, yet open to an active
 man-in-the-middle — and ExMCP logs a warning whenever it is configured.

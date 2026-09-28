@@ -88,7 +88,18 @@ defmodule ExMCP.Transport.HTTP do
   require Logger
 
   alias ExMCP.Authorization.{FullOAuthFlow, LogSanitizer}
-  alias ExMCP.Internal.{DNSResolver, Headers, LogSummary, Options, Security, SecurityConfig, SSE}
+
+  alias ExMCP.Internal.{
+    CACerts,
+    DNSResolver,
+    Headers,
+    LogSummary,
+    Options,
+    Security,
+    SecurityConfig,
+    SSE
+  }
+
   alias ExMCP.Protocol.VersionNegotiator
   alias ExMCP.Transport.{SecurityGuard, SSEClient}
 
@@ -730,23 +741,19 @@ defmodule ExMCP.Transport.HTTP do
   end
 
   defp make_http_request(url, headers, body, state) do
-    transport_opts =
-      case URI.parse(url).scheme do
-        "https" -> build_ssl_options_from_state(state)
-        _other -> []
-      end
-
-    BoundedClient.request(:post, url, headers, "application/json", body,
-      deadline: state.deadline,
-      connect_timeout: state.timeouts.connect,
-      request_timeout: state.timeouts.request,
-      max_request_bytes: state.max_request_bytes,
-      max_response_bytes: state.max_response_bytes,
-      transport_opts: transport_opts,
-      dns_timeout_ms: state.dns_timeout_ms,
-      dns_resolver: state.dns_resolver,
-      allowed_private_hosts: state.allowed_private_hosts
-    )
+    with {:ok, transport_opts} <- https_transport_opts(url, state) do
+      BoundedClient.request(:post, url, headers, "application/json", body,
+        deadline: state.deadline,
+        connect_timeout: state.timeouts.connect,
+        request_timeout: state.timeouts.request,
+        max_request_bytes: state.max_request_bytes,
+        max_response_bytes: state.max_response_bytes,
+        transport_opts: transport_opts,
+        dns_timeout_ms: state.dns_timeout_ms,
+        dns_resolver: state.dns_resolver,
+        allowed_private_hosts: state.allowed_private_hosts
+      )
+    end
   end
 
   @doc false
@@ -1092,13 +1099,8 @@ defmodule ExMCP.Transport.HTTP do
     ]
 
     result =
-      with {:ok, sanitized_headers} <- sanitize_http_request("DELETE", url, headers, state) do
-        transport_opts =
-          case URI.parse(url).scheme do
-            "https" -> build_ssl_options_from_state(state)
-            _other -> []
-          end
-
+      with {:ok, sanitized_headers} <- sanitize_http_request("DELETE", url, headers, state),
+           {:ok, transport_opts} <- https_transport_opts(url, state) do
         BoundedClient.request(:delete, url, sanitized_headers, "application/json", "",
           deadline: state.deadline,
           connect_timeout: state.timeouts.connect,
@@ -1243,6 +1245,7 @@ defmodule ExMCP.Transport.HTTP do
          :ok <- validate_stream_kind(stream_kind),
          :ok <- validate_stream_request_id(request_id, state),
          {:ok, headers} <- sanitize_http_request("POST", url, headers, state),
+         {:ok, http_options} <- modern_stream_http_options(url, state),
          {:ok, pid} <-
            ModernStreamClient.start(
              parent: parent,
@@ -1251,7 +1254,7 @@ defmodule ExMCP.Transport.HTTP do
              headers: headers,
              body: message,
              stream_kind: stream_kind,
-             http_options: modern_stream_http_options(url, state),
+             http_options: http_options,
              handshake_timeout: state.timeouts.stream_handshake,
              idle_timeout: state.timeouts.stream_idle,
              max_response_bytes: state.max_response_bytes,
@@ -1323,9 +1326,10 @@ defmodule ExMCP.Transport.HTTP do
       allowed_private_hosts: state.allowed_private_hosts
     ]
 
-    case URI.parse(url).scheme do
-      "https" -> [{:ssl, build_ssl_options_from_state(state)} | options]
-      _other -> options
+    case https_transport_opts(url, state) do
+      {:ok, []} -> {:ok, options}
+      {:ok, ssl_options} -> {:ok, [{:ssl, ssl_options} | options]}
+      {:error, _reason} = error -> error
     end
   end
 
@@ -1439,12 +1443,6 @@ defmodule ExMCP.Transport.HTTP do
     url = build_url(state, "")
     Logger.debug("Starting SSE connection", endpoint_hash: LogSummary.fingerprint(url))
 
-    transport_opts =
-      case URI.parse(url).scheme do
-        "https" -> build_ssl_options_from_state(state)
-        _other -> []
-      end
-
     # Build headers including session
     sse_headers = [
       {@session_header, state.session_id} | state.headers
@@ -1458,7 +1456,8 @@ defmodule ExMCP.Transport.HTTP do
         sse_headers
       end
 
-    with {:ok, sse_headers} <- sanitize_http_request("GET", url, sse_headers, state) do
+    with {:ok, sse_headers} <- sanitize_http_request("GET", url, sse_headers, state),
+         {:ok, transport_opts} <- https_transport_opts(url, state) do
       # Use the enhanced SSE client with keep-alive and reconnection.
       # Pass retry_delay from POST SSE response if available.
       opts = [
@@ -1570,7 +1569,8 @@ defmodule ExMCP.Transport.HTTP do
   passing the flat list unwrapped makes `:httpc` silently ignore every
   TLS option.
 
-  The defaults enable peer verification, the OS trust store, TLS 1.2/1.3,
+  The defaults enable peer verification, the OS trust store (loaded with a
+  deadline; see "TLS trust store" in the configuration guide), TLS 1.2/1.3,
   and HTTPS hostname matching with wildcard support
   (`:customize_hostname_check`). Each default can be overridden through the
   TLS configuration map.
@@ -1590,7 +1590,7 @@ defmodule ExMCP.Transport.HTTP do
   def build_ssl_options(tls_config) when is_map(tls_config) do
     base_ssl_opts = [
       verify: Map.get(tls_config, :verify, :verify_peer),
-      cacerts: Map.get(tls_config, :cacerts, :public_key.cacerts_get()),
+      cacerts: Map.get_lazy(tls_config, :cacerts, &CACerts.get/0),
       versions: Map.get(tls_config, :versions, [:"tlsv1.2", :"tlsv1.3"]),
       customize_hostname_check:
         Map.get(tls_config, :customize_hostname_check, default_hostname_check())
@@ -1633,6 +1633,23 @@ defmodule ExMCP.Transport.HTTP do
   # this, :ssl rejects certificates such as `*.example.com`.
   defp default_hostname_check do
     [match_fun: :public_key.pkix_verify_hostname_match_fun(:https)]
+  end
+
+  # TLS options for an outbound request. When the default trust store is
+  # unavailable and no fallback is configured, the request fails closed with an
+  # error instead of raising inside the client.
+  defp https_transport_opts(url, state) do
+    case URI.parse(url).scheme do
+      "https" ->
+        try do
+          {:ok, build_ssl_options_from_state(state)}
+        rescue
+          e in CACerts.UnavailableError -> {:error, {:trust_store_unavailable, e.reason}}
+        end
+
+      _other ->
+        {:ok, []}
+    end
   end
 
   defp build_ssl_options_from_state(%{security: %{tls: tls_config}}) when is_map(tls_config) do
