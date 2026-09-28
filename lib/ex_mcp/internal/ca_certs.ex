@@ -109,25 +109,21 @@ defmodule ExMCP.Internal.CACerts do
   # out their own deadline. The cache is re-read inside the lock because
   # another caller may have finished the load while this one waited.
   defp load_and_cache(key, opts) do
-    :global.trans(
-      {{__MODULE__, key}, self()},
-      fn ->
-        case :persistent_term.get(key, nil) do
-          {:os, certs} ->
-            {:ok, certs}
+    with_lock(key, fn ->
+      case :persistent_term.get(key, nil) do
+        {:os, certs} ->
+          {:ok, certs}
 
-          {:fallback, certs, _refresh_at} ->
-            {:ok, certs}
+        {:fallback, certs, _refresh_at} ->
+          {:ok, certs}
 
-          {:failed, reason, retry_at} when is_integer(retry_at) ->
-            retry_or_fail(key, reason, retry_at, opts)
+        {:failed, reason, retry_at} when is_integer(retry_at) ->
+          retry_or_fail(key, reason, retry_at, opts)
 
-          nil ->
-            load(key, nil, opts)
-        end
-      end,
-      [node()]
-    )
+        nil ->
+          load(key, nil, opts)
+      end
+    end)
     |> case do
       {:ok, certs} -> certs
       {:error, reason} -> raise UnavailableError, reason: reason
@@ -196,23 +192,49 @@ defmodule ExMCP.Internal.CACerts do
     end
   end
 
-  defp maybe_refresh(key, certs, refresh_at, opts) do
-    if now() >= refresh_at do
-      # Push the next attempt out first so a burst of callers starts at most
-      # one refresh, and the name registration below catches any overlap.
-      :persistent_term.put(key, {:fallback, certs, next(opts, :refresh_interval_ms)})
-      spawn(fn -> refresh(key, opts) end)
-    end
-
+  defp maybe_refresh(key, _certs, refresh_at, opts) do
+    if now() >= refresh_at, do: claim_refresh(key, opts)
     :ok
   end
 
+  @doc false
+  # Starts a background refresh if one is still due. The caller's read of the
+  # cache may be stale by now (another caller may have claimed the refresh, or
+  # a refresh may already have stored the OS store), so the cache is re-read
+  # under the same lock every write takes, and a claim never overwrites
+  # anything but a due fallback. Returns whether a refresh was started.
+  @spec claim_refresh(term(), keyword()) :: boolean()
+  def claim_refresh(key, opts) do
+    with_lock(key, fn ->
+      case :persistent_term.get(key, nil) do
+        {:fallback, certs, refresh_at} when is_integer(refresh_at) ->
+          if now() >= refresh_at do
+            :persistent_term.put(key, {:fallback, certs, next(opts, :refresh_interval_ms)})
+            spawn(fn -> refresh(key, opts) end)
+            true
+          else
+            false
+          end
+
+        _os_or_other ->
+          false
+      end
+    end)
+  end
+
   defp refresh(key, opts) do
+    # The registration catches a slow refresh that is still running when the
+    # next interval's claim starts another one.
     with :yes <- :global.register_name({__MODULE__, :refresh, key}, self()),
          {:ok, certs} <- load_os(opts) do
-      :persistent_term.put(key, {:os, certs})
+      with_lock(key, fn -> :persistent_term.put(key, {:os, certs}) end)
       recovered(:fallback)
     end
+  end
+
+  # Every cache write happens under this per-key lock.
+  defp with_lock(key, fun) do
+    :global.trans({{__MODULE__, key}, self()}, fun, [node()])
   end
 
   defp failed(reason, opts) do

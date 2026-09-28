@@ -146,6 +146,30 @@ defmodule ExMCP.Internal.CACertsTest do
     end
   end
 
+  describe "claim_refresh/2" do
+    # A caller that read an expired fallback may reach the claim after a
+    # background refresh has already stored the OS store.
+    test "never overwrites a recovered OS store", %{key: key} do
+      :persistent_term.put(key, {:os, @os_certs})
+
+      refute CACerts.claim_refresh(key, opts(key, loader: fn -> @os_certs end))
+      assert :persistent_term.get(key) == {:os, @os_certs}
+    end
+
+    test "claims a due refresh once, and not one that is not yet due", %{key: key} do
+      certs = CACerts.castore_certs()
+      :persistent_term.put(key, {:fallback, certs, System.monotonic_time(:millisecond) - 1})
+      claim_opts = opts(key, loader: fn -> [] end, refresh_interval_ms: 60_000)
+
+      assert CACerts.claim_refresh(key, claim_opts)
+      assert {:fallback, ^certs, refresh_at} = :persistent_term.get(key)
+      assert refresh_at > System.monotonic_time(:millisecond)
+
+      # A second caller holding the same stale read finds it already claimed.
+      refute CACerts.claim_refresh(key, claim_opts)
+    end
+  end
+
   test "the CAStore bundle parses to DER certificates" do
     certs = CACerts.castore_certs()
 
