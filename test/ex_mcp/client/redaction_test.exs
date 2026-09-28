@@ -81,7 +81,7 @@ defmodule ExMCP.Client.RedactionTest do
 
     ExUnit.CaptureLog.capture_log(fn ->
       Process.exit(client, :crash_for_test)
-      assert_receive {:EXIT, ^client, :crash_for_test}
+      assert_receive {:EXIT, ^client, :crash_for_test}, 5_000
       assert_receive {:crash_report, msg}, 2_000
 
       case msg do

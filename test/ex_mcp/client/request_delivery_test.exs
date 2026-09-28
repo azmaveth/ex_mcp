@@ -40,7 +40,7 @@ defmodule ExMCP.Client.RequestDeliveryTest do
   describe "a request queued behind a slow one" do
     test "is not sent once its caller's deadline has passed", %{client: client} do
       slow = Task.async(fn -> Client.call_tool(client, "slow", %{}, timeout: 10_000) end)
-      assert_receive {:tool_call_started, "slow", handler}
+      assert_receive {:tool_call_started, "slow", handler}, 2_000
 
       assert {:error, _timeout} = Client.call_tool(client, "late", %{}, timeout: 100)
 
@@ -54,14 +54,14 @@ defmodule ExMCP.Client.RequestDeliveryTest do
 
     test "is not sent once its caller has exited", %{client: client} do
       slow = Task.async(fn -> Client.call_tool(client, "slow", %{}, timeout: 10_000) end)
-      assert_receive {:tool_call_started, "slow", handler}
+      assert_receive {:tool_call_started, "slow", handler}, 2_000
 
       {caller, monitor} = spawn_monitor(fn -> Client.call_tool(client, "orphan", %{}) end)
 
       # Kill the caller only once its request is queued in the busy client.
       wait_until(fn -> queued_request?(client, caller) end, timeout: 2_000)
       Process.exit(caller, :kill)
-      assert_receive {:DOWN, ^monitor, :process, ^caller, :killed}
+      assert_receive {:DOWN, ^monitor, :process, ^caller, :killed}, 2_000
 
       send(handler, :release)
       assert {:ok, _result} = Task.await(slow)

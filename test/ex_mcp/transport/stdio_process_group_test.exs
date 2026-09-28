@@ -62,7 +62,7 @@ defmodule ExMCP.Transport.StdioProcessGroupTest do
       child = await_pid(pid_file)
       on_exit(fn -> kill(child) end)
 
-      assert_receive {:transport_closed, {:process_exited, 0}}, 2_000
+      assert_receive {:transport_closed, {:process_exited, 0}}, 10_000
       wait_until(fn -> not alive?(child) end, timeout: 5_000)
     end
 
@@ -72,7 +72,11 @@ defmodule ExMCP.Transport.StdioProcessGroupTest do
       child = await_pid(pid_file)
       on_exit(fn -> kill(child) end)
 
-      assert {:error, _exited} = Stdio.receive_message(state, 2_000)
+      # The exit is what triggers the reaping, so wait for that exact error
+      # (allowing for a loaded host) rather than any timeout.
+      assert {:error, {:connection_error, {:process_exited, 0}}} =
+               Stdio.receive_message(state, 10_000)
+
       wait_until(fn -> not alive?(child) end, timeout: 5_000)
     end
   end

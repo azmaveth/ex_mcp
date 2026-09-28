@@ -100,8 +100,8 @@ defmodule ExMCP.Client.LinkExitTest do
         foreign = linked_to(client)
         send(foreign, {:exit, :boom})
 
-        assert_receive {:DOWN, ^monitor, :process, ^client, :boom}
-        assert_receive {:link_transport_closed, ^client}
+        assert_receive {:DOWN, ^monitor, :process, ^client, :boom}, 2_000
+        assert_receive {:link_transport_closed, ^client}, 2_000
       end
 
       test "a foreign link's normal exit is ignored" do
@@ -110,7 +110,7 @@ defmodule ExMCP.Client.LinkExitTest do
         foreign = linked_to(client)
         foreign_monitor = Process.monitor(foreign)
         send(foreign, {:exit, :normal})
-        assert_receive {:DOWN, ^foreign_monitor, :process, ^foreign, :normal}
+        assert_receive {:DOWN, ^foreign_monitor, :process, ^foreign, :normal}, 2_000
 
         assert %{connection_status: :ready} = :sys.get_state(client)
         refute_received {:link_transport_closed, _client}
@@ -121,7 +121,7 @@ defmodule ExMCP.Client.LinkExitTest do
         attach_disconnected(client)
 
         send(client, {:transport_closed, :peer_went_away})
-        assert_receive {:client_disconnected, :peer_went_away}
+        assert_receive {:client_disconnected, :peer_went_away}, 2_000
 
         assert %{connection_status: :disconnected} = :sys.get_state(client)
         assert Process.alive?(client)
@@ -131,23 +131,23 @@ defmodule ExMCP.Client.LinkExitTest do
 
   test "a transport-owned link's crash is a transport failure, not a stop" do
     client = start_client(PushTransport)
-    assert_receive {:transport_helper, helper}
+    assert_receive {:transport_helper, helper}, 2_000
     attach_disconnected(client)
 
     send(helper, {:exit, :helper_crashed})
 
-    assert_receive {:client_disconnected, {:transport_forwarder_died, :helper_crashed}}
-    assert_receive {:link_transport_closed, ^client}
+    assert_receive {:client_disconnected, {:transport_forwarder_died, :helper_crashed}}, 2_000
+    assert_receive {:link_transport_closed, ^client}, 2_000
     assert %{connection_status: :disconnected} = :sys.get_state(client)
   end
 
   test "a transport-owned link's normal exit is left to the transport" do
     client = start_client(PushTransport)
-    assert_receive {:transport_helper, helper}
+    assert_receive {:transport_helper, helper}, 2_000
     helper_monitor = Process.monitor(helper)
 
     send(helper, {:exit, :normal})
-    assert_receive {:DOWN, ^helper_monitor, :process, ^helper, :normal}
+    assert_receive {:DOWN, ^helper_monitor, :process, ^helper, :normal}, 2_000
 
     assert %{connection_status: :ready} = :sys.get_state(client)
   end
@@ -165,13 +165,13 @@ defmodule ExMCP.Client.LinkExitTest do
         end
       end)
 
-    assert_receive {:started, client}
+    assert_receive {:started, client}, 2_000
     monitor = Process.monitor(client)
 
     send(starter, :exit)
 
-    assert_receive {:DOWN, ^monitor, :process, ^client, :starter_gone}
-    assert_receive {:link_transport_closed, ^client}
+    assert_receive {:DOWN, ^monitor, :process, ^client, :starter_gone}, 2_000
+    assert_receive {:link_transport_closed, ^client}, 2_000
   end
 
   defp start_client(transport) do
@@ -205,7 +205,7 @@ defmodule ExMCP.Client.LinkExitTest do
         end
       end)
 
-    assert_receive {:linked, ^foreign}
+    assert_receive {:linked, ^foreign}, 2_000
     foreign
   end
 

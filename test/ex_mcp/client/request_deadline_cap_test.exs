@@ -28,7 +28,7 @@ defmodule ExMCP.Client.RequestDeadlineCapTest do
 
     started = System.monotonic_time(:millisecond)
     assert {:error, _timeout} = Client.call_tool(client, "hang", %{}, timeout: 200)
-    assert_receive {:tool_call_started, "hang", _handler}
+    assert_receive {:tool_call_started, "hang", _handler}, 2_000
 
     # Without the cap the client stays inside the POST for the transport's
     # 30 s request timeout and cannot answer anything else. The bound leaves

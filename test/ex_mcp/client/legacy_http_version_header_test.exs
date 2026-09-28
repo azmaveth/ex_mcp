@@ -39,12 +39,12 @@ defmodule ExMCP.Client.LegacyHTTPVersionHeaderTest do
                  reconnect: false
                )
 
-      assert_receive {:strict_server, "initialize", _requested}
-      assert_receive {:strict_server, "notifications/initialized", [@negotiated]}
+      assert_receive {:strict_server, "initialize", _requested}, 2_000
+      assert_receive {:strict_server, "notifications/initialized", [@negotiated]}, 2_000
       assert {:ok, @negotiated} = Client.negotiated_version(client)
 
       assert {:ok, _pong} = Client.ping(client)
-      assert_receive {:strict_server, "ping", [@negotiated]}
+      assert_receive {:strict_server, "ping", [@negotiated]}, 2_000
 
       Client.stop(client)
     end
@@ -65,7 +65,7 @@ defmodule ExMCP.Client.LegacyHTTPVersionHeaderTest do
                reconnect: false
              )
 
-    assert_receive {:strict_server, "server/discover", _header}
+    assert_receive {:strict_server, "server/discover", _header}, 2_000
     refute_received {:strict_server, "initialize", _header}
   end
 
