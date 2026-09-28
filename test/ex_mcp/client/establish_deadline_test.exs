@@ -128,6 +128,47 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
     refute os_process_alive?(os_pid)
   end
 
+  test "a failed attempt closes the transport state it reached, not the one it began with" do
+    bypass = Bypass.open()
+    test_pid = self()
+
+    Bypass.expect(bypass, "POST", "/mcp", fn conn ->
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+
+      case Jason.decode!(body) do
+        %{"method" => "initialize", "id" => id} ->
+          result = %{
+            "protocolVersion" => "2025-06-18",
+            "capabilities" => %{},
+            "serverInfo" => %{"name" => "fails-after-initialize", "version" => "1"}
+          }
+
+          conn
+          |> Plug.Conn.put_resp_header("mcp-session-id", "session-from-initialize")
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.resp(
+            200,
+            Jason.encode!(%{"jsonrpc" => "2.0", "id" => id, "result" => result})
+          )
+
+        %{"method" => "notifications/initialized"} ->
+          Plug.Conn.resp(conn, 500, "")
+      end
+    end)
+
+    Bypass.expect(bypass, "DELETE", "/mcp", fn conn ->
+      send(test_pid, {:session_deleted, Plug.Conn.get_req_header(conn, "mcp-session-id")})
+      Plug.Conn.resp(conn, 204, "")
+    end)
+
+    assert {:error, _reason} =
+             start_client("http://127.0.0.1:#{bypass.port}/mcp", protocol_mode: :legacy_only)
+
+    # Only the state after initialize knows the session; closing the
+    # pre-handshake snapshot would leave it open on the server.
+    assert_receive {:session_deleted, ["session-from-initialize"]}, 2_000
+  end
+
   defp start_client(url, opts) do
     Client.start_link(
       [

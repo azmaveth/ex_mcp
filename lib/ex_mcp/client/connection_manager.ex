@@ -88,7 +88,7 @@ defmodule ExMCP.Client.ConnectionManager do
          {:ok, result, state_after_protocol} <-
            transport_mod
            |> establish_protocol(transport_state, opts, era_identity)
-           |> close_on_failure(transport_mod, transport_state),
+           |> close_on_failure(transport_mod),
          state_after_protocol =
            Deadline.put_on_transport(transport_mod, state_after_protocol, nil),
          state_after_protocol = settle_transport_era(transport_mod, state_after_protocol, result),
@@ -127,17 +127,23 @@ defmodule ExMCP.Client.ConnectionManager do
   # A connection attempt that fails after the transport was opened must not
   # leave it behind: a spawned stdio server, or a port and reader linked to
   # the client, would otherwise outlive the attempt (and pile up across
-  # connection retries and reconnects).
-  defp close_on_failure({:ok, _result, _state} = success, _transport_mod, _transport_state),
-    do: success
+  # connection retries and reconnects). The protocol steps fail with the
+  # latest transport state they reached, because a step that succeeded
+  # before the failure may have added to it (an HTTP session id, a deferred
+  # SSE client) and closing an earlier snapshot would leave that behind.
+  defp close_on_failure({:ok, _result, _state} = success, _transport_mod), do: success
 
-  defp close_on_failure({:error, _reason} = error, transport_mod, transport_state) do
+  defp close_on_failure({:error, reason, latest_state}, transport_mod) do
+    close_quietly(transport_mod, latest_state)
+    {:error, reason}
+  end
+
+  defp close_quietly(transport_mod, transport_state) do
     transport_mod.close(transport_state)
-    error
   rescue
-    _exception -> error
+    _exception -> :ok
   catch
-    :exit, _reason -> error
+    :exit, _reason -> :ok
   end
 
   defp establish_protocol(transport_mod, transport_state, opts, era_identity) do
@@ -157,23 +163,33 @@ defmodule ExMCP.Client.ConnectionManager do
         establish_prefer_legacy(transport_mod, transport_state, opts, era_identity)
 
       invalid ->
-        {:error, {:invalid_protocol_mode, invalid}}
+        {:error, {:invalid_protocol_mode, invalid}, transport_state}
     end
   end
 
+  # The establish_* steps below succeed with {:ok, result, transport_state}
+  # and fail with {:error, reason, latest_transport_state}.
   defp establish_legacy_protocol(transport_mod, transport_state, opts, era_identity) do
     # The transport adopts the server's selected version before anything else
     # is sent, so notifications/initialized already carries it: a strict
     # server rejects a protocol-version header that disagrees with the one it
     # negotiated.
     with {:ok, result, state_after_handshake} <-
-           do_handshake(transport_mod, transport_state, opts),
-         settled_state = settle_transport_era(transport_mod, state_after_handshake, result),
-         {:ok, state_after_initialized} <-
-           send_initialized(transport_mod, settled_state, result) do
-      emit_settled_era(:legacy, result["protocolVersion"])
-      observe_era(era_identity, :legacy, result["protocolVersion"], opts)
-      {:ok, result, state_after_initialized}
+           do_handshake(transport_mod, transport_state, opts) do
+      settled_state = settle_transport_era(transport_mod, state_after_handshake, result)
+
+      case send_initialized(transport_mod, settled_state, result) do
+        {:ok, state_after_initialized} ->
+          emit_settled_era(:legacy, result["protocolVersion"])
+          observe_era(era_identity, :legacy, result["protocolVersion"], opts)
+          {:ok, result, state_after_initialized}
+
+        {:error, reason} ->
+          {:error, reason, settled_state}
+
+        other ->
+          {:error, other, settled_state}
+      end
     end
   end
 
@@ -184,13 +200,14 @@ defmodule ExMCP.Client.ConnectionManager do
         observe_era(era_identity, :modern, discovery.protocol_version, opts)
         {:ok, discovery_as_connection_result(discovery), updated_state}
 
-      {:error, reason, _updated_state} ->
+      {:error, reason, updated_state} ->
         if pinned? do
           {:error,
            {:pinned_modern_era_probe_failed,
-            %{probe: reason, action: :clear_era_observation_or_change_configuration}}}
+            %{probe: reason, action: :clear_era_observation_or_change_configuration}},
+           updated_state}
         else
-          {:error, {:era_probe_failed, reason}}
+          {:error, {:era_probe_failed, reason}, updated_state}
         end
     end
   end
@@ -233,13 +250,13 @@ defmodule ExMCP.Client.ConnectionManager do
 
               success
 
-            {:error, initialize_error} ->
+            {:error, initialize_error, latest_state} ->
               {:error,
                {:era_probe_and_initialize_failed,
-                %{probe: probe_error, initialize: initialize_error}}}
+                %{probe: probe_error, initialize: initialize_error}}, latest_state}
           end
         else
-          {:error, {:era_probe_failed, probe_error}}
+          {:error, {:era_probe_failed, probe_error}, updated_state}
         end
     end
   end
@@ -262,7 +279,7 @@ defmodule ExMCP.Client.ConnectionManager do
       {:ok, _result, _state} = success ->
         success
 
-      {:error, initialize_error} ->
+      {:error, initialize_error, latest_state} ->
         if legacy_protocol_failure?(initialize_error) and
              transport_alive?(transport_mod, transport_state) do
           case EraProbe.probe(transport_mod, transport_state, opts) do
@@ -271,13 +288,13 @@ defmodule ExMCP.Client.ConnectionManager do
               observe_era(era_identity, :modern, discovery.protocol_version, opts)
               {:ok, discovery_as_connection_result(discovery), updated_state}
 
-            {:error, probe_error, _updated_state} ->
+            {:error, probe_error, updated_state} ->
               {:error,
                {:initialize_and_era_probe_failed,
-                %{initialize: initialize_error, probe: probe_error}}}
+                %{initialize: initialize_error, probe: probe_error}}, updated_state}
           end
         else
-          {:error, initialize_error}
+          {:error, initialize_error, latest_state}
         end
     end
   end
@@ -640,31 +657,43 @@ defmodule ExMCP.Client.ConnectionManager do
          ) do
       {:ok, state_after_send, response_data} ->
         # Non-SSE HTTP mode - response came back immediately
-        parse_handshake_response(response_data, state_after_send)
+        response_data
+        |> parse_handshake_response(state_after_send)
+        |> with_state(state_after_send)
 
       {:ok, state_after_send} ->
         # SSE mode or other transports - need to receive separately
-        with {:ok, response_data, state_after_receive} <-
-               receive_handshake_message(
-                 transport_mod,
-                 state_after_send,
-                 Deadline.remaining(deadline)
-               ) do
-          parse_handshake_response(response_data, state_after_receive)
+        case receive_handshake_message(
+               transport_mod,
+               state_after_send,
+               Deadline.remaining(deadline)
+             ) do
+          {:ok, response_data, state_after_receive} ->
+            response_data
+            |> parse_handshake_response(state_after_receive)
+            |> with_state(state_after_receive)
+
+          {:error, reason} ->
+            {:error, reason, state_after_send}
         end
 
-      {:error, _reason} = error ->
-        if Deadline.expired?(deadline), do: {:error, :handshake_timeout}, else: error
+      {:error, reason} ->
+        reason = if Deadline.expired?(deadline), do: :handshake_timeout, else: reason
+        {:error, reason, transport_state}
 
-      error ->
-        error
+      other ->
+        {:error, other, transport_state}
     end
   end
+
+  defp with_state({:ok, _result, _state} = success, _transport_state), do: success
+  defp with_state({:error, reason}, transport_state), do: {:error, reason, transport_state}
 
   defp restore_deadline({:ok, result, transport_state}, transport_mod, deadline),
     do: {:ok, result, Deadline.put_on_transport(transport_mod, transport_state, deadline)}
 
-  defp restore_deadline(error, _transport_mod, _deadline), do: error
+  defp restore_deadline({:error, reason, transport_state}, transport_mod, deadline),
+    do: {:error, reason, Deadline.put_on_transport(transport_mod, transport_state, deadline)}
 
   defp send_initialize_request(
          transport_mod,
