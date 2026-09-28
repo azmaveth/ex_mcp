@@ -170,7 +170,7 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
   end
 
   test "the session is still ended when the deadline is what failed the attempt" do
-    port = start_session_server(self(), initialized: :hang)
+    port = start_session_server(self(), initialized: :hang, delete: :reply)
 
     assert {:error, :establish_timeout} =
              start_client("http://127.0.0.1:#{port}/mcp",
@@ -182,6 +182,23 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
     # notifications/initialized used up the deadline; the DELETE that ends the
     # session gets a cleanup budget of its own instead of being refused.
     assert_receive {:session_deleted, "session-from-initialize"}, 2_000
+  end
+
+  test "stopping a client does not wait on a session DELETE that never answers" do
+    port = start_session_server(self(), initialized: :accept, delete: :hang)
+
+    {:ok, client} =
+      start_client("http://127.0.0.1:#{port}/mcp",
+        protocol_mode: :legacy_only,
+        request_timeout: 10_000
+      )
+
+    {elapsed, :ok} = timed(fn -> Client.stop(client) end)
+
+    # The DELETE went out, and the stop did not wait out the 10 s request
+    # timeout for its answer.
+    assert_receive {:session_deleted, "session-from-initialize"}, 2_000
+    assert elapsed < 3_000
   end
 
   test "a prefer_legacy fallback ends the session a failed initialize opened" do
@@ -243,10 +260,10 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
   end
 
   # A legacy MCP server on a raw socket: initialize opens a session,
-  # notifications/initialized hangs until the client gives up (Bypass would
-  # report the cut-off handler as a crash), and DELETE reports the session it
-  # ends.
-  defp start_session_server(test_pid, initialized: :hang) do
+  # notifications/initialized is accepted or hangs until the client gives up,
+  # and DELETE reports the session it ends and then replies or hangs. (Bypass
+  # would report a handler the client cuts off as a crash.)
+  defp start_session_server(test_pid, behavior) do
     {:ok, listener} =
       :gen_tcp.listen(0, [
         :binary,
@@ -257,7 +274,7 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
       ])
 
     {:ok, port} = :inet.port(listener)
-    acceptor = spawn_link(fn -> session_accept_loop(listener, test_pid) end)
+    acceptor = spawn_link(fn -> session_accept_loop(listener, test_pid, Map.new(behavior)) end)
     :ok = :gen_tcp.controlling_process(listener, acceptor)
 
     on_exit(fn ->
@@ -268,20 +285,20 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
     port
   end
 
-  defp session_accept_loop(listener, test_pid) do
+  defp session_accept_loop(listener, test_pid, behavior) do
     case :gen_tcp.accept(listener) do
       {:ok, socket} ->
-        handler = spawn(fn -> session_handle(socket, test_pid) end)
+        handler = spawn(fn -> session_handle(socket, test_pid, behavior) end)
         :ok = :gen_tcp.controlling_process(socket, handler)
         send(handler, :go)
-        session_accept_loop(listener, test_pid)
+        session_accept_loop(listener, test_pid, behavior)
 
       {:error, _closed} ->
         :ok
     end
   end
 
-  defp session_handle(socket, test_pid) do
+  defp session_handle(socket, test_pid, behavior) do
     receive do
       :go -> :ok
     end
@@ -293,7 +310,11 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
     case {method, body} do
       {:DELETE, _body} ->
         send(test_pid, {:session_deleted, headers["mcp-session-id"]})
-        reply(socket, "204 No Content", [], "")
+
+        case behavior.delete do
+          :reply -> reply(socket, "204 No Content", [], "")
+          :hang -> hang_until_closed(socket)
+        end
 
       {:POST, body} ->
         case Jason.decode!(body) do
@@ -312,11 +333,18 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
             )
 
           %{"method" => "notifications/initialized"} ->
-            {:error, _closed} = :gen_tcp.recv(socket, 0, 10_000)
+            case behavior.initialized do
+              :accept -> reply(socket, "202 Accepted", [], "")
+              :hang -> hang_until_closed(socket)
+            end
         end
     end
 
     :gen_tcp.close(socket)
+  end
+
+  defp hang_until_closed(socket) do
+    {:error, _closed} = :gen_tcp.recv(socket, 0, 15_000)
   end
 
   defp read_request_head(socket, method, length, headers) do

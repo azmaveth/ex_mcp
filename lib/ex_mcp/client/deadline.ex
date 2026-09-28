@@ -7,6 +7,20 @@ defmodule ExMCP.Client.Deadline do
 
   @type t :: integer() | nil
 
+  # Time allowed to clean up a transport (ending an HTTP session with its
+  # DELETE), whatever deadline the transport carried before: cleanup must
+  # happen even when a deadline is what failed, and must not hang on a peer
+  # that stopped answering.
+  @cleanup_timeout 1_000
+
+  @spec cleanup_timeout() :: pos_integer()
+  def cleanup_timeout, do: @cleanup_timeout
+
+  @doc "`transport_state` capped for cleanup: see `cleanup_timeout/0`."
+  @spec for_cleanup(module() | nil, term()) :: term()
+  def for_cleanup(transport_mod, transport_state),
+    do: put_on_transport(transport_mod, transport_state, after_ms(@cleanup_timeout))
+
   @spec after_ms(timeout()) :: t()
   def after_ms(:infinity), do: nil
   def after_ms(ms) when is_integer(ms), do: now() + ms

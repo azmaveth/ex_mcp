@@ -16,11 +16,6 @@ defmodule ExMCP.Client.ConnectionManager do
 
   @default_handshake_timeout 10_000
 
-  # Time allowed to clean up after a failed attempt (ending the HTTP session
-  # it opened), whatever is left of the establishment deadline: cleanup must
-  # still happen when the deadline is what failed the attempt.
-  @cleanup_timeout 1_000
-
   @doc """
   Establishes connection using the provided options and updates client state.
 
@@ -143,9 +138,10 @@ defmodule ExMCP.Client.ConnectionManager do
     {:error, reason}
   end
 
-  defp with_cleanup_deadline(transport_mod, transport_state) do
-    Deadline.put_on_transport(transport_mod, transport_state, Deadline.after_ms(@cleanup_timeout))
-  end
+  # Cleanup gets its own budget, whatever is left of the establishment
+  # deadline: it must still happen when the deadline is what failed.
+  defp with_cleanup_deadline(transport_mod, transport_state),
+    do: Deadline.for_cleanup(transport_mod, transport_state)
 
   # A legacy handshake that failed can still have left something on the
   # server or in the client before falling back to the modern probe: an HTTP

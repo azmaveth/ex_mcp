@@ -41,6 +41,7 @@ defmodule ExMCP.Client do
 
   alias ExMCP.Client.{
     ConnectionManager,
+    Deadline,
     EraCache,
     MRTR,
     NotificationListener,
@@ -1052,6 +1053,8 @@ defmodule ExMCP.Client do
   defp send_outcome(%Mint.TransportError{}), do: :not_sent
   defp send_outcome(%Mint.HTTPError{}), do: :not_sent
   defp send_outcome({:security_violation, _error}), do: :not_sent
+  # The OS trust store could not be loaded, so no TLS connection was opened.
+  defp send_outcome({:trust_store_unavailable, _reason}), do: :not_sent
   # stdio refuses an invalid frame before writing it, and a closed port
   # before Port.command/2 writes anything.
   defp send_outcome({:validation_error, _reason}), do: :not_sent
@@ -1870,9 +1873,14 @@ defmodule ExMCP.Client do
     end
   end
 
+  # The receiver reports a closed transport with {:transport_closed, _}
+  # before it exits, so its exit while it is still the receiver means it
+  # crashed with the connection (a stdio server, an HTTP session) possibly
+  # still up: close that before moving on.
   def handle_info({:EXIT, pid, reason}, %{receiver_task: %Task{pid: task_pid}} = state)
       when pid == task_pid do
     Logger.error("Receiver task died: #{inspect(reason)}")
+    state = abandon_transport(state)
     {:noreply, handle_transport_down({:receiver_task_died, reason}, state)}
   end
 
@@ -2008,9 +2016,14 @@ defmodule ExMCP.Client do
 
   defp handle_transport_link_exit(_from, reason, state) do
     Logger.error("Transport forwarder died: #{inspect(reason)}")
+    state = abandon_transport(state)
+    {:noreply, handle_transport_down({:transport_forwarder_died, reason}, state)}
+  end
+
+  defp abandon_transport(state) do
     state = retire_links(state)
     close_transport(state)
-    {:noreply, handle_transport_down({:transport_forwarder_died, reason}, state)}
+    state
   end
 
   # Remembers the links of the transport and receiver this client is about
@@ -2050,9 +2063,12 @@ defmodule ExMCP.Client do
   defp link_alive?(pid) when is_pid(pid), do: Process.alive?(pid)
   defp link_alive?(port) when is_port(port), do: Port.info(port) != nil
 
+  # Closing is bounded (see Deadline.cleanup_timeout/0): a best-effort
+  # session DELETE to a peer that stopped answering must not hold stop/2,
+  # disconnect/1 or the client loop for the transport's request timeout.
   defp close_transport(%{transport_mod: mod, transport_state: transport_state})
        when not is_nil(mod) and not is_nil(transport_state) do
-    mod.close(transport_state)
+    mod.close(Deadline.for_cleanup(mod, transport_state))
     :ok
   rescue
     _error -> :ok

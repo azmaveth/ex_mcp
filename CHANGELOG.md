@@ -49,7 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A stopping client now closes its transport in `terminate/2` (its
   starter's exit, `stop/2`, a linked crash), so a stdio server or HTTP
   session no longer outlives it. For a legacy HTTP session this sends the
-  best-effort `DELETE` on stop, as `disconnect/1` already did.
+  best-effort `DELETE` on stop, as `disconnect/1` already did. Closing is
+  capped at one second (the `DELETE` included) on stop, on `disconnect/1`
+  and after a transport crash, so a peer that stopped answering cannot hold
+  `stop/2` or the client loop; `disconnect/1` previously waited up to the
+  transport's request timeout. A crashed pull-mode receiver now also closes
+  the transport before the client reconnects.
 - Connection establishment is bounded. A host that accepted the connection
   and then answered nothing was bounded by neither `:handshake_timeout` nor
   `:era_probe_timeout`, because a synchronous HTTP POST (the probe, and the

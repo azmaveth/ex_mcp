@@ -129,6 +129,18 @@ defmodule ExMCP.Client.LinkExitTest do
     end
   end
 
+  test "a crashed pull-mode receiver closes the transport before the client moves on" do
+    client = start_client(PullTransport)
+    attach_disconnected(client)
+    %{receiver_task: %Task{pid: receiver}} = :sys.get_state(client)
+
+    Process.exit(receiver, :kill)
+
+    assert_receive {:client_disconnected, {:receiver_task_died, :killed}}, 2_000
+    assert_receive {:link_transport_closed, ^client}, 2_000
+    assert %{connection_status: :disconnected} = :sys.get_state(client)
+  end
+
   test "a transport-owned link's crash is a transport failure, not a stop" do
     client = start_client(PushTransport)
     assert_receive {:transport_helper, helper}, 2_000
