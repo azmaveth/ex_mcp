@@ -49,6 +49,12 @@ defmodule ExMCP.Error do
     """
     defexception [:transport, :reason, :details]
 
+    @type t :: %__MODULE__{
+            transport: atom() | nil,
+            reason: term(),
+            details: term()
+          }
+
     @impl true
     def message(%{transport: transport, reason: reason}) do
       "Transport Error (#{transport}): #{inspect(reason)}"

@@ -82,21 +82,31 @@ defmodule ExMCP.Client.RedactionTest do
     ExUnit.CaptureLog.capture_log(fn ->
       Process.exit(client, :crash_for_test)
       assert_receive {:EXIT, ^client, :crash_for_test}
-      assert_receive {:crash_report, report}, 2_000
-      assert %{state: %Client{}} = report
-      refute_secrets(IO.iodata_to_binary(:io_lib.format(~c"~p", [report])))
+      assert_receive {:crash_report, msg}, 2_000
+
+      case msg do
+        {:report, report} ->
+          assert %{state: %Client{}} = report
+          refute_secrets(IO.iodata_to_binary(:io_lib.format(~c"~p", [report])))
+
+        # On OTP 27 Elixir's translator turns the report into text before any
+        # handler sees it; the text must be clean as well.
+        {:string, text} ->
+          refute_secrets(IO.chardata_to_string(text))
+      end
     end)
   end
 
   defmodule ReportCapture do
     @moduledoc false
-    def log(%{msg: {:report, %{label: {:gen_server, :terminate}} = report}, meta: meta}, %{
-          config: %{test_pid: test_pid, client: client}
-        }) do
-      if meta[:pid] == client, do: send(test_pid, {:crash_report, report})
+    def log(%{msg: msg, meta: meta}, %{config: %{test_pid: test_pid, client: client}}) do
+      if meta[:pid] == client and crash_report?(msg), do: send(test_pid, {:crash_report, msg})
+      :ok
     end
 
-    def log(_event, _config), do: :ok
+    defp crash_report?({:report, %{label: {:gen_server, :terminate}}}), do: true
+    defp crash_report?({:string, text}), do: IO.chardata_to_string(text) =~ "terminating"
+    defp crash_report?(_msg), do: false
   end
 
   defp http_state do
