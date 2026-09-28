@@ -47,10 +47,6 @@ defmodule ExMCP.Client.ModernStdioTest do
         command: [mix, "run", "--no-compile", "--no-start", @fixture],
         cd: @project_root,
         env: mix_child_env(),
-        # `mix` may be a version-manager shim that runs the real VM as its
-        # child; stopping only the shim would orphan the server VM, which
-        # then holds the test run's stderr open.
-        process_group: true,
         protocol_mode: :modern_only,
         capabilities: Extension.put_capability(%{"elicitation" => %{"form" => %{}}}),
         handler: {Handler, [owner: self()]},

@@ -138,10 +138,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `process_group: true` stdio option. ERTS starts every port program as the
   leader of a new process group; with this option `close/1` sends SIGTERM,
   then SIGKILL, to the whole group, and when the server exits on its own
-  whatever it left running in its group is signalled too. Use it for servers
-  started through wrappers (`npx`, version-manager shims such as mise or
-  asdf, shell scripts), whose real server otherwise outlives the
-  connection. The default is unchanged.
+  whatever it left running in its group is signalled too. Use it for a
+  server that starts processes of its own (a launcher or shell script that
+  spawns the real server, a server that forks workers), which otherwise
+  outlive the connection. The default is unchanged.
 - `ExMCP.Transport.linked_processes/1`, an optional transport callback
   naming the processes and ports a transport links to its caller, and
   `ExMCP.Transport.linked_processes/2` to read it. The stdio, HTTP, legacy

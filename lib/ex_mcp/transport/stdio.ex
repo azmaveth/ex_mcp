@@ -32,9 +32,9 @@ defmodule ExMCP.Transport.Stdio do
   ## Process groups
 
   ERTS starts every port program as the leader of a new process group. By
-  default `close/1` sends SIGTERM, then SIGKILL, to that one process, so a
-  server's own children (an `npx` wrapper's `node`, a shell script's
-  commands) and a child that ignores SIGTERM can outlive the connection.
+  default `close/1` sends SIGTERM, then SIGKILL, to that one process, so
+  processes the server started (a launcher's or shell script's children),
+  and a child that ignores SIGTERM, can outlive the connection.
   With `process_group: true`, `close/1` signals the whole group instead, and
   when the server exits on its own, whatever it left running in its group is
   signalled too. A descendant that leaves the group on purpose (`setsid`) is

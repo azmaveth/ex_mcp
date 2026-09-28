@@ -635,10 +635,10 @@ an OTP release, the release's own directories (under `RELEASE_ROOT`) are
 dropped from the inherited `PATH`, so a server that is itself an Erlang or
 Elixir program finds the host's `erl` rather than the release's.
 
-Set `process_group: true` for a server started through a wrapper (`npx`, a
-version-manager shim such as mise or asdf, a shell script): closing the
-connection then signals the wrapper and everything it started, instead of
-leaving the real server running once the wrapper is gone.
+Set `process_group: true` for a server that starts processes of its own (a
+launcher or shell script that spawns the real server, a server that forks
+workers): closing the connection then signals the server and everything it
+started in its process group, instead of the one process the port started.
 
 ## Streamable HTTP
 
