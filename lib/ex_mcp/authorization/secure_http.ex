@@ -15,7 +15,7 @@ defmodule ExMCP.Authorization.SecureHTTP do
   """
 
   alias ExMCP.Authorization.PinnedHTTPClient
-  alias ExMCP.Internal.{DNSResolver, NetworkPolicy}
+  alias ExMCP.Internal.{CACerts, DNSResolver, NetworkPolicy}
 
   @default_options [
     dns_timeout_ms: 1_000,
@@ -302,7 +302,7 @@ defmodule ExMCP.Authorization.SecureHTTP do
 
     defaults = [
       verify: :verify_peer,
-      cacerts: opts[:cacerts] || :public_key.cacerts_get(),
+      cacerts: opts[:cacerts] || CACerts.get(),
       versions: [:"tlsv1.2", :"tlsv1.3"],
       server_name_indication: String.to_charlist(host),
       customize_hostname_check: [match_fun: :public_key.pkix_verify_hostname_match_fun(:https)]
