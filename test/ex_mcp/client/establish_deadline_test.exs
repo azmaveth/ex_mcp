@@ -169,6 +169,56 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
     assert_receive {:session_deleted, ["session-from-initialize"]}, 2_000
   end
 
+  test "the session is still ended when the deadline is what failed the attempt" do
+    port = start_session_server(self(), initialized: :hang)
+
+    assert {:error, :establish_timeout} =
+             start_client("http://127.0.0.1:#{port}/mcp",
+               protocol_mode: :legacy_only,
+               handshake_timeout: 5_000,
+               establish_timeout: 400
+             )
+
+    # notifications/initialized used up the deadline; the DELETE that ends the
+    # session gets a cleanup budget of its own instead of being refused.
+    assert_receive {:session_deleted, "session-from-initialize"}, 2_000
+  end
+
+  test "a prefer_legacy fallback ends the session a failed initialize opened" do
+    bypass = Bypass.open()
+    test_pid = self()
+
+    Bypass.expect(bypass, "POST", "/mcp", fn conn ->
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+
+      case Jason.decode!(body) do
+        %{"method" => "initialize", "id" => id} ->
+          error = %{"code" => -32_601, "message" => "Method not found"}
+
+          conn
+          |> Plug.Conn.put_resp_header("mcp-session-id", "session-from-failed-initialize")
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.resp(
+            200,
+            Jason.encode!(%{"jsonrpc" => "2.0", "id" => id, "error" => error})
+          )
+
+        %{"method" => "server/discover"} ->
+          Plug.Conn.resp(conn, 500, "")
+      end
+    end)
+
+    Bypass.expect(bypass, "DELETE", "/mcp", fn conn ->
+      send(test_pid, {:session_deleted, Plug.Conn.get_req_header(conn, "mcp-session-id")})
+      Plug.Conn.resp(conn, 204, "")
+    end)
+
+    assert {:error, _reason} =
+             start_client("http://127.0.0.1:#{bypass.port}/mcp", protocol_mode: :prefer_legacy)
+
+    assert_receive {:session_deleted, ["session-from-failed-initialize"]}, 2_000
+  end
+
   defp start_client(url, opts) do
     Client.start_link(
       [
@@ -190,6 +240,113 @@ defmodule ExMCP.Client.EstablishDeadlineTest do
   defp os_process_alive?(os_pid) do
     {_output, status} = System.cmd("kill", ["-0", os_pid], stderr_to_stdout: true)
     status == 0
+  end
+
+  # A legacy MCP server on a raw socket: initialize opens a session,
+  # notifications/initialized hangs until the client gives up (Bypass would
+  # report the cut-off handler as a crash), and DELETE reports the session it
+  # ends.
+  defp start_session_server(test_pid, initialized: :hang) do
+    {:ok, listener} =
+      :gen_tcp.listen(0, [
+        :binary,
+        packet: :http_bin,
+        active: false,
+        reuseaddr: true,
+        ip: {127, 0, 0, 1}
+      ])
+
+    {:ok, port} = :inet.port(listener)
+    acceptor = spawn_link(fn -> session_accept_loop(listener, test_pid) end)
+    :ok = :gen_tcp.controlling_process(listener, acceptor)
+
+    on_exit(fn ->
+      Process.exit(acceptor, :kill)
+      :gen_tcp.close(listener)
+    end)
+
+    port
+  end
+
+  defp session_accept_loop(listener, test_pid) do
+    case :gen_tcp.accept(listener) do
+      {:ok, socket} ->
+        handler = spawn(fn -> session_handle(socket, test_pid) end)
+        :ok = :gen_tcp.controlling_process(socket, handler)
+        send(handler, :go)
+        session_accept_loop(listener, test_pid)
+
+      {:error, _closed} ->
+        :ok
+    end
+  end
+
+  defp session_handle(socket, test_pid) do
+    receive do
+      :go -> :ok
+    end
+
+    {:ok, method, length, headers} = read_request_head(socket, nil, 0, %{})
+    :ok = :inet.setopts(socket, packet: :raw)
+    {:ok, body} = if length > 0, do: :gen_tcp.recv(socket, length, 5_000), else: {:ok, ""}
+
+    case {method, body} do
+      {:DELETE, _body} ->
+        send(test_pid, {:session_deleted, headers["mcp-session-id"]})
+        reply(socket, "204 No Content", [], "")
+
+      {:POST, body} ->
+        case Jason.decode!(body) do
+          %{"method" => "initialize", "id" => id} ->
+            result = %{
+              "protocolVersion" => "2025-06-18",
+              "capabilities" => %{},
+              "serverInfo" => %{"name" => "slow-initialized", "version" => "1"}
+            }
+
+            reply(
+              socket,
+              "200 OK",
+              [{"mcp-session-id", "session-from-initialize"}],
+              Jason.encode!(%{"jsonrpc" => "2.0", "id" => id, "result" => result})
+            )
+
+          %{"method" => "notifications/initialized"} ->
+            {:error, _closed} = :gen_tcp.recv(socket, 0, 10_000)
+        end
+    end
+
+    :gen_tcp.close(socket)
+  end
+
+  defp read_request_head(socket, method, length, headers) do
+    case :gen_tcp.recv(socket, 0, 5_000) do
+      {:ok, {:http_request, request_method, _uri, _version}} ->
+        read_request_head(socket, request_method, length, headers)
+
+      {:ok, {:http_header, _, :"Content-Length", _, value}} ->
+        read_request_head(socket, method, String.to_integer(value), headers)
+
+      {:ok, {:http_header, _, name, _, value}} ->
+        name = name |> to_string() |> String.downcase()
+        read_request_head(socket, method, length, Map.put(headers, name, value))
+
+      {:ok, :http_eoh} ->
+        {:ok, method, length, headers}
+    end
+  end
+
+  defp reply(socket, status, headers, body) do
+    header_lines = Enum.map(headers, fn {name, value} -> "#{name}: #{value}\r\n" end)
+
+    :gen_tcp.send(socket, [
+      "HTTP/1.1 #{status}\r\n",
+      "content-type: application/json\r\n",
+      header_lines,
+      "content-length: #{byte_size(body)}\r\n",
+      "connection: close\r\n\r\n",
+      body
+    ])
   end
 
   # Accepts every connection and reads from it, but never writes a byte.

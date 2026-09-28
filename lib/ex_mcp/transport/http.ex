@@ -1199,6 +1199,23 @@ defmodule ExMCP.Transport.HTTP do
     %{state | protocol_version: version, protocol_era: era}
   end
 
+  @doc false
+  # Ends what a failed legacy handshake left in `attempt` that `snapshot` did
+  # not have: the session the server handed out and a deferred SSE client.
+  # The DELETE is bounded by `attempt`'s deadline.
+  @spec abandon_attempt(t(), t()) :: :ok
+  def abandon_attempt(%__MODULE__{} = attempt, %__MODULE__{} = snapshot) do
+    if is_binary(attempt.session_id) and attempt.session_id != snapshot.session_id do
+      terminate_session(attempt)
+    end
+
+    if is_pid(attempt.sse_pid) and attempt.sse_pid != snapshot.sse_pid do
+      stop_sse_client(attempt.sse_pid)
+    end
+
+    :ok
+  end
+
   defp stop_sse_client(pid) do
     GenServer.stop(pid, :normal, 1_000)
   catch

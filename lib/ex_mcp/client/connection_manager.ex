@@ -16,6 +16,11 @@ defmodule ExMCP.Client.ConnectionManager do
 
   @default_handshake_timeout 10_000
 
+  # Time allowed to clean up after a failed attempt (ending the HTTP session
+  # it opened), whatever is left of the establishment deadline: cleanup must
+  # still happen when the deadline is what failed the attempt.
+  @cleanup_timeout 1_000
+
   @doc """
   Establishes connection using the provided options and updates client state.
 
@@ -134,9 +139,34 @@ defmodule ExMCP.Client.ConnectionManager do
   defp close_on_failure({:ok, _result, _state} = success, _transport_mod), do: success
 
   defp close_on_failure({:error, reason, latest_state}, transport_mod) do
-    close_quietly(transport_mod, latest_state)
+    close_quietly(transport_mod, with_cleanup_deadline(transport_mod, latest_state))
     {:error, reason}
   end
+
+  defp with_cleanup_deadline(transport_mod, transport_state) do
+    Deadline.put_on_transport(transport_mod, transport_state, Deadline.after_ms(@cleanup_timeout))
+  end
+
+  # A legacy handshake that failed can still have left something on the
+  # server or in the client before falling back to the modern probe: an HTTP
+  # server may hand out a session with an initialize error, and a session
+  # starts the deferred SSE client. Only that is ended; the connection itself
+  # (a stdio server, say) is what the probe goes on to use.
+  defp abandon_legacy_attempt(HTTP, %HTTP{} = snapshot, %HTTP{} = attempt) do
+    HTTP.abandon_attempt(with_cleanup_deadline(HTTP, attempt), snapshot)
+  end
+
+  defp abandon_legacy_attempt(ReliabilityWrapper, snapshot, attempt) do
+    case {ReliabilityWrapper.unwrap(snapshot), ReliabilityWrapper.unwrap(attempt)} do
+      {{HTTP, http_snapshot}, {HTTP, http_attempt}} ->
+        abandon_legacy_attempt(HTTP, http_snapshot, http_attempt)
+
+      _other ->
+        :ok
+    end
+  end
+
+  defp abandon_legacy_attempt(_transport_mod, _snapshot, _attempt), do: :ok
 
   defp close_quietly(transport_mod, transport_state) do
     transport_mod.close(transport_state)
@@ -282,6 +312,8 @@ defmodule ExMCP.Client.ConnectionManager do
       {:error, initialize_error, latest_state} ->
         if legacy_protocol_failure?(initialize_error) and
              transport_alive?(transport_mod, transport_state) do
+          abandon_legacy_attempt(transport_mod, transport_state, latest_state)
+
           case EraProbe.probe(transport_mod, transport_state, opts) do
             {:ok, discovery, updated_state} ->
               emit_settled_era(:modern, discovery.protocol_version)

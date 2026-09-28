@@ -63,7 +63,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was documented to do.
 - A connection attempt that fails after opening its transport now closes it,
   so a stdio server that never answered is stopped instead of outliving the
-  attempt and piling up across connection retries and reconnects.
+  attempt and piling up across connection retries and reconnects. What is
+  closed is the state the attempt reached, so an HTTP session opened by
+  `initialize` (or by a failed `initialize` before a `:prefer_legacy`
+  fallback) is ended with its `DELETE`, which gets up to one second of its
+  own when the establishment deadline is what failed the attempt.
 - A request whose caller had given up was still sent: a synchronous HTTP
   client sends from its own process, so a request queued behind a slow one
   went out after its caller's `GenServer.call` timed out, or after the

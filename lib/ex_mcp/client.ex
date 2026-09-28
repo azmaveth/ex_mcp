@@ -165,7 +165,8 @@ defmodule ExMCP.Client do
     `:handshake_timeout` plus `:era_probe_timeout`. On expiry `start_link/1`
     fails with `{:error, :establish_timeout}`, and each reconnection attempt is
     bounded the same way. A failed attempt closes the transport it opened, so
-    a spawned stdio server does not outlive it.
+    a spawned stdio server does not outlive it; ending an HTTP session it
+    opened may take up to one more second past the deadline.
   - `:era_cache_legacy_ttl` - How long a successful legacy observation is
     reused before probing for an upgrade again (default: 300_000 milliseconds).
   - `:reset_era_cache` - Clear the observation for this exact transport,
