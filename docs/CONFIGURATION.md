@@ -679,6 +679,77 @@ dual-era client: once `server/discover` succeeds, ExMCP disables that stream,
 clears legacy session state, and uses JSON or POST-owned SSE for each modern
 request. `subscriptions/listen` opens its own POST response stream.
 
+### TLS trust store
+
+Outbound HTTPS (this transport and the OAuth HTTP boundary) verifies peers
+against the operating system's trust store unless you pass certificates
+yourself, so CAs installed on the host, such as a private or corporate CA,
+are trusted automatically.
+
+Loading that store can stall: on macOS it runs `/usr/bin/security`, which can
+hang on the keychain, for example while the session is locked. ExMCP loads it
+with a deadline. If the load stalls, fails, or finds no certificates, ExMCP
+**fails closed** by default: HTTPS requests return
+`{:error, {:trust_store_unavailable, reason}}` (OAuth requests return their
+usual request error), an error is logged, and a
+`[:ex_mcp, :cacerts, :os_load, :failed]` telemetry event is emitted. The
+failure is cached briefly so requests fail immediately instead of each waiting
+out the deadline, and the load is retried after that.
+
+```elixir
+config :ex_mcp, :cacerts,
+  # Deadline for loading the OS trust store (default 5_000 ms). Once loaded,
+  # the store is cached for the life of the VM.
+  os_timeout_ms: 5_000,
+  # How long a failed load is cached before the next attempt (default 30_000).
+  failure_ttl_ms: 30_000,
+  # :none (default) fails closed. :castore trusts the castore bundle instead;
+  # see below before enabling it.
+  fallback: :none,
+  # With fallback: :castore, how often to retry the OS store in the background
+  # (default 5 min). ExMCP switches back as soon as it loads.
+  refresh_interval_ms: 300_000
+```
+
+`fallback: :castore` keeps HTTPS working through a stall by trusting the
+Mozilla-derived bundle from the [`castore`](https://hex.pm/packages/castore)
+package. It is opt-in because it changes which CAs are trusted, and anyone
+able to make the OS store unavailable can force that change:
+
+- CAs installed only in the OS store (private or corporate CAs) stop being
+  trusted, and CAs the OS has distrusted but the bundle version still
+  contains become trusted again.
+- The bundle comes from a dependency, so its integrity depends on your
+  supply chain. Review `castore` updates like code changes; `mix.lock`
+  checksums protect only versions you have already locked.
+
+Enable it only if availability matters more than those risks, and alert on
+the `:os_load, :failed` telemetry event, which reports `fallback: :castore`
+whenever the switch happens.
+
+To trust a fixed set of CAs instead, pass DER-encoded certificates. For
+example, to always use the `castore` bundle:
+
+```elixir
+castore_certs =
+  for {:Certificate, der, _} <- :public_key.pem_decode(File.read!(CAStore.file_path())),
+      do: der
+
+# The HTTP transport:
+ExMCP.Client.start_link(
+  transport: :http,
+  url: "https://api.example.com/mcp",
+  security: %{tls: %{cacerts: castore_certs}}
+)
+
+# The OAuth HTTP boundary (metadata, token, and registration requests):
+config :ex_mcp, :oauth_http, cacerts: castore_certs
+```
+
+A fixed bundle does not change when the OS store is updated, so a distrusted
+CA stays trusted until you update it. Prefer the default unless you need the
+same trust set on every host.
+
 ## BEAM-Local
 
 ```elixir

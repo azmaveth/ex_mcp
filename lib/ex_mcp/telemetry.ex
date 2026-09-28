@@ -112,6 +112,18 @@ defmodule ExMCP.Telemetry do
     * Measurements: `%{system_time: integer(), uptime: integer()}`
     * Metadata: `%{transport: atom(), server: atom(), reason: term()}`
 
+  ### TLS Trust Store Events
+
+  * `[:ex_mcp, :cacerts, :os_load, :failed]` - The OS CA certificate store
+    could not be loaded for outbound HTTPS
+    * Metadata: `%{reason: :timeout | :no_certificates | :error, fallback: :none | :castore}`.
+      With `fallback: :none` (the default), HTTPS requests fail until the
+      store loads; with `:castore`, the CAStore bundle is trusted instead.
+      Alert on this event: a fallback changes which CAs are trusted.
+  * `[:ex_mcp, :cacerts, :os_load, :recovered]` - The OS store loaded after a
+    failure or fallback
+    * Metadata: `%{previous: :failed | :fallback}`
+
   ### Authorization Events
 
   Authorization events are emitted by the OAuth 2.1 subsystem:

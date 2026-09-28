@@ -25,6 +25,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Previously the order followed the internal `"group-N"` id strings, so
   requests could be reversed when N crossed a power of ten (`"group-1000"`
   sorts before `"group-999"`).
+- HTTPS no longer hangs when the OS CA certificate store cannot be loaded.
+  The HTTP transport and the OAuth HTTP boundary called
+  `:public_key.cacerts_get/0`, which waits without a timeout; on macOS it runs
+  `/usr/bin/security`, which can stall on the keychain (for example while the
+  session is locked), blocking every HTTPS request. The OS store is now loaded
+  with a deadline (`config :ex_mcp, :cacerts, os_timeout_ms:`, default 5s),
+  and a failed load fails closed: HTTPS requests return
+  `{:error, {:trust_store_unavailable, reason}}` instead of hanging, the
+  failure is cached for `:failure_ttl_ms` (default 30s) so requests fail fast,
+  and `[:ex_mcp, :cacerts, :os_load, :failed | :recovered]` telemetry is
+  emitted. An opt-in `fallback: :castore` trusts the `castore` bundle during a
+  stall instead; it is off by default because it lets anyone who can make the
+  OS store unavailable change which CAs are trusted. When the OS store loads
+  normally, the trusted CAs are unchanged. The transport also no longer loads
+  the OS store when `tls: %{cacerts: ...}` is given.
 
 ### Added
 
