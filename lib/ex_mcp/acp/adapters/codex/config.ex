@@ -1,7 +1,7 @@
 defmodule ExMCP.ACP.Adapters.Codex.Config do
-  @moduledoc """
-  Pure config and mode helpers for the Codex ACP adapter.
-  """
+  @moduledoc false
+
+  # Pure config and mode helpers for the Codex ACP adapter.
 
   @default_mode "agent"
   @default_reasoning_effort "medium"

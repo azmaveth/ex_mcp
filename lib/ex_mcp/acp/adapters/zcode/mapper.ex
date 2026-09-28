@@ -1,11 +1,11 @@
 defmodule ExMCP.ACP.Adapters.ZCode.Mapper do
-  @moduledoc """
-  Pure ZCode event to ACP message mapping.
+  @moduledoc false
 
-  Translates ZCode `session/event` typed notifications, server-initiated
-  requests, and response messages into ACP `session/update` notifications
-  and JSON-RPC responses.
-  """
+  # Pure ZCode event to ACP message mapping.
+  #
+  # Translates ZCode `session/event` typed notifications, server-initiated
+  # requests, and response messages into ACP `session/update` notifications
+  # and JSON-RPC responses.
 
   require Logger
 

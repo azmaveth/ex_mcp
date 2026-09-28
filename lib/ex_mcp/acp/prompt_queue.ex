@@ -1,7 +1,7 @@
 defmodule ExMCP.ACP.PromptQueue do
-  @moduledoc """
-  Small functional queue core for ACP adapter prompt backlogs.
-  """
+  @moduledoc false
+
+  # Small functional queue core for ACP adapter prompt backlogs.
 
   @opaque t(item) :: :queue.queue(item)
 

@@ -1,11 +1,11 @@
 defmodule ExMCP.ACP.Adapters.ClaudeSDK.Protocol do
-  @moduledoc """
-  Pure helpers for Claude Code's SDK-flavoured stream-json protocol.
+  @moduledoc false
 
-  The official `@anthropic-ai/claude-agent-sdk` still launches Claude Code, but
-  it uses a richer stdin/stdout protocol than the basic CLI stream. This module
-  keeps that wire-shape construction side-effect free.
-  """
+  # Pure helpers for Claude Code's SDK-flavoured stream-json protocol.
+  #
+  # The official `@anthropic-ai/claude-agent-sdk` still launches Claude Code, but
+  # it uses a richer stdin/stdout protocol than the basic CLI stream. This module
+  # keeps that wire-shape construction side-effect free.
 
   alias ExMCP.ACP.Maps
   alias ExMCP.Internal.Maps, as: MapHelpers

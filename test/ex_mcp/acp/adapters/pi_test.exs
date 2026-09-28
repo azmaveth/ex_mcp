@@ -677,13 +677,12 @@ defmodule ExMCP.ACP.Adapters.PiTest do
     end
 
     test "managed model confirmation does not repeat the full model catalog", %{state: state} do
-      executable = System.find_executable("elixir")
+      # `cat` exits when the port closes its stdin. A child that ignores stdin
+      # (e.g. `elixir -e "Process.sleep(:infinity)"`) outlives Port.close/1,
+      # leaks an OS process per run, and holds the test runner's stdout open.
+      executable = System.find_executable("cat")
 
-      port =
-        Port.open({:spawn_executable, executable}, [
-          :binary,
-          args: ["-e", "Process.sleep(:infinity)"]
-        ])
+      port = Port.open({:spawn_executable, executable}, [:binary])
 
       on_exit(fn ->
         if Port.info(port), do: Port.close(port)

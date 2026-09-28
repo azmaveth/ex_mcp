@@ -232,6 +232,9 @@ defmodule ExMCP.MixProject do
           ExMCP.ACP,
           ExMCP.ACP.Agent,
           ExMCP.ACP.Agent.Handler,
+          ExMCP.ACP.Agent.Transport,
+          ExMCP.ACP.Agent.Transport.Memory,
+          ExMCP.ACP.Agent.Transport.Stdio,
           ExMCP.ACP.Client,
           ExMCP.ACP.Client.Handler,
           ExMCP.ACP.Client.DefaultHandler,
@@ -240,12 +243,14 @@ defmodule ExMCP.MixProject do
           ExMCP.ACP.Types,
           ExMCP.ACP.Registry,
           ExMCP.ACP.Adapter,
+          ExMCP.ACP.AdapterEvents,
           ExMCP.ACP.AdapterBridge,
           ExMCP.ACP.AdapterTransport,
           ExMCP.ACP.Adapters.ClaudeSDK,
           ExMCP.ACP.Adapters.ClaudeSDK.SessionStore,
           ExMCP.ACP.Adapters.Codex,
-          ExMCP.ACP.Adapters.Pi
+          ExMCP.ACP.Adapters.Pi,
+          ExMCP.ACP.Adapters.ZCode
         ],
         "Deprecated (planned removal in 2.0)": [
           ExMCP.Server.Tools,

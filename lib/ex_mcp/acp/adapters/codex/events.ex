@@ -1,7 +1,7 @@
 defmodule ExMCP.ACP.Adapters.Codex.Events do
-  @moduledoc """
-  Pure event-mapping helpers for the Codex ACP adapter.
-  """
+  @moduledoc false
+
+  # Pure event-mapping helpers for the Codex ACP adapter.
 
   alias ExMCP.ACP.AdapterEvents
 

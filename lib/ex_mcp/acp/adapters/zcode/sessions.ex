@@ -1,11 +1,11 @@
 defmodule ExMCP.ACP.Adapters.ZCode.Sessions do
-  @moduledoc """
-  Pure session helpers for the ZCode ACP adapter.
+  @moduledoc false
 
-  ZCode sessions are keyed by the `sessionId` string returned by
-  `session/create` or `session/resume`. Each session tracks the active turn
-  (for cancellation), accumulated text/usage, and the current mode and model.
-  """
+  # Pure session helpers for the ZCode ACP adapter.
+  #
+  # ZCode sessions are keyed by the `sessionId` string returned by
+  # `session/create` or `session/resume`. Each session tracks the active turn
+  # (for cancellation), accumulated text/usage, and the current mode and model.
 
   alias ExMCP.ACP.Adapters.ZCode.Config
   alias ExMCP.Internal.Maps

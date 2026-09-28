@@ -1,7 +1,7 @@
 defmodule ExMCP.ACP.Adapters.Codex.SlashCommands do
-  @moduledoc """
-  Pure slash-command parsing helpers for the Codex ACP adapter.
-  """
+  @moduledoc false
+
+  # Pure slash-command parsing helpers for the Codex ACP adapter.
 
   @commands %{
     "compact" => :compact,

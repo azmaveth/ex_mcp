@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude ACP adapter: `session/load` now clamps an inherited Auto mode the
   model cannot support, matching `session/new` and `session/resume`. It
   applied only the bypass policy.
+- `ExMCP.ACP.AdapterEvents.content_chunk/4` accepts a map for `opts`, as its
+  spec always said. A map raised `FunctionClauseError` in `Keyword.get/3`
+  because `:meta` was read as a keyword list; keyword options are unchanged.
+- Pi ACP adapter: when the Pi subprocess exits, pending control requests
+  (such as `session/new`) are now failed in the order they were issued.
+  Previously the order followed the internal `"group-N"` id strings, so
+  requests could be reversed when N crossed a power of ten (`"group-1000"`
+  sorts before `"group-999"`).
 
 ### Added
 
@@ -85,6 +93,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Twenty ACP helper modules are no longer public API.** They were never
+  intended to be: each is a pure helper behind a public module, and their
+  sibling helpers (for example `ExMCP.ACP.Adapters.Pi.Config` and
+  `ExMCP.ACP.Adapters.Codex.Permissions`) were already `@moduledoc false`.
+  They only appeared in the docs because they had a moduledoc. They are now
+  `@moduledoc false` too. The code is unchanged and still callable in 1.x,
+  but it may change without notice, and it will not survive ACP's move to
+  the `ex_acp` package in 2.0. The modules:
+  - Adapter internals: `ExMCP.ACP.Adapters.ClaudeSDK.Mapper`,
+    `ClaudeSDK.Protocol`, `ClaudeSDK.ToolInfo`,
+    `ExMCP.ACP.Adapters.Codex.Config`, `Codex.Events`, `Codex.FileChanges`,
+    `Codex.Protocol`, `Codex.Sessions`, `Codex.SlashCommands`,
+    `ExMCP.ACP.Adapters.Pi.RPC`, `ExMCP.ACP.Adapters.ZCode.Config`,
+    `ZCode.Mapper`, `ZCode.Protocol`, and `ZCode.Sessions`. Use the root
+    adapter module (`ExMCP.ACP.Adapters.Codex` etc.) instead.
+  - Shared plumbing: `ExMCP.ACP.Envelope`, `ExMCP.ACP.LifecycleParams`,
+    `ExMCP.ACP.Maps`, `ExMCP.ACP.Meta`, `ExMCP.ACP.NameValue`, and
+    `ExMCP.ACP.PromptQueue`. Use `ExMCP.ACP.Protocol` and
+    `ExMCP.ACP.AdapterEvents` to build ACP messages.
+- `ExMCP.ACP.AdapterEvents` is now documented as public API for custom
+  adapters, with docs for every builder, and the ACP guide's custom-adapter
+  example uses it. Its `maybe_put/3` map helper is hidden from the docs but
+  still callable in 1.x.
+- `ExMCP.ACP.Adapters.ZCode`, `ExMCP.ACP.Agent.Transport`,
+  `ExMCP.ACP.Agent.Transport.Memory`, and `ExMCP.ACP.Agent.Transport.Stdio`
+  now appear in the docs sidebar's ACP group. They were already public and
+  documented, just left out of the grouping.
 - The Pi ACP adapter is split into `ExMCP.ACP.Adapters.Pi.Config`,
   `ExMCP.ACP.Adapters.Pi.Events`, `ExMCP.ACP.Adapters.Pi.PromptFlow` and
   `ExMCP.ACP.Adapters.Pi.Sessions`, alongside the existing `Pi.RPC`,

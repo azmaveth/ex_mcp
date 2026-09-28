@@ -1,7 +1,7 @@
 defmodule ExMCP.ACP.Adapters.ClaudeSDK.Mapper do
-  @moduledoc """
-  Pure Claude SDK message to ACP message mapping.
-  """
+  @moduledoc false
+
+  # Pure Claude SDK message to ACP message mapping.
 
   alias ExMCP.ACP.Adapters.ClaudeSDK.Protocol, as: ClaudeProtocol
   alias ExMCP.ACP.Adapters.ClaudeSDK.SessionStore
