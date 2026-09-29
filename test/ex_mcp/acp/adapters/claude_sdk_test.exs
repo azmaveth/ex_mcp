@@ -1,9 +1,14 @@
 defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+  import ExMCP.TestHelpers, only: [wait_until: 1]
+
+  alias ExMCP.ACP.AdapterBridge
   alias ExMCP.ACP.Adapters.ClaudeSDK
   alias ExMCP.ACP.Adapters.ClaudeSDK.Mapper
   alias ExMCP.ACP.Adapters.ClaudeSDK.SessionStore
+  alias ExMCP.ACP.Capabilities
   alias ExMCP.ACP.PromptQueue
 
   setup do
@@ -46,8 +51,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert "opus" in args
       assert "--add-dir" in args
       assert "/tmp/shared" in args
-      assert "--mcp-config" in args
-      assert Enum.any?(args, &String.contains?(&1, "\"docs\""))
+      assert [config] = mcp_config_values(args)
+      assert %{"mcpServers" => %{"docs" => _}} = config |> File.read!() |> Jason.decode!()
       assert "--resume" in args
       assert "sess_1" in args
     end
@@ -72,16 +77,276 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert Map.has_key?(session_capabilities, "close")
       assert Map.has_key?(session_capabilities, "fork")
       assert capabilities["auth"]["logout"] == %{}
-      assert capabilities["mcpCapabilities"]["acp"] == true
-      assert capabilities["mcpCapabilities"]["http"] == true
-      assert capabilities["mcpCapabilities"]["sse"] == true
+    end
 
-      assert get_in(capabilities, [
-               "mcpCapabilities",
-               "_meta",
-               "ex_mcp.mcpCapabilities",
-               "beam"
-             ]) == true
+    # Claude Code takes MCP servers only at launch, so no session-supplied
+    # transport is advertised, not even ExMCP's BEAM one.
+    test "advertises no session MCP transports" do
+      mcp = ClaudeSDK.capabilities()["mcpCapabilities"]
+
+      assert mcp["acp"] == false
+      assert mcp["http"] == false
+      assert mcp["sse"] == false
+      assert get_in(mcp, ["_meta", "ex_mcp", "claude_sdk", "sessionMcpServers"]) == false
+      refute Capabilities.supported?(ClaudeSDK.capabilities(), :mcp_beam)
+    end
+  end
+
+  describe "MCP servers" do
+    @describetag :tmp_dir
+
+    test "writes :mcp_servers to a private file, keeping it off the command line" do
+      {_cmd, args} =
+        ClaudeSDK.command(
+          mcp_servers: %{
+            "api" => %{
+              "type" => "http",
+              "url" => "https://mcp.example.test/",
+              "headers" => %{"Authorization" => "Bearer secret-token"}
+            }
+          }
+        )
+
+      refute Enum.any?(args, &String.contains?(&1, "secret-token"))
+      assert [path] = mcp_config_values(args)
+      assert Path.type(path) == :absolute
+
+      assert %{"mcpServers" => %{"api" => %{"headers" => headers}}} =
+               path |> File.read!() |> Jason.decode!()
+
+      assert headers == %{"Authorization" => "Bearer secret-token"}
+      assert permissions(path) == 0o600
+      assert permissions(Path.dirname(path)) == 0o700
+    end
+
+    test "removes the file once the process that built the command exits" do
+      test_pid = self()
+
+      owner =
+        spawn(fn ->
+          {_cmd, args} = ClaudeSDK.command(mcp_servers: %{"docs" => %{"command" => "docs-mcp"}})
+          send(test_pid, {:config, hd(mcp_config_values(args))})
+
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      assert_receive {:config, path}
+      assert File.exists?(path)
+
+      send(owner, :stop)
+      wait_until(fn -> not File.exists?(Path.dirname(path)) end)
+    end
+
+    test "the file lives as long as the adapter bridge that launched Claude Code", %{
+      tmp_dir: tmp_dir
+    } do
+      argv_file = Path.join(tmp_dir, "argv")
+      cli = Path.join(tmp_dir, "claude")
+
+      # Records its arguments, then waits for stdin to close like Claude Code.
+      File.write!(cli, """
+      #!/bin/sh
+      for arg in "$@"; do printf '%s\\n' "$arg"; done > "#{argv_file}.tmp"
+      mv "#{argv_file}.tmp" "#{argv_file}"
+      while read -r _line; do :; done
+      """)
+
+      File.chmod!(cli, 0o755)
+
+      {:ok, bridge} =
+        AdapterBridge.start_link(
+          adapter: ClaudeSDK,
+          adapter_opts: [
+            cli_path: cli,
+            cwd: tmp_dir,
+            mcp_servers: %{"docs" => %{"command" => "docs-mcp"}}
+          ]
+        )
+
+      wait_until(fn -> File.exists?(argv_file) end)
+
+      assert [path] =
+               argv_file |> File.read!() |> String.split("\n", trim: true) |> mcp_config_values()
+
+      assert File.exists?(path)
+
+      AdapterBridge.close(bridge)
+      wait_until(fn -> not File.exists?(Path.dirname(path)) end)
+    end
+
+    test "passes :mcp_config_path through as a path", %{tmp_dir: tmp_dir} do
+      config = Path.join(tmp_dir, "mcp.json")
+      File.write!(config, ~s({"mcpServers": {}}))
+
+      {_cmd, args} = ClaudeSDK.command(mcp_config_path: config)
+      assert mcp_config_values(args) == [config]
+
+      # A relative path is resolved against the directory Claude Code runs in.
+      {_cmd, args} = ClaudeSDK.command(mcp_config_path: "mcp.json", cwd: tmp_dir)
+      assert mcp_config_values(args) == [config]
+    end
+
+    test "combines config paths with :mcp_servers, caller's files first", %{tmp_dir: tmp_dir} do
+      first = Path.join(tmp_dir, "first.json")
+      second = Path.join(tmp_dir, "second.json")
+      Enum.each([first, second], &File.write!(&1, ~s({"mcpServers": {}})))
+
+      {_cmd, args} =
+        ClaudeSDK.command(
+          mcp_config_path: [first, second],
+          mcp_servers: %{"docs" => %{"command" => "docs-mcp"}}
+        )
+
+      assert [^first, ^second, generated] = mcp_config_values(args)
+      assert %{"mcpServers" => %{"docs" => _}} = generated |> File.read!() |> Jason.decode!()
+    end
+
+    test "rejects an ACP-style server list without echoing it" do
+      acp_servers = [
+        %{
+          "type" => "http",
+          "name" => "api",
+          "url" => "https://mcp.example.test/",
+          "headers" => [%{"name" => "Authorization", "value" => "Bearer secret-token"}]
+        }
+      ]
+
+      assert {:error, {:invalid_option, :mcp_servers, message}} =
+               ClaudeSDK.command(mcp_servers: acp_servers)
+
+      assert message =~ "got a list"
+      assert message =~ "ACP-style"
+      refute message =~ "secret-token"
+    end
+
+    test "rejects other :mcp_servers shapes without echoing them" do
+      for servers <- [
+            ~s({"mcpServers": {"api": {"headers": {"Authorization": "Bearer secret-token"}}}}),
+            %{"api" => "Bearer secret-token"},
+            %{"api" => %{"headers" => %{"Authorization" => {:bearer, "secret-token"}}}},
+            %{:api => %{"url" => "x"}, "api" => %{"url" => "secret-token"}}
+          ] do
+        assert {:error, {:invalid_option, :mcp_servers, message}} =
+                 ClaudeSDK.command(mcp_servers: servers)
+
+        refute message =~ "secret-token"
+      end
+    end
+
+    test "rejects a :mcp_config_path that is not an existing file", %{tmp_dir: tmp_dir} do
+      missing = Path.join(tmp_dir, "missing.json")
+
+      assert {:error, {:invalid_option, :mcp_config_path, message}} =
+               ClaudeSDK.command(mcp_config_path: missing)
+
+      assert message =~ "missing.json"
+
+      assert {:error, {:invalid_option, :mcp_config_path, _}} =
+               ClaudeSDK.command(mcp_config_path: tmp_dir)
+
+      assert {:error, {:invalid_option, :mcp_config_path, _}} =
+               ClaudeSDK.command(mcp_config_path: 42)
+    end
+
+    test "the bridge refuses to start on invalid MCP options" do
+      Process.flag(:trap_exit, true)
+
+      assert {:error, {:invalid_option, :mcp_servers, _message}} =
+               AdapterBridge.start_link(
+                 adapter: ClaudeSDK,
+                 adapter_opts: [mcp_servers: [%{"name" => "docs", "command" => "/bin/docs"}]]
+               )
+    end
+  end
+
+  describe "session mcpServers" do
+    @describetag :tmp_dir
+
+    setup %{tmp_dir: tmp_dir} do
+      %{opts: [cwd: tmp_dir, claude_config_dir: Path.join(tmp_dir, "claude")]}
+    end
+
+    test "session/new warns that servers the launch did not configure are not attached", %{
+      opts: opts,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, state} = ClaudeSDK.init(opts)
+
+      log =
+        capture_log(fn ->
+          assert {:reply, %{"sessionId" => _}, _state} =
+                   ClaudeSDK.translate_outbound(
+                     session_request("session/new", tmp_dir, ["docs", "api"]),
+                     state
+                   )
+        end)
+
+      assert log =~ "session/new"
+      assert log =~ ~s(["docs", "api"])
+      assert log =~ "not attached"
+      assert log =~ ":mcp_config_path"
+    end
+
+    test "names only the servers missing from :mcp_servers", %{opts: opts, tmp_dir: tmp_dir} do
+      {:ok, state} = ClaudeSDK.init([mcp_servers: %{docs: %{"command" => "docs-mcp"}}] ++ opts)
+
+      log =
+        capture_log(fn ->
+          ClaudeSDK.translate_outbound(
+            session_request("session/new", tmp_dir, ["docs", "api"]),
+            state
+          )
+        end)
+
+      assert log =~ ~s(["api"])
+      refute log =~ ~s("docs")
+    end
+
+    test "stays quiet when the launch configured every server, or has a config file", %{
+      opts: opts,
+      tmp_dir: tmp_dir
+    } do
+      config = Path.join(tmp_dir, "mcp.json")
+      File.write!(config, ~s({"mcpServers": {}}))
+
+      for launch <- [
+            [mcp_servers: %{"docs" => %{"command" => "docs-mcp"}}],
+            [mcp_config_path: config],
+            []
+          ] do
+        {:ok, state} = ClaudeSDK.init(launch ++ opts)
+        requested = if launch == [], do: [], else: ["docs"]
+
+        assert capture_log(fn ->
+                 ClaudeSDK.translate_outbound(
+                   session_request("session/new", tmp_dir, requested),
+                   state
+                 )
+               end) == ""
+      end
+    end
+
+    test "session/load, session/resume and session/fork warn too", %{
+      opts: opts,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, state} = ClaudeSDK.init(opts)
+
+      for method <- ["session/load", "session/resume"] do
+        log =
+          capture_log(fn ->
+            ClaudeSDK.translate_outbound(session_request(method, tmp_dir, ["docs"]), state)
+          end)
+
+        assert log =~ method
+        assert log =~ ~s(["docs"])
+      end
+
+      %{"params" => params} = session_request("session/fork", tmp_dir, ["docs"])
+      log = capture_log(fn -> ClaudeSDK.fork_session(params, state) end)
+      assert log =~ "session/fork"
     end
   end
 
@@ -1377,6 +1642,33 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
       assert state.session_id == acp_id
       assert state.claude_session_id == cli_uuid
     end
+  end
+
+  defp mcp_config_values(args) do
+    args
+    |> Enum.drop_while(&(&1 != "--mcp-config"))
+    |> Enum.drop(1)
+    |> Enum.take_while(&(not String.starts_with?(&1, "--")))
+  end
+
+  defp permissions(path), do: Bitwise.band(File.stat!(path).mode, 0o777)
+
+  defp session_request(method, cwd, server_names) do
+    servers =
+      Enum.map(
+        server_names,
+        &%{"name" => &1, "command" => "/usr/bin/#{&1}", "args" => [], "env" => []}
+      )
+
+    %{
+      "id" => 1,
+      "method" => method,
+      "params" => %{
+        "sessionId" => "123e4567-e89b-12d3-a456-426614174000",
+        "cwd" => cwd,
+        "mcpServers" => servers
+      }
+    }
   end
 
   defp assert_update_session_ids(messages, expected_session_id) do

@@ -10,10 +10,15 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.MCPConfigGoldenTest do
   committed fixture under `test/fixtures/acp/claude/mcp_config/`. The
   fixtures pin:
 
-    * the `--mcp-config` payload `command/1` builds - one entry per stdio,
-      HTTP and SSE server, atom keys stringified through
-      `ExMCP.ACP.Maps.stringify_keys/1` - and the absence of the flag for
-      an empty or missing server map, plus `--strict-mcp-config`;
+    * the `--mcp-config` file `command/1` writes for `:mcp_servers` - one
+      entry per stdio, HTTP and SSE server, atom keys stringified through
+      `ExMCP.ACP.Maps.stringify_keys/1`, mode 0600 in a 0700 directory, and
+      only its path on the command line - and the absence of the flag for an
+      empty or missing server map, plus `--strict-mcp-config`;
+    * `:mcp_config_path` files passed as paths (a relative one resolved
+      against `:cwd`, the caller's files before the generated one), and the
+      `{:invalid_option, key, message}` errors for an ACP-style server list
+      and a config path that is not a file;
     * the rest of the Claude Code command line in its exact order: the
       stream-json flags, thinking (`--thinking`, `--max-thinking-tokens`,
       and `0` meaning disabled), effort and budget limits, model and
@@ -24,8 +29,8 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.MCPConfigGoldenTest do
       `--allow-dangerously-skip-permissions`), partial messages,
       `--add-dir` repetition, resume/fork/session flags and `extra_args`;
     * `cli_path` resolution and the constant SDK entrypoint `env/1`;
-    * the static `capabilities/0` map, including the MCP transports the
-      adapter advertises;
+    * the static `capabilities/0` map, including that no session MCP
+      transport is advertised (servers are launch options);
     * `auth_methods/1,2`: the empty list before `initialize`, the terminal
       login methods a `auth.terminal` client capability unlocks, the
       `_meta.terminal-auth` block a `_meta["terminal-auth"]` capability
@@ -89,7 +94,13 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.MCPConfigGoldenTest do
           }
         )
 
-      assert "--mcp-config" in args(transcript)
+      assert "<generated-mcp-config>" in args(transcript)
+      refute Enum.any?(args(transcript), &String.contains?(&1, "Bearer"))
+
+      assert %{file_mode: "0600", dir_mode: "0700", contents: %{"mcpServers" => servers}} =
+               generated_config(transcript)
+
+      assert Map.keys(servers) == ["api", "docs", "events"]
     end
 
     test "command_stringifies_atom_keyed_servers" do
@@ -98,7 +109,66 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.MCPConfigGoldenTest do
           mcp_servers: %{docs: %{command: "docs-mcp", args: ["--stdio"]}}
         )
 
-      assert Enum.any?(args(transcript), &String.contains?(&1, ~s("docs")))
+      assert %{contents: %{"mcpServers" => %{"docs" => _}}} = generated_config(transcript)
+    end
+
+    test "command_with_an_mcp_config_path" do
+      steps = [
+        {:write_file, "<sandbox>/mcp.json", %{"mcpServers" => %{"docs" => %{"command" => "d"}}}},
+        {:command, mcp_config_path: "<sandbox>/mcp.json"},
+        {:note, "A relative path is resolved against the directory Claude Code runs in"},
+        {:write_file, "<sandbox>/project/local.json", %{"mcpServers" => %{}}},
+        {:command, mcp_config_path: "local.json", cwd: "<sandbox>/project"}
+      ]
+
+      transcript = ClaudeGolden.assert_golden(@area, "command_with_an_mcp_config_path", steps)
+
+      assert Enum.drop_while(args(transcript), &(&1 != "--mcp-config")) |> Enum.take(2) ==
+               ["--mcp-config", "<sandbox>/project/local.json"]
+    end
+
+    test "command_with_config_paths_and_servers" do
+      steps = [
+        {:write_file, "<sandbox>/a.json", %{"mcpServers" => %{}}},
+        {:write_file, "<sandbox>/b.json", %{"mcpServers" => %{}}},
+        {:command,
+         mcp_config_path: ["<sandbox>/a.json", "<sandbox>/b.json"],
+         mcp_servers: %{"docs" => %{"command" => "docs-mcp"}},
+         strict_mcp_config: true}
+      ]
+
+      transcript =
+        ClaudeGolden.assert_golden(@area, "command_with_config_paths_and_servers", steps)
+
+      assert Enum.drop_while(args(transcript), &(&1 != "--mcp-config")) |> Enum.take(4) ==
+               ["--mcp-config", "<sandbox>/a.json", "<sandbox>/b.json", "<generated-mcp-config>"]
+    end
+
+    test "command_rejects_an_acp_style_server_list" do
+      transcript =
+        command("command_rejects_an_acp_style_server_list",
+          mcp_servers: [
+            %{
+              "type" => "http",
+              "name" => "api",
+              "url" => "https://mcp.example.test/",
+              "headers" => [%{"name" => "Authorization", "value" => "Bearer x"}]
+            }
+          ]
+        )
+
+      assert %{tag: :error, error: {:invalid_option, :mcp_servers, message}} =
+               ClaudeGolden.last_result(transcript)
+
+      refute message =~ "Bearer"
+    end
+
+    test "command_rejects_a_missing_config_path" do
+      transcript =
+        command("command_rejects_a_missing_config_path", mcp_config_path: "<sandbox>/nope.json")
+
+      assert %{tag: :error, error: {:invalid_option, :mcp_config_path, _message}} =
+               ClaudeGolden.last_result(transcript)
     end
 
     test "command_with_strict_mcp_config" do
@@ -267,16 +337,17 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.MCPConfigGoldenTest do
                ClaudeGolden.last_result(transcript)
     end
 
-    test "capabilities_advertise_the_mcp_transports" do
+    test "capabilities_advertise_no_session_mcp_transports" do
       transcript =
-        ClaudeGolden.assert_golden(@area, "capabilities_advertise_the_mcp_transports", [
+        ClaudeGolden.assert_golden(@area, "capabilities_advertise_no_session_mcp_transports", [
           :capabilities
         ])
 
       assert %{reply: %{"mcpCapabilities" => mcp}} = ClaudeGolden.last_result(transcript)
-      assert mcp["acp"] == true
-      assert mcp["http"] == true
-      assert mcp["sse"] == true
+      assert mcp["acp"] == false
+      assert mcp["http"] == false
+      assert mcp["sse"] == false
+      assert mcp["_meta"]["ex_mcp"]["claude_sdk"]["sessionMcpServers"] == false
     end
   end
 
@@ -473,6 +544,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.MCPConfigGoldenTest do
   defp args(transcript) do
     %{reply: %{args: args}} = ClaudeGolden.last_result(transcript)
     args
+  end
+
+  defp generated_config(transcript) do
+    %{reply: %{generated_mcp_config: config}} = ClaudeGolden.last_result(transcript)
+    config
   end
 
   defp authenticate(acp_id, method_id) do

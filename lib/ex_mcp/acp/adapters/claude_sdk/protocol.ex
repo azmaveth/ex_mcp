@@ -7,7 +7,6 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Protocol do
   # it uses a richer stdin/stdout protocol than the basic CLI stream. This module
   # keeps that wire-shape construction side-effect free.
 
-  alias ExMCP.ACP.Maps
   alias ExMCP.Internal.Maps, as: MapHelpers
 
   @sdk_version "0.3.238"
@@ -443,16 +442,13 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK.Protocol do
     |> append_csv(opts, :tools, "--tools")
   end
 
+  # Only config file paths reach the command line. `ClaudeSDK.command/1`
+  # turns `:mcp_servers` into a private file first (see `ClaudeSDK.MCPConfig`),
+  # so server definitions and the credentials they carry never appear in argv.
   defp append_mcp_config(args, opts) do
-    case Keyword.get(opts, :mcp_servers) do
-      nil ->
-        args
-
-      servers when servers == %{} ->
-        args
-
-      servers ->
-        args ++ ["--mcp-config", Jason.encode!(%{"mcpServers" => Maps.stringify_keys(servers)})]
+    case opts |> Keyword.get(:mcp_config_path) |> List.wrap() do
+      [] -> args
+      paths -> args ++ ["--mcp-config" | Enum.map(paths, &to_string/1)]
     end
   end
 

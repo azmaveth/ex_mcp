@@ -5,6 +5,36 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
   This adapter launches Claude Code with the same stream-json flags used by
   `@anthropic-ai/claude-agent-sdk`, including the SDK entrypoint environment and
   stdio permission prompt control channel.
+
+  ## MCP servers
+
+  Claude Code takes MCP servers only when it starts, so they are adapter
+  options, not session parameters:
+
+    * `:mcp_servers` - a map of server name to Claude's own server config, for
+      example `%{"docs" => %{"type" => "http", "url" => url, "headers" => %{}}}`
+      or `%{"fs" => %{"command" => "fs-mcp", "args" => [], "env" => %{}}}`.
+      The adapter writes it to a file readable only by the current user (0600,
+      in a fresh 0700 directory under `System.tmp_dir/0`) and passes the path,
+      so headers and environment values never appear in the process arguments,
+      which other local users can read. The file is removed when the process
+      that launched Claude Code (the adapter bridge) exits. Anything other than
+      a map, such as an ACP-style `mcpServers` list, makes `command/1` return
+      `{:error, {:invalid_option, :mcp_servers, message}}`.
+    * `:mcp_config_path` - a path, or a list of paths, to Claude MCP config
+      JSON files (`{"mcpServers": {...}}`) that you manage yourself. A relative
+      path is resolved against `:cwd`. A path that is not an existing file is
+      an `{:invalid_option, :mcp_config_path, message}` error.
+    * `:strict_mcp_config` - when true, Claude Code uses only the servers given
+      through the options above and ignores the user's own MCP configuration.
+
+  The `mcpServers` of `session/new`, `session/load`, `session/resume` and
+  `session/fork` are not attached: the Claude Code process is already running.
+  `capabilities/0` therefore advertises no MCP transport and sets
+  `mcpCapabilities._meta.ex_mcp.claude_sdk.sessionMcpServers` to `false`, and
+  the adapter logs a warning when a request names a server the launch options
+  did not configure. (Servers in a `:mcp_config_path` file are not known to the
+  adapter, so a launch that has one is not checked.)
   """
 
   @behaviour ExMCP.ACP.Adapter
@@ -15,6 +45,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
   require Logger
 
   alias ExMCP.ACP.Adapters.ClaudeSDK.Mapper
+  alias ExMCP.ACP.Adapters.ClaudeSDK.MCPConfig
   alias ExMCP.ACP.Adapters.ClaudeSDK.Protocol, as: ClaudeProtocol
   alias ExMCP.ACP.Adapters.ClaudeSDK.SessionStore
   alias ExMCP.ACP.Envelope
@@ -95,7 +126,11 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
   end
 
   @impl true
-  def command(opts), do: ClaudeProtocol.command(opts)
+  def command(opts) do
+    with {:ok, opts} <- MCPConfig.prepare(opts) do
+      ClaudeProtocol.command(opts)
+    end
+  end
 
   @impl true
   def env(opts), do: ClaudeProtocol.env(opts)
@@ -121,15 +156,13 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
         "image" => true,
         "embeddedContext" => true
       },
+      # Session `mcpServers` are never attached (see "MCP servers" in the
+      # moduledoc); servers are launch options.
       "mcpCapabilities" => %{
-        "acp" => true,
-        "http" => true,
-        "sse" => true,
-        "_meta" => %{
-          "ex_mcp.mcpCapabilities" => %{
-            "beam" => true
-          }
-        }
+        "acp" => false,
+        "http" => false,
+        "sse" => false,
+        "_meta" => %{"ex_mcp" => %{"claude_sdk" => %{"sessionMcpServers" => false}}}
       },
       "auth" => %{
         "logout" => %{}
@@ -189,6 +222,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
 
   @impl true
   def fork_session(params, state) do
+    warn_unattached_mcp_servers("session/fork", params, state)
     session_id = params["sessionId"] || state.session_id
 
     params
@@ -232,6 +266,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
   def translate_outbound(_msg, state), do: {:ok, :skip, state}
 
   defp handle_request("session/new", %{"id" => _id, "params" => params}, state) do
+    warn_unattached_mcp_servers("session/new", params, state)
     session_id = state.session_id || params["sessionId"] || generated_session_id()
 
     state = %{
@@ -288,6 +323,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
   end
 
   defp handle_request("session/load", %{"params" => params}, state) do
+    warn_unattached_mcp_servers("session/load", params, state)
     session_id = params["sessionId"] || state.session_id || generated_session_id()
 
     state = %{
@@ -319,6 +355,7 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
   end
 
   defp handle_request("session/resume", %{"params" => params}, state) do
+    warn_unattached_mcp_servers("session/resume", params, state)
     session_id = params["sessionId"] || state.session_id || generated_session_id()
 
     state = %{
@@ -745,6 +782,23 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDK do
 
   defp generated_session_id do
     "claude_sdk_#{System.unique_integer([:positive, :monotonic])}"
+  end
+
+  # Session `mcpServers` cannot reach a Claude Code process that is already
+  # running. Say so for the ones the launch options did not configure, which
+  # would otherwise go missing silently.
+  defp warn_unattached_mcp_servers(method, params, state) do
+    case MCPConfig.unattached_servers((params || %{})["mcpServers"], state.opts) do
+      [] ->
+        :ok
+
+      names ->
+        Logger.warning(
+          "Claude SDK adapter: #{method} asked for MCP servers #{inspect(names)}, " <>
+            "which are not attached. Claude Code takes MCP servers only at launch; " <>
+            "pass them through the :mcp_servers or :mcp_config_path adapter option."
+        )
+    end
   end
 
   defp session_store_opts(params, state) do

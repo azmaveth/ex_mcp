@@ -43,9 +43,16 @@ defmodule ExMCP.ACP.Adapter do
   their own subprocess lifecycle, return `:one_shot` instead. For adapters
   that keep persistent subprocesses but need to own more than one Port, return
   `:adapter_managed` and implement `handle_adapter_message/2`.
+
+  Return `{:error, reason}` when the options cannot be turned into a launch
+  command; `ExMCP.ACP.AdapterBridge` then stops with `reason`, so its
+  `start_link/1` returns `{:error, reason}`.
   """
   @callback command(opts :: keyword()) ::
-              {executable :: String.t(), args :: [String.t()]} | :one_shot | :adapter_managed
+              {executable :: String.t(), args :: [String.t()]}
+              | :one_shot
+              | :adapter_managed
+              | {:error, reason :: term()}
 
   @doc """
   Translate an outbound ACP JSON-RPC message to the native CLI format.

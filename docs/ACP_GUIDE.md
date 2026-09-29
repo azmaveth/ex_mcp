@@ -262,6 +262,44 @@ headers, commands, arguments, or environment values. As with Codex,
 `trusted_mcp_servers: :all` is an unsafe compatibility escape hatch and should
 only be used at a trusted integration boundary.
 
+### Claude Code MCP Servers
+
+Claude Code reads its MCP servers only when it starts, so the Claude adapter
+takes them as launch options and does **not** attach the `mcpServers` of
+`session/new`, `session/load`, `session/resume` or `session/fork`. Its
+capabilities say so: `mcpCapabilities` advertises no transport (`http`, `sse`
+and `acp` are `false`, and there is no BEAM transport) and
+`mcpCapabilities._meta.ex_mcp.claude_sdk.sessionMcpServers` is `false`. When a
+session request names a server the launch options did not configure, the
+adapter logs a warning.
+
+```elixir
+adapter_opts: [
+  # Claude's own format: server name => config, with header and env maps.
+  mcp_servers: %{
+    "docs" => %{
+      "type" => "http",
+      "url" => "https://docs.example.com/mcp",
+      "headers" => %{"Authorization" => "Bearer " <> token}
+    }
+  },
+  # Or config files you manage ({"mcpServers": {...}}); relative to :cwd.
+  mcp_config_path: "/run/my_app/claude-mcp.json",
+  # Ignore the user's own Claude MCP configuration.
+  strict_mcp_config: true
+]
+```
+
+`:mcp_servers` is never put on the command line, where other local users can
+read it through `ps` or `/proc/<pid>/cmdline`. The adapter writes it to a file
+readable only by the current user (0600, in a new 0700 directory under the
+system temporary directory), passes the path to `--mcp-config`, and removes the
+file when the adapter bridge exits. `:mcp_servers` must be a map: an ACP-style
+`mcpServers` list, or any other shape, fails the connection with
+`{:error, {:invalid_option, :mcp_servers, message}}`, and a
+`:mcp_config_path` that is not an existing file fails it with
+`{:error, {:invalid_option, :mcp_config_path, message}}`.
+
 ## Session Lifecycle
 
 ACP sessions represent ongoing conversations with an agent.

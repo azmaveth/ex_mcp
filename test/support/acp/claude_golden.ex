@@ -74,7 +74,11 @@ defmodule ExMCP.Test.ClaudeGolden do
     * `{:list_sessions, params}` - `ClaudeSDK.list_sessions(params, state)`.
     * `{:fork_session, params}` - `ClaudeSDK.fork_session(params, state)`.
     * `{:command, opts}` / `{:env, opts}` - `ClaudeSDK.command/1` and
-      `ClaudeSDK.env/1` over `Keyword.merge(default_cli_opts(), opts)`.
+      `ClaudeSDK.env/1` over `Keyword.merge(default_cli_opts(), opts)`. The
+      private file `command/1` writes for `:mcp_servers` lives outside the
+      sandbox at a random path, so in `args` that path becomes
+      `"<generated-mcp-config>"` and the reply gains `generated_mcp_config`:
+      the file's decoded contents and the file and directory permissions.
     * `{:auth_methods, opts}` - `ClaudeSDK.auth_methods(opts, state)`;
       `{:auth_methods_fresh, opts}` - `ClaudeSDK.auth_methods(opts)`.
     * `:capabilities`, `:modes`, `:config_options` - the static callbacks.
@@ -640,10 +644,14 @@ defmodule ExMCP.Test.ClaudeGolden do
 
   defp execute({:command, opts}, state, _transcript, ctx) do
     opts = cli_opts(opts, ctx)
-    {executable, args} = ClaudeSDK.command(opts)
 
-    {%{kind: :command, opts: opts}, %{tag: :ok, reply: %{executable: executable, args: args}},
-     state}
+    result =
+      case ClaudeSDK.command(opts) do
+        {:error, reason} -> %{tag: :error, error: reason}
+        {executable, args} -> %{tag: :ok, reply: command_reply(executable, args, ctx)}
+      end
+
+    {%{kind: :command, opts: opts}, result, state}
   end
 
   defp execute({:env, opts}, state, _transcript, ctx) do
@@ -724,6 +732,44 @@ defmodule ExMCP.Test.ClaudeGolden do
 
   defp execute({:note, text}, state, _transcript, _ctx) when is_binary(text) do
     {%{kind: :note, text: text}, %{}, state}
+  end
+
+  # Any `--mcp-config` value outside the sandbox is the file `command/1`
+  # generated for `:mcp_servers`; scenarios' own config files live inside it.
+  defp command_reply(executable, args, ctx) do
+    generated =
+      args
+      |> mcp_config_values()
+      |> Enum.reject(fn path -> Enum.any?(ctx.aliases, &String.starts_with?(path, &1)) end)
+
+    reply = %{
+      executable: executable,
+      args: Enum.map(args, &if(&1 in generated, do: "<generated-mcp-config>", else: &1))
+    }
+
+    case generated do
+      [] ->
+        reply
+
+      [path] ->
+        Map.put(reply, :generated_mcp_config, %{
+          contents: path |> File.read!() |> Jason.decode!(),
+          file_mode: permissions(path),
+          dir_mode: permissions(Path.dirname(path))
+        })
+    end
+  end
+
+  defp mcp_config_values(args) do
+    args
+    |> Enum.drop_while(&(&1 != "--mcp-config"))
+    |> Enum.drop(1)
+    |> Enum.take_while(&(not String.starts_with?(&1, "--")))
+  end
+
+  defp permissions(path) do
+    mode = Bitwise.band(File.stat!(path).mode, 0o777)
+    "0" <> Integer.to_string(mode, 8)
   end
 
   defp cli_opts(opts, ctx) do

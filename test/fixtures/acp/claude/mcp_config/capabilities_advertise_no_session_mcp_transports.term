@@ -20,10 +20,10 @@
         "auth" => %{"logout" => %{}},
         "loadSession" => true,
         "mcpCapabilities" => %{
-          "_meta" => %{"ex_mcp.mcpCapabilities" => %{"beam" => true}},
-          "acp" => true,
-          "http" => true,
-          "sse" => true
+          "_meta" => %{"ex_mcp" => %{"claude_sdk" => %{"sessionMcpServers" => false}}},
+          "acp" => false,
+          "http" => false,
+          "sse" => false
         },
         "promptCapabilities" => %{"embeddedContext" => true, "image" => true},
         "sessionCapabilities" => %{

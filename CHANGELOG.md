@@ -150,9 +150,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   OS store unavailable change which CAs are trusted. When the OS store loads
   normally, the trusted CAs are unchanged. The transport also no longer loads
   the OS store when `tls: %{cacerts: ...}` is given.
+- Claude ACP adapter: `capabilities/0` advertised `mcpCapabilities` `acp`,
+  `http` and `sse` and ExMCP's BEAM transport, but `session/new`,
+  `session/load`, `session/resume` and `session/fork` never attached their
+  `mcpServers`: Claude Code is already running by then and takes MCP servers
+  only at launch. The capabilities now advertise no MCP transport and set
+  `mcpCapabilities._meta.ex_mcp.claude_sdk.sessionMcpServers` to `false`, and
+  the adapter logs a warning when a session request names a server the launch
+  options (`:mcp_servers`, `:mcp_config_path`) did not configure. Session
+  servers are still accepted and not attached, so a client that sends its
+  launch-configured servers again is unaffected. **Behavior change:**
+  `ExMCP.ACP.Client` now refuses BEAM MCP servers for this adapter with
+  `{:error, {:unsupported_capability, :mcp_beam}}` instead of dropping them.
+- **Security:** Claude ACP adapter: `:mcp_servers` was JSON-encoded into the
+  `--mcp-config` argument, so server credentials (HTTP `Authorization`
+  headers, stdio `env`) were readable by other local users through `ps` and
+  `/proc/<pid>/cmdline`. The adapter now writes the servers to a file only
+  the current user can read (0600, in a new 0700 directory under
+  `System.tmp_dir/0`), passes its path, and removes it when the adapter
+  bridge exits. **Behavior change:** the command line carries a file path
+  instead of JSON; Claude Code reads both the same way.
+- Claude ACP adapter: `:mcp_servers` in any shape other than a map, such as
+  an ACP-style `mcpServers` list, crashed the adapter bridge with a
+  `FunctionClauseError` in `ExMCP.ACP.Maps.stringify_keys/1`. It now fails the
+  connection with `{:error, {:invalid_option, :mcp_servers, message}}`, as do
+  entries that are not name-to-map pairs, names that collide once converted
+  to strings, and values that cannot be JSON-encoded. The message never
+  includes the value, which may hold credentials.
 
 ### Added
 
+- Claude ACP adapter: `:mcp_config_path` option, a path or list of paths to
+  Claude MCP config files (`{"mcpServers": {...}}`) passed as
+  `--mcp-config <path>...` ahead of the file generated for `:mcp_servers`. A
+  relative path is resolved against `:cwd`; a path that is not an existing
+  file fails the connection with
+  `{:error, {:invalid_option, :mcp_config_path, message}}`.
+- `ExMCP.ACP.Adapter`: `command/1` may return `{:error, reason}`, and
+  `ExMCP.ACP.AdapterBridge` then stops with `reason`, so `start_link/1`
+  returns `{:error, reason}`. Additive: existing return values are unchanged.
 - `ExMCP.Client.delivery_outcome/1` reads a request's error as `:not_sent`
   (the request provably never left the client: not connected, failed
   validation, the caller's deadline passed or the caller exited before it

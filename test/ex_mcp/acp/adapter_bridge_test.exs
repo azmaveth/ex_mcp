@@ -247,6 +247,22 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
              PortRunner.open("elixir", [], [environment_policy: :unknown], MockAdapter)
   end
 
+  defmodule CommandErrorAdapter do
+    @behaviour ExMCP.ACP.Adapter
+
+    @impl true
+    def init(_opts), do: {:ok, %{}}
+
+    @impl true
+    def command(opts), do: {:error, {:bad_launch, Keyword.get(opts, :why)}}
+
+    @impl true
+    def translate_outbound(_msg, state), do: {:ok, :skip, state}
+
+    @impl true
+    def translate_inbound(_line, state), do: {:skip, state}
+  end
+
   defmodule ManagedMockAdapter do
     @behaviour ExMCP.ACP.Adapter
 
@@ -522,6 +538,16 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
       assert msg["result"]["protocolVersion"] == 1
 
       AdapterBridge.close(bridge)
+    end
+
+    test "fails to start with the reason an adapter's command/1 returns" do
+      Process.flag(:trap_exit, true)
+
+      assert {:error, {:bad_launch, :no_config}} =
+               AdapterBridge.start_link(
+                 adapter: CommandErrorAdapter,
+                 adapter_opts: [why: :no_config]
+               )
     end
   end
 

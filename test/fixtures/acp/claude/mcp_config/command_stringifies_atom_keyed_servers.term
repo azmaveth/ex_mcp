@@ -21,10 +21,16 @@
     result: %{
       reply: %{
         args: ["--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
-         "--permission-prompt-tool", "stdio", "--mcp-config",
-         "{\"mcpServers\":{\"docs\":{\"args\":[\"--stdio\"],\"command\":\"docs-mcp\"}}}",
+         "--permission-prompt-tool", "stdio", "--mcp-config", "<generated-mcp-config>",
          "--permission-mode", "default", "--include-partial-messages"],
-        executable: "<sandbox>/bin/claude"
+        executable: "<sandbox>/bin/claude",
+        generated_mcp_config: %{
+          contents: %{
+            "mcpServers" => %{"docs" => %{"args" => ["--stdio"], "command" => "docs-mcp"}}
+          },
+          dir_mode: "0700",
+          file_mode: "0600"
+        }
       },
       tag: :ok
     }

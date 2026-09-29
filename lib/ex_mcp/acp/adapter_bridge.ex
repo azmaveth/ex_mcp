@@ -127,6 +127,9 @@ defmodule ExMCP.ACP.AdapterBridge do
       :adapter_managed ->
         {:ok, %{state | status: :ready}}
 
+      {:error, reason} ->
+        {:stop, reason}
+
       {cmd, args} ->
         case open_port(cmd, args, adapter_opts, adapter_mod) do
           {:ok, port} ->
