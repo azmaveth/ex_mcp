@@ -1,13 +1,14 @@
 # ExMCP 2.0 Roadmap
 
-- **Status:** Living roadmap — Phase 0 complete; Phase 1 contract design is next
+- **Status:** Living roadmap — Phase 0 complete; Phase 1 partially prepared; package split prototyped, release scope open
 - **Target:** ExMCP `2.0.0`, after stable `1.0.0` and the supported 1.x line
-- **Last updated:** 2026-09-22
+- **Last updated:** 2026-10-03
 - **Related release work:** [`RELEASE_1_0_0.md`](./RELEASE_1_0_0.md),
   [`API_DIFF_RC5_TO_1_0.md`](./API_DIFF_RC5_TO_1_0.md),
   [`POST_1_0_MAINTENANCE_PLAN.md`](./POST_1_0_MAINTENANCE_PLAN.md),
   [`ACP_V2_TRACKING.md`](./ACP_V2_TRACKING.md),
-  [`MCP_2026_07_28_MIGRATION_PLAN.md`](./MCP_2026_07_28_MIGRATION_PLAN.md)
+  [`MCP_2026_07_28_MIGRATION_PLAN.md`](./MCP_2026_07_28_MIGRATION_PLAN.md),
+  [`V2_RELEASE_ASSESSMENT.md`](./V2_RELEASE_ASSESSMENT.md)
 
 ---
 
@@ -111,7 +112,7 @@ an application framework. The objective is to make ordering, cancellation,
 expiry, and error decisions testable without a running process while leaving
 Ports, ETS, HTTP, `Plug.Conn`, telemetry, logging, and supervision at the edge.
 
-## 4. Current 1.0 baseline
+## 4. Released baseline and current mainline
 
 The 1.0 line already provides:
 
@@ -138,10 +139,20 @@ The mixed-version rollback drill, modern conformance suites, official SDK v2
 interop, security checks, and performance/load gates provide the remaining
 release evidence.
 
-Current `master` contains post-1.0 additive work: the ZCode ACP adapter and a
-four-adapter real-CLI lifecycle suite. Those changes remain part of the next
-1.x baseline and must not be described retroactively as contents of the
-`v1.0.0` artifact.
+The latest published baseline is `v1.5.0` (2026-09-21). It includes the ZCode
+ACP adapter, the four-adapter real-CLI lifecycle suite, stdio byte framing,
+legacy notification delivery, and the Codex/Pi/HTTP internal restructuring
+recorded in the backport table below. These are not retroactive contents of
+the `v1.0.0` artifact.
+
+Work after `v1.5.0` includes Pi and Claude characterization/refactoring,
+Claude mode/quota/fork/message-ID support, split-preparation tooling (#71),
+bounded OS trust-store loading (#74), downstream client lifecycle/security
+fixes (#72), and the Claude launch-time MCP config/capability correction
+(`e4d2fc3`). The package still declares `1.5.0` and contains both protocols;
+none of this establishes a released split or a completed architectural v2.
+The 2026-10-03 assessment records the branch reconciliation, local extraction
+prototype, and remaining qualification work.
 
 The remaining architectural pressure is concentrated in runtime ownership,
 callback execution, storage contracts, duplicated public concepts, and the
@@ -165,7 +176,7 @@ size of the compatibility surface.
 | Public middleware/pipeline API | Grok review | Defer | Reconsider after internal pipeline lands | First prove stable phases and use cases internally; a premature public pipeline becomes another compatibility surface. |
 | General protocol-dialect framework | Grok review | Defer | Only with two concrete consumers | Keep existing era/version modules unless a second protocol family demonstrates that a general dialect abstraction removes real duplication. |
 | Optional HTTP server dependency (Cowboy optional, Bandit supported) | Cowlib advisory tracking (#18); PR #21 | Adopt | 2.0; candidate for pulling 2.0 forward | `EEF-CVE-2026-43966` and `EEF-CVE-2026-43969` are "won't fix" upstream, so every consumer carries audit exceptions for encoders ExMCP never calls. Standalone `transport: :http` would require the host to add Bandit or Cowboy, which breaks 1.x consumers; Phoenix mounts of `ExMCP.HttpPlug` are unaffected. Listener lifecycle goes behind per-adapter modules; `:ranch_ref`, the named listener, and shutdown semantics are preserved where Cowboy is chosen. |
-| Separate MCP and ACP Hex packages | Package-footprint review | Investigate | Phase 1 decision | ACP is substantial and lightly coupled, but package/release topology and migration cost need a focused design. |
+| Separate MCP and ACP Hex packages | Package-footprint review | Prototyped; contract open | Phase 1 decision | Split-preparation tooling is merged and a local extraction exists; shared runtime ownership, package identity, compatibility, and qualification remain unresolved. |
 | Third shared runtime package | Package-footprint review | Defer pending split design | 2.0 only if justified | Centralize security-sensitive JSON-RPC/framing/process code only if both packages need a stable neutral contract; do not publish a grab-bag of tiny helpers. |
 | Built-in distributed database/event sourcing | External review extrapolation | Reject for core | External adapters | ExMCP should define contracts, not require a database or event-source all runtime state. |
 | Copy Anubis APIs or rewrite ExMCP around them | Comparison exercise | Reject | — | ExMCP has broader protocol, transport, authorization, ACP, and compatibility requirements. |
@@ -476,7 +487,23 @@ ExMCP 2.0 is not intended to:
 
 ### 10.1 MCP/ACP package topology
 
-ACP is large enough to justify evaluating a split: at commit `db8a998`, after
+The 2026-10-03 audit found a local `ex_acp` extraction at `58dee1d` in the
+sibling repository, plus uncommitted `spike/acp-cutover` work that changes
+`ExMCP.ACP.*` into delegates and adds `path: "../ex_acp"`. The extraction has
+no remote or CI. Preserve the cutover worktree; it is not a merge-ready branch.
+Refresh it from current mainline before using it as a release candidate.
+
+The prototype copies shared internals, and subprocess environment/lifecycle
+fixes have already diverged. This does not satisfy the no-duplication policy
+below. The shim generator also omits legacy structs and assumes `ExACP` /
+`:ex_acp`; an Arbor naming decision must address these contracts explicitly.
+See [`V2_RELEASE_ASSESSMENT.md`](./V2_RELEASE_ASSESSMENT.md) for the concrete
+blockers and the proposed focused-release scope. Repository transfer, Hex
+package identity, OTP application/config identity, Elixir namespaces, and
+wire/storage names are separate decisions. No rename or transfer has been
+accepted by this roadmap.
+
+ACP is large enough to justify evaluating a split: historically, at commit `db8a998`, after
 the post-1.0 ZCode adapter and CLI interop merge, the tree contains 50 ACP
 source files and 22,591 of 92,812 library lines (about 24.3%). The coupling is
 much smaller than the line count. At this 2026-08-22 baseline, xref reports 26
@@ -524,12 +551,13 @@ The package-topology design must compare these options:
 | Independent `ex_mcp` and `ex_acp` with copied helpers | Two simple dependency graphs and independent releases | Security, framing, environment, and JSON-RPC fixes can drift. Copying those implementations is not acceptable. |
 | `ex_mcp` and `ex_acp` depend on a small shared package | No duplicated security-sensitive code; independent protocol packages and dependency sets | Adds a third public app, versioning policy, release order, compatibility matrix, and another release/maintenance coordination surface. |
 
-The preliminary direction is a same-repository, multi-package design spike,
-not an immediate split. First move ACP-only helpers under ACP ownership and
-separate the generic transport behaviour from concrete MCP transport selection.
-Then factor the subprocess transport into a neutral bounded-NDJSON/Port core
-with MCP- and ACP-specific validation wrappers and remeasure the residual shared
-surface.
+The initial direction was a same-repository, multi-package design spike; the
+local prototype instead uses two repositories. The repository topology is
+still open. Before accepting either layout, separate the generic transport
+behaviour from concrete MCP transport selection and factor the subprocess
+transport into a neutral bounded-NDJSON/Port core with MCP- and ACP-specific
+validation wrappers. Remeasure the residual shared surface and decide whether
+it justifies a shared package. ACP-only helpers can remain ACP-owned.
 
 Create a third package only if the residual code forms a cohesive, stable
 runtime contract used by both packages. Its scope should be limited to
@@ -595,8 +623,12 @@ These need focused design records during Phase 1:
    justify separate MCP and ACP packages and, if so, the shared-runtime and
    namespace strategy described above.
 8. **2.0 timing:** whether the optional HTTP server dependency ships as an
-   early, narrow 2.0 ahead of the runtime and dispatch phases, with the rest
-   of this roadmap landing in later 2.x minors, or waits for the full scope.
+   early, narrow 2.0 alongside the package split and migration cleanup, ahead
+   of the runtime and dispatch phases, or waits for the full scope. Later 2.x
+   work must satisfy the compatibility conditions in §8.1: runtime/scheduler
+   changes that alter callback process identity, ownership, ordering,
+   cancellation, or restart defaults require opt-in additive APIs or another
+   major release. A focused 2.0 does not authorize those changes in a minor.
    The pressure is external: the remaining Cowlib advisories will not be
    fixed upstream, and a 1.x release cannot drop the Cowboy requirement.
 

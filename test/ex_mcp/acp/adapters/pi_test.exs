@@ -677,12 +677,15 @@ defmodule ExMCP.ACP.Adapters.PiTest do
     end
 
     test "managed model confirmation does not repeat the full model catalog", %{state: state} do
-      # `cat` exits when the port closes its stdin. A child that ignores stdin
-      # (e.g. `elixir -e "Process.sleep(:infinity)"`) outlives Port.close/1,
-      # leaks an OS process per run, and holds the test runner's stdout open.
-      executable = System.find_executable("cat")
-
-      port = Port.open({:spawn_executable, executable}, [:binary])
+      # The adapter only needs a live port to write into. `cat` exits on stdin
+      # EOF, so closing the port (or the test VM dying) reaps it; a child that
+      # ignores EOF would be orphaned and keep the VM's stderr open. Discarding
+      # its output avoids an EPIPE complaint if it echoes after the port closes.
+      port =
+        Port.open({:spawn_executable, System.find_executable("sh")}, [
+          :binary,
+          args: ["-c", "exec cat >/dev/null"]
+        ])
 
       on_exit(fn ->
         if Port.info(port), do: Port.close(port)
