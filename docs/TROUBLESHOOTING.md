@@ -1,4 +1,7 @@
-# ExMCP Troubleshooting Guide
+# Arbor.MCP Troubleshooting Guide
+
+Version 2 is under development. Local `Mix.install/2` examples require
+`ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc` until the shared dependency is published.
 
 ## stdio
 
@@ -16,10 +19,10 @@ IO.puts(:stderr, "debug")
 For scripts with `Mix.install/2`, configure logging before installing deps:
 
 ```elixir
-Application.put_env(:ex_mcp, :stdio_mode, true)
+Application.put_env(:arbor_mcp, :stdio_mode, true)
 Application.put_env(:logger, :level, :emergency)
 
-Mix.install([{:ex_mcp, "~> 1.0"}], verbose: false)
+Mix.install([{:arbor_mcp, path: "/absolute/path/to/arbor_mcp"}], verbose: false)
 ```
 
 ### Server hangs after starting
@@ -33,24 +36,24 @@ MyServer.start_link(transport: :stdio)
 For clients, `command` must be a list:
 
 ```elixir
-ExMCP.Client.start_link(transport: :stdio, command: ["node", "server.js"])
+Arbor.MCP.Client.start_link(transport: :stdio, command: ["node", "server.js"])
 ```
 
 ## HTTP
 
 ### Connection refused
 
-Check the URL and endpoint path. If the path is included in `url`, ExMCP uses
+Check the URL and endpoint path. If the path is included in `url`, Arbor.MCP uses
 that as the default endpoint:
 
 ```elixir
-ExMCP.Client.start_link(transport: :http, url: "http://localhost:4000/mcp")
+Arbor.MCP.Client.start_link(transport: :http, url: "http://localhost:4000/mcp")
 ```
 
 Or provide it explicitly:
 
 ```elixir
-ExMCP.Client.start_link(
+Arbor.MCP.Client.start_link(
   transport: :http,
   url: "http://localhost:4000",
   endpoint: "/mcp"
@@ -60,7 +63,7 @@ ExMCP.Client.start_link(
 ### CORS errors
 
 For Phoenix/Plug servers, configure CORS in your Plug pipeline or pass
-`cors_enabled: true` to `ExMCP.HttpPlug`.
+`cors_enabled: true` to `Arbor.MCP.HttpPlug`.
 
 ### SSE stream does not start
 
@@ -85,7 +88,7 @@ era-specific lifecycle.
 Set the intended compatibility policy explicitly:
 
 ```elixir
-ExMCP.Client.start_link(
+Arbor.MCP.Client.start_link(
   transport: :http,
   url: "https://example.com/mcp",
   protocol_mode: :prefer_modern
@@ -122,7 +125,7 @@ Every MCP 2026-07-28 request must include a `_meta` object with:
 ```
 
 `io.modelcontextprotocol/clientInfo` is optional, but when present it must
-contain non-empty `name` and `version` strings. ExMCP adds these fields for its
+contain non-empty `name` and `version` strings. Arbor.MCP adds these fields for its
 own clients; this error usually indicates a custom peer, manually constructed
 JSON-RPC message, or middleware that rewrote `params._meta`.
 
@@ -133,8 +136,8 @@ Modern HTTP requests must carry exactly one `MCP-Protocol-Version` and
 `resources/read`, and `prompts/get` also require a matching `Mcp-Name`.
 Annotated tool arguments may require `Mcp-Param-*` headers.
 
-ExMCP derives and replaces these headers automatically. If the error occurs
-with an ExMCP client, inspect reverse-proxy behavior: duplicate headers must
+Arbor.MCP derives and replaces these headers automatically. If the error occurs
+with an Arbor.MCP client, inspect reverse-proxy behavior: duplicate headers must
 not be collapsed by choosing one value, and routing headers must not be
 cached, normalized to a different value, or injected by middleware.
 
@@ -146,13 +149,13 @@ a non-negative integer `ttlMs` and `cacheScope` equal to `"public"` or
 `"private"`. Non-complete results must not contain cache hints. Legacy result
 maps do not gain these fields merely because the transport is HTTP.
 
-When the server uses ExMCP's normal Handler or DSL dispatch, return the usual
+When the server uses Arbor.MCP's normal Handler or DSL dispatch, return the usual
 `{:ok, result, state}` / `ToolResult.*` shape and let
-`ExMCP.Server.ResultNormalizer` add `resultType` plus conservative cache
+`Arbor.MCP.Server.ResultNormalizer` add `resultType` plus conservative cache
 defaults (`ttlMs: 0`, `cacheScope: "private"`). Suspend an operation with
-`ExMCP.Server.DSL.Result.input_required/2` or the documented
+`Arbor.MCP.Server.DSL.Result.input_required/2` or the documented
 `{:input_required, ...}` handler tuple. If a custom peer constructs raw wire
-results or bypasses ExMCP dispatch, it must add and validate the modern fields
+results or bypasses Arbor.MCP dispatch, it must add and validate the modern fields
 itself. See [Modern result cache hints](CONFIGURATION.md#modern-result-cache-hints).
 
 ### GET or DELETE returns 405
@@ -173,7 +176,7 @@ legacy Streamable HTTP connections.
 {:ok, server} = MyServer.start_link(transport: :beam)  # DSL provides start_link; raw handlers use HandlerServer
 Process.alive?(server)
 
-{:ok, client} = ExMCP.Client.start_link(transport: :beam, server: server)
+{:ok, client} = Arbor.MCP.Client.start_link(transport: :beam, server: server)
 ```
 
 Do not use `transport: :native`; it was removed in the 1.0 API cleanup.
@@ -182,13 +185,13 @@ Do not use `transport: :native`; it was removed in the 1.0 API cleanup.
 
 ### Tools do not appear
 
-Use `ExMCP.Server.Handler` and `ExMCP.Server.DSL` together, and make sure the
+Use `Arbor.MCP.Server.Handler` and `Arbor.MCP.Server.DSL` together, and make sure the
 server starts through a supported transport:
 
 ```elixir
 defmodule MyServer do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL
 
   tool "ping", "Health check" do
     run fn _args, state ->
@@ -215,6 +218,6 @@ Inspect local server state when using BEAM-local tests:
 Run focused tests:
 
 ```bash
-mix test test/ex_mcp/client_beam_transport_test.exs
-mix test test/ex_mcp/server/transport_test.exs
+mix test test/arbor_mcp/client_beam_transport_test.exs
+mix test test/arbor_mcp/server/transport_test.exs
 ```

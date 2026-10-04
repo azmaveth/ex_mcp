@@ -1,15 +1,15 @@
-Application.put_env(:ex_mcp, :stdio_mode, true)
-Application.put_env(:ex_mcp, :stdio_startup_delay, 0)
+Application.put_env(:arbor_mcp, :stdio_mode, true)
+Application.put_env(:arbor_mcp, :stdio_startup_delay, 0)
 Logger.configure(level: :emergency)
 
 {:ok, _supervisor} =
-  DynamicSupervisor.start_link(strategy: :one_for_one, name: ExMCP.DynamicSupervisor)
+  DynamicSupervisor.start_link(strategy: :one_for_one, name: Arbor.MCP.DynamicSupervisor)
 
-{:ok, _task_store} = ExMCP.Tasks.Store.ETS.start_link()
-{:ok, _subscriptions} = ExMCP.Server.Subscriptions.start_link()
+{:ok, _task_store} = Arbor.MCP.Tasks.Store.ETS.start_link()
+{:ok, _subscriptions} = Arbor.MCP.Server.Subscriptions.start_link()
 
 {:ok, _task} =
-  ExMCP.Tasks.create(
+  Arbor.MCP.Tasks.create(
     "stdio_task",
     %{},
     id: "stdio-task",
@@ -17,11 +17,11 @@ Logger.configure(level: :emergency)
     notify: false
   )
 
-defmodule ExMCP.Test.ModernStdioServer do
-  use ExMCP.Server.Handler, tasks: :store
-  use ExMCP.Server.DSL, name: "modern-stdio-server", version: "1.0.0"
+defmodule Arbor.MCP.Test.ModernStdioServer do
+  use Arbor.MCP.Server.Handler, tasks: :store
+  use Arbor.MCP.Server.DSL, name: "modern-stdio-server", version: "1.0.0"
 
-  alias ExMCP.Server.Context
+  alias Arbor.MCP.Server.Context
 
   tool "echo", "Echo text" do
     param(:text, :string, required: true)
@@ -58,14 +58,14 @@ defmodule ExMCP.Test.ModernStdioServer do
     param(:uri, :string, required: true)
 
     run(fn %{"uri" => uri}, state ->
-      ExMCP.Server.notify_resource_update(self(), uri)
+      Arbor.MCP.Server.notify_resource_update(self(), uri)
       {:ok, ToolResult.text("published"), state}
     end)
   end
 
   tool "publish_tools_changed", "Publish a tools list-changed event" do
     run(fn _arguments, state ->
-      ExMCP.Server.notify_tools_changed(self())
+      Arbor.MCP.Server.notify_tools_changed(self())
       {:ok, ToolResult.text("published"), state}
     end)
   end
@@ -73,7 +73,7 @@ defmodule ExMCP.Test.ModernStdioServer do
   tool "complete_task", "Complete the fixed stdio task" do
     run(fn _arguments, state ->
       {:ok, _task} =
-        ExMCP.Tasks.complete(
+        Arbor.MCP.Tasks.complete(
           "stdio-task",
           %{"content" => [%{"type" => "text", "text" => "stdio task complete"}]}
         )
@@ -84,7 +84,7 @@ defmodule ExMCP.Test.ModernStdioServer do
 end
 
 {:ok, server} =
-  ExMCP.Test.ModernStdioServer.start_link(
+  Arbor.MCP.Test.ModernStdioServer.start_link(
     transport: :stdio,
     protocol_mode: :modern_only,
     mrtr: true,

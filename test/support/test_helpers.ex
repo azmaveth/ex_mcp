@@ -1,11 +1,11 @@
-defmodule ExMCP.TestHelpers do
+defmodule Arbor.MCP.TestHelpers do
   @moduledoc """
   Helpers for setting up test servers and managing test infrastructure.
   """
   import ExUnit.Callbacks
 
   @doc """
-  Ensures the `ExMCP.TestServer` module is compiled and loaded.
+  Ensures the `Arbor.MCP.TestServer` module is compiled and loaded.
 
   This function uses `Code.ensure_compiled!/1` to robustly handle the
   compilation and loading of the test server. This is necessary because
@@ -14,7 +14,7 @@ defmodule ExMCP.TestHelpers do
   when running individual tests.
   """
   def ensure_test_server_loaded do
-    Code.ensure_compiled!(ExMCP.TestServer)
+    Code.ensure_compiled!(Arbor.MCP.TestServer)
   end
 
   @doc """
@@ -57,7 +57,7 @@ defmodule ExMCP.TestHelpers do
 
     ensure_test_server_loaded()
 
-    case ExMCP.TestServer.start_link(server_opts) do
+    case Arbor.MCP.TestServer.start_link(server_opts) do
       {:ok, pid} ->
         # No sleep: wait_for_server_ready/1 polls the listener until it accepts.
         :ok = wait_for_server_ready(port)
@@ -71,7 +71,7 @@ defmodule ExMCP.TestHelpers do
         server_opts = Keyword.put(server_opts, :port, retry_port)
         ensure_test_server_loaded()
 
-        case ExMCP.TestServer.start_link(server_opts) do
+        case Arbor.MCP.TestServer.start_link(server_opts) do
           {:ok, pid} ->
             :ok = wait_for_server_ready(retry_port)
             {:ok, pid, retry_port}
@@ -91,7 +91,7 @@ defmodule ExMCP.TestHelpers do
   def start_stdio_server(opts \\ []) do
     server_opts = [transport: :stdio] ++ opts
     ensure_test_server_loaded()
-    ExMCP.TestServer.start_link(server_opts)
+    Arbor.MCP.TestServer.start_link(server_opts)
   end
 
   @doc """
@@ -100,7 +100,7 @@ defmodule ExMCP.TestHelpers do
   def start_beam_server(opts \\ []) do
     server_opts = [transport: :beam] ++ opts
     ensure_test_server_loaded()
-    ExMCP.TestServer.start_link(server_opts)
+    Arbor.MCP.TestServer.start_link(server_opts)
   end
 
   @doc """
@@ -121,8 +121,8 @@ defmodule ExMCP.TestHelpers do
     due to the DSL generating comprehensive pattern matches. These warnings are
     benign and can be ignored.
     """
-    use ExMCP.Server.Handler
-    use ExMCP.Server.DSL, name: "api-test-server", version: "1.0.0"
+    use Arbor.MCP.Server.Handler
+    use Arbor.MCP.Server.DSL, name: "api-test-server", version: "1.0.0"
 
     tool "echo", "Echoes the input message" do
       input_schema(%{
@@ -196,7 +196,7 @@ defmodule ExMCP.TestHelpers do
   Sets up a simple test server with HTTP transport for API integration tests.
 
   This function is designed to be called from a `setup` block. It handles:
-  - Starting the `ExMCP.TestHelpers.ApiTestServer` with the HTTP transport.
+  - Starting the `Arbor.MCP.TestHelpers.ApiTestServer` with the HTTP transport.
   - Tearing down the server process on test exit.
   - Returning a context map with `:http_url` for the test to use.
 
@@ -209,7 +209,7 @@ defmodule ExMCP.TestHelpers do
 
       defmodule MyApiTest do
         use ExUnit.Case, async: false
-        import ExMCP.TestHelpers
+        import Arbor.MCP.TestHelpers
 
         setup context do
           # The context from setup is passed to the helper
@@ -369,10 +369,10 @@ defmodule ExMCP.TestHelpers do
 
   defp ensure_session_manager_started do
     # Check if SessionManager is already running
-    case GenServer.whereis(ExMCP.SessionManager) do
+    case GenServer.whereis(Arbor.MCP.SessionManager) do
       nil ->
         # Start SessionManager if not running
-        case ExMCP.SessionManager.start_link([]) do
+        case Arbor.MCP.SessionManager.start_link([]) do
           {:ok, _pid} -> :ok
           {:error, {:already_started, _pid}} -> :ok
           {:error, reason} -> raise "Failed to start SessionManager: #{inspect(reason)}"
@@ -436,7 +436,7 @@ defmodule ExMCP.TestHelpers do
       |> String.replace(~r/_+/, "_")
       |> String.trim("_")
 
-    "ExMCP.Test.#{String.capitalize(prefix)}.#{test_name}_#{unique_id}"
+    "Arbor.MCP.Test.#{String.capitalize(prefix)}.#{test_name}_#{unique_id}"
     |> String.to_atom()
   end
 
@@ -546,13 +546,13 @@ defmodule ExMCP.TestHelpers do
   ## Examples
 
       # Wait for client connection
-      {:ok, metadata} = wait_for_event([:ex_mcp, :client, :connected])
+      {:ok, metadata} = wait_for_event([:arbor_mcp, :client, :connected])
 
       # Wait for tool execution with timeout
-      {:ok, metadata} = wait_for_event([:ex_mcp, :server, :tool, :called], timeout: 5000)
+      {:ok, metadata} = wait_for_event([:arbor_mcp, :server, :tool, :called], timeout: 5000)
 
       # Wait and check metadata
-      {:ok, %{tool_name: "echo"}} = wait_for_event([:ex_mcp, :server, :tool, :called])
+      {:ok, %{tool_name: "echo"}} = wait_for_event([:arbor_mcp, :server, :tool, :called])
 
   ## Notes
 
@@ -596,11 +596,11 @@ defmodule ExMCP.TestHelpers do
   ## Examples
 
       # Assert connection event fires
-      metadata = assert_event([:ex_mcp, :transport, :connection, :opened])
+      metadata = assert_event([:arbor_mcp, :transport, :connection, :opened])
       assert metadata.transport == :http
 
       # Assert with custom timeout
-      metadata = assert_event([:ex_mcp, :server, :tool, :called], timeout: 5000)
+      metadata = assert_event([:arbor_mcp, :server, :tool, :called], timeout: 5000)
       assert metadata.tool_name == "echo"
   """
   @spec assert_event([atom()], keyword()) :: map()
@@ -626,7 +626,7 @@ defmodule ExMCP.TestHelpers do
   ## Examples
 
       # Verify no auth flow triggered for non-auth requests
-      refute_event([:ex_mcp, :auth, :flow, :started], timeout: 200)
+      refute_event([:arbor_mcp, :auth, :flow, :started], timeout: 200)
   """
   @spec refute_event([atom()], keyword()) :: :ok
   def refute_event(event_name, opts \\ []) do

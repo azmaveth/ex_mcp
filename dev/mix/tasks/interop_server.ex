@@ -22,15 +22,15 @@ defmodule Mix.Tasks.InteropServer do
     Mix.Task.run("app.start")
 
     # Configure for STDIO mode
-    Application.put_env(:ex_mcp, :stdio_mode, true)
+    Application.put_env(:arbor_mcp, :stdio_mode, true)
     Logger.configure(level: :emergency)
 
     Code.eval_string(~S"""
     defmodule InteropHandler do
-      use ExMCP.Server.Handler
-      use ExMCP.Server.DSL, name: "elixir-interop-server", version: "1.0.0"
+      use Arbor.MCP.Server.Handler
+      use Arbor.MCP.Server.DSL, name: "elixir-interop-server", version: "1.0.0"
 
-      alias ExMCP.Server.Context
+      alias Arbor.MCP.Server.Context
 
       def __server_info__, do: %{name: "elixir-interop-server", version: "1.0.0"}
 
@@ -73,7 +73,7 @@ defmodule Mix.Tasks.InteropServer do
                 "profile" => %{
                   "method" => "elicitation/create",
                   "params" => %{
-                    "message" => "Choose an ExMCP interop display name",
+                    "message" => "Choose an Arbor.MCP interop display name",
                     "requestedSchema" => %{
                       "type" => "object",
                       "properties" => %{"name" => %{"type" => "string"}},
@@ -84,7 +84,7 @@ defmodule Mix.Tasks.InteropServer do
               }
 
               {:ok,
-               ExMCP.Server.DSL.Result.input_required(requests, %{"server" => "ex_mcp"}), state}
+               Arbor.MCP.Server.DSL.Result.input_required(requests, %{"server" => "ex_mcp"}), state}
 
             %{"profile" => %{"content" => %{"name" => name}}} ->
               {:ok, "#{name}:#{Context.request_state()["server"]}", state}
@@ -94,7 +94,7 @@ defmodule Mix.Tasks.InteropServer do
 
       tool "publish_tools_changed", "Publishes a tools list-changed notification" do
         run fn _arguments, state ->
-          ExMCP.Server.notify_tools_changed(self())
+          Arbor.MCP.Server.notify_tools_changed(self())
           {:ok, "published", state}
         end
       end
@@ -133,7 +133,7 @@ defmodule Mix.Tasks.InteropServer do
       [module: InteropHandler]
       |> maybe_enable_modern(modern?)
 
-    {:ok, server} = ExMCP.Server.StdioServer.start_link(server_opts)
+    {:ok, server} = Arbor.MCP.Server.StdioServer.start_link(server_opts)
 
     # Exit with the transport instead of leaving a nested BEAM VM behind after
     # the SDK closes its end of the stdio pipe.

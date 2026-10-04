@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run MCP conformance tests against ExMCP.
+# Run MCP conformance tests against Arbor.MCP.
 # Uses the official modelcontextprotocol/conformance framework.
 #
 # Usage:
@@ -77,7 +77,7 @@ free_server_port() {
 start_server() {
   free_server_port
 
-  echo "Starting ExMCP server on port $SERVER_PORT..."
+  echo "Starting Arbor.MCP server on port $SERVER_PORT..."
   : >"$PROJECT_DIR/tmp/conformance_server.log"
   elixir "$SERVER_SCRIPT" "$SERVER_PORT" >"$PROJECT_DIR/tmp/conformance_server.log" 2>&1 &
   SERVER_PID=$!

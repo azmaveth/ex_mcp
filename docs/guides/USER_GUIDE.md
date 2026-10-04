@@ -1,6 +1,7 @@
-# ExMCP User Guide
+# Arbor.MCP User Guide
 
-A practical guide to building MCP clients and servers with ExMCP.
+A practical guide to building MCP clients and servers with Arbor.MCP. Version 2
+is under development; these examples are being qualified with the new runtime.
 
 ## Table Of Contents
 
@@ -17,22 +18,26 @@ A practical guide to building MCP clients and servers with ExMCP.
 
 ## Installation
 
+Version 2 is unpublished. Use a local MCP checkout for development and set
+`ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc` before fetching dependencies.
+The released 1.x package remains `ex_mcp`.
+
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 1.0"}
+    {:arbor_mcp, path: "../arbor_mcp"}
   ]
 end
 ```
 
 ## Server DSL
 
-Use `ExMCP.Server.Handler` with `ExMCP.Server.DSL` for most servers:
+Use `Arbor.MCP.Server.Handler` with `Arbor.MCP.Server.DSL` for most servers:
 
 ```elixir
 defmodule MyServer do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL, name: "my-server", version: "1.0.0"
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, name: "my-server", version: "1.0.0"
 
   tool "echo", "Echoes the input message" do
     param :message, :string, required: true
@@ -78,8 +83,8 @@ custom behavior. For nearly all cases, the DSL is simpler and recommended:
 
 ```elixir
 defmodule MyServer do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL, name: "my-server", version: "1.0.0"
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, name: "my-server", version: "1.0.0"
 
   tool "ping", "Health check" do
     run fn _args, state ->
@@ -95,13 +100,13 @@ end
 
 ```elixir
 defmodule DynamicServer do
-  use ExMCP.Server.Handler
+  use Arbor.MCP.Server.Handler
 
   @impl true
   def handle_initialize(_params, state) do
     {:ok,
      %{
-       protocolVersion: ExMCP.protocol_version(),
+       protocolVersion: Arbor.MCP.protocol_version(),
        serverInfo: %{name: "dynamic", version: "1.0.0"},
        capabilities: %{tools: %{}}
      }, state}
@@ -128,12 +133,12 @@ end
 
 # Start a raw handler (no DSL):
 {:ok, server} =
-  ExMCP.Server.HandlerServer.start_link(
+  Arbor.MCP.Server.HandlerServer.start_link(
     handler: DynamicServer,
     transport: :beam
   )
 # Or the convenience:
-# {:ok, server} = ExMCP.start_server(handler: DynamicServer, transport: :beam)
+# {:ok, server} = Arbor.MCP.start_server(handler: DynamicServer, transport: :beam)
 ```
 
 ## BEAM-Local MCP
@@ -145,16 +150,16 @@ When using the DSL the server module gets a `start_link/1`:
 {:ok, server} = MyServer.start_link(transport: :beam)
 
 {:ok, client} =
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :beam,
     server: server
   )
 
-{:ok, tools} = ExMCP.Client.list_tools(client)
-{:ok, result} = ExMCP.Client.call_tool(client, "echo", %{"message" => "hello"})
+{:ok, tools} = Arbor.MCP.Client.list_tools(client)
+{:ok, result} = Arbor.MCP.Client.call_tool(client, "echo", %{"message" => "hello"})
 ```
 
-For a raw handler (no DSL) use `ExMCP.Server.HandlerServer.start_link(handler: MyHandler, ...)` (or `ExMCP.start_server/1`).
+For a raw handler (no DSL) use `Arbor.MCP.Server.HandlerServer.start_link(handler: MyHandler, ...)` (or `Arbor.MCP.start_server/1`).
 
 **Tip:** `mix examples.getting_started` (after `mix compile`) gives a fast local run of these DSL + Client patterns for quick verification.
 
@@ -169,7 +174,7 @@ Connect to stdio:
 
 ```elixir
 {:ok, client} =
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :stdio,
     command: ["node", "server.js"],
     cd: "/path/to/project",
@@ -181,7 +186,7 @@ Connect to Streamable HTTP:
 
 ```elixir
 {:ok, client} =
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :http,
     url: "https://api.example.com/mcp",
     protocol_mode: :prefer_modern,
@@ -193,12 +198,12 @@ Connect to Streamable HTTP:
 Call server features:
 
 ```elixir
-{:ok, tools} = ExMCP.Client.list_tools(client)
-{:ok, result} = ExMCP.Client.call_tool(client, "search", %{"query" => "Elixir"})
-{:ok, resources} = ExMCP.Client.list_resources(client)
-{:ok, content} = ExMCP.Client.read_resource(client, "file:///docs/readme.md")
-{:ok, prompts} = ExMCP.Client.list_prompts(client)
-{:ok, prompt} = ExMCP.Client.get_prompt(client, "summarize")
+{:ok, tools} = Arbor.MCP.Client.list_tools(client)
+{:ok, result} = Arbor.MCP.Client.call_tool(client, "search", %{"query" => "Elixir"})
+{:ok, resources} = Arbor.MCP.Client.list_resources(client)
+{:ok, content} = Arbor.MCP.Client.read_resource(client, "file:///docs/readme.md")
+{:ok, prompts} = Arbor.MCP.Client.list_prompts(client)
+{:ok, prompt} = Arbor.MCP.Client.get_prompt(client, "summarize")
 ```
 
 Image, audio, blob, and `get_prompt` patterns are in the
@@ -209,21 +214,21 @@ and cancellation are in the [Protocol Guide](../PROTOCOL_GUIDE.md).
 
 MCP `2026-07-28` is the latest stable revision. It is wire-incompatible with
 the legacy `2024-11-05`, `2025-03-26`, `2025-06-18`, and `2025-11-25`
-revisions, so ExMCP selects an era with `protocol_mode`:
+revisions, so Arbor.MCP selects an era with `protocol_mode`:
 
 ```elixir
-config :ex_mcp, protocol_mode: :prefer_modern
+config :arbor_mcp, protocol_mode: :prefer_modern
 ```
 
 Use `:prefer_modern` for a dual-era client or server that tries 2026-07-28
 first, `:modern_only` for a closed modern ecosystem, `:prefer_legacy` for an
 early compatibility canary, and `:legacy_only` to preserve the legacy protocol
 era. Exact rc.5 wire and session behavior still requires package rollback to
-`1.0.0-rc.5`. Stable 1.0 defaults to `:prefer_modern`; the published rc.5
+`1.0.0-rc.5`. New connections default to `:prefer_modern`; the published rc.5
 package remains the legacy-only characterization baseline and does not contain
 these modes.
 
-`ExMCP.protocol_version/0` returns `2025-11-25` because it is a legacy
+`Arbor.MCP.protocol_version/0` returns `2025-11-25` because it is a legacy
 initialize compatibility helper; it does not report the latest upstream
 revision. See the [Configuration Guide](../CONFIGURATION.md#protocol-eras-and-modes)
 for negotiation, fallback, and per-connection overrides.
@@ -231,7 +236,7 @@ for negotiation, fallback, and per-connection overrides.
 ## Protocol-Deprecated Features
 
 MCP 2026-07-28 deprecates Roots, Sampling, and protocol Logging, but keeps them
-in the specification for at least twelve months. ExMCP retains their callbacks,
+in the specification for at least twelve months. Arbor.MCP retains their callbacks,
 functions, capability declarations, legacy methods, and modern MRTR handling
 throughout the 1.x line. Existing integrations can continue to use them while
 migrating; new integrations should use these replacements:
@@ -262,7 +267,7 @@ Use client retries for transient connection/request failures:
 
 ```elixir
 {:ok, client} =
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :http,
     url: "https://api.example.com/mcp",
     retry_policy: [max_attempts: 3, initial_delay: 100, max_delay: 2_000]
@@ -274,7 +279,7 @@ connection boundary:
 
 ```elixir
 {:ok, client} =
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :http,
     url: "https://api.example.com/mcp",
     reliability: [
@@ -286,7 +291,7 @@ connection boundary:
 
 For HTTP servers, put side-effecting concerns such as authentication, request
 signing, CORS, and DNS rebinding protection in the Plug/Phoenix pipeline before
-`ExMCP.HttpPlug`.
+`Arbor.MCP.HttpPlug`.
 
 ## Troubleshooting
 
@@ -294,7 +299,7 @@ signing, CORS, and DNS rebinding protection in the Plug/Phoenix pipeline before
 
 ```elixir
 Process.alive?(server)
-ExMCP.Client.start_link(transport: :beam, server: server)
+Arbor.MCP.Client.start_link(transport: :beam, server: server)
 ```
 
 **stdio server exits immediately**
@@ -304,10 +309,10 @@ Make sure `command` includes the executable and arguments as a list, and use
 
 **HTTP connection refused**
 
-Verify the URL path matches the server endpoint. `ExMCP.Transport.HTTP` extracts
+Verify the URL path matches the server endpoint. `Arbor.MCP.Transport.HTTP` extracts
 the path from `url` unless `endpoint:` is provided explicitly.
 
 **Need HTTP auth or validation**
 
 Use `headers`, `auth`, `auth_provider`, `security`, or Plug composition around
-`ExMCP.HttpPlug` depending on whether the concern is client-side or server-side.
+`Arbor.MCP.HttpPlug` depending on whether the concern is client-side or server-side.
