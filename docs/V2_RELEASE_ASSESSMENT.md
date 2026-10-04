@@ -3,21 +3,20 @@
 - **Reviewed:** 2026-10-03
 - **Released baseline:** `v1.5.0`
 - **Integrated source baseline:** `e4d2fc3`
-- **Status:** Assessment and proposed release scope; no package or namespace decision accepted
+- **Status:** Full v2 scope accepted, including runtime/scheduler redesign; package and namespace decisions remain open
 - **Canonical plan:** [V2_ROADMAP.md](./V2_ROADMAP.md)
 
 ## Release conclusion
 
 The library has a stable protocol baseline and useful split preparation, but
 neither the package cutover nor the architectural v2 roadmap is complete.
-Choose the release scope before treating any remaining roadmap phase as
-optional. The existing full roadmap remains authoritative until that decision
-is recorded.
 
-**Proposed:** a focused v2 containing the MCP/ACP split, any accepted Arbor
-rename, optional HTTP server dependencies, documented API removals, and release
-qualification. This uses the early-release option already recorded in roadmap
-§10.2 item 8; it does not mark the runtime/scheduler work complete or deferred.
+**Accepted on 2026-10-03:** v2 includes the per-server runtime, unified
+dispatch and bounded handler scheduler as well as the MCP/ACP split, any
+accepted Arbor rename, optional HTTP dependencies, API cleanup and release
+qualification. Supporting configuration, store and result contracts follow
+the full roadmap. The earlier focused-release proposal is closed: runtime
+and scheduler changes must be implemented and qualified before a v2 RC.
 
 ACP **protocol** v2 is a separate upstream effort. Its implementation is not a
 library-v2 release requirement; retain the gates in
@@ -106,8 +105,9 @@ line counts alone do not establish the value of the split.
 | Repository topology | Choose one multi-package repository or separate repositories, release owners/order and compatibility ranges. The roadmap initially preferred one repository; the local spike uses two and this decision remains open. |
 | Shared mechanics | Decide whether a small neutral framing/subprocess contract merits a shared package; avoid making ACP depend on the full MCP package. Trivial helpers alone do not justify a third package. |
 | MCP integration | Keep ACP `mcpServers` descriptors as ACP-owned data; place MCP runtime integration and BEAM-specific extensions in an optional bridge. |
+| Vendor adapters | Proposed: generic adapter execution remains in ACP; Claude/Codex/Pi/ZCode implementations move to one optional adapter bundle, with explicit core compatibility ranges. |
 | Migration | Decide whether a final 1.x release supplies forwarding modules, their support period, and which compatibility names disappear in v2. |
-| v2 size | Explicitly accept focused v2 or retain the full architectural release. Record how unfinished breaking work is scheduled. |
+| v2 size | Resolved: retain the full architectural release, including runtime and scheduler. These are v2 release gates. |
 
 The current shim generator hardcodes `ExACP`, `:ex_acp` and corresponding
 telemetry prefixes. Adapt it after naming is decided. It forwards functions,
@@ -115,7 +115,52 @@ types and callbacks, but cannot preserve `%ExMCP.ACP.*{}` struct identity.
 Document affected patterns and runtime state inspection; also review wire
 extension keys, generated identifiers and Pi's persisted session-map path.
 
-## Proposed focused-v2 implementation checklist
+## Proposed optional ACP adapter package
+
+At source baseline `ed2409c`, `lib/ex_mcp/acp/adapters/` holds 33 files and
+17,201 of the ACP tree's 26,948 lines (63.8%, including the ACP facade in the
+denominator). The generic bridge and adapter transport accept an explicit
+adapter module; the vendor-module references outside the vendor tree are
+documentation examples. That provides a natural package boundary.
+
+The recommendation is one optional `arbor_acp_adapters` package initially:
+
+| Package | Ownership |
+|---|---|
+| `arbor_acp` | ACP client/agent/protocol/types/transports; `Adapter` behaviour, generic `AdapterBridge` / `AdapterTransport`, event builders and safe subprocess execution. |
+| `arbor_acp_adapters` | Claude Code, Codex, Pi and ZCode implementations, native mapping/configuration, vendor session stores and vendor fixtures/lifecycle/drift checks. Depends on ACP; ACP does not depend on it. |
+
+Keep both ACP packages in the ACP repository initially, with separate package
+metadata, artifacts and versions. Vendor fixes can then release independently
+of core protocol changes. Current runtime dependencies are already Jason and
+telemetry, so the primary gains are a smaller core surface, less vendor code
+to compile for native ACP consumers, and separate maintenance/release cadence.
+
+The split requires more than moving directories. Vendor adapters use core
+helpers that are currently hidden (`Envelope`, `PendingRequests`, `PromptQueue`
+and internal map/path/log helpers), and Pi calls `AdapterBridge.PortRunner`.
+Define a narrow supported adapter contract for these needs, or move
+vendor-only helpers into the bundle; do not make independently released
+adapters rely on arbitrary private core modules. Keep shared framing,
+environment policy and process lifecycle under one canonical owner.
+The extracted `PortRunner` currently also contains vendor-specific environment
+handling, including Pi API-key injection; move that policy to the relevant
+adapter's configuration/`env` contract while retaining generic isolation and
+process safety in the core runner.
+
+Core contract tests must load without vendor code. Vendor golden transcripts
+and real-CLI checks belong with the bundle, with integration CI covering the
+lowest/newest supported core versions and missing-optional-package behavior.
+Migration shims must enumerate modules from both package owners and preserve
+the chosen function/type/telemetry compatibility policy without duplicating
+modules.
+
+Individual vendor packages can follow if dependency requirements, maintainers
+or release needs diverge. Stable vendor module names allow that packaging
+change without another namespace migration. The adapter split and its package
+name remain proposals pending acceptance.
+
+## V2 implementation checklist
 
 1. **Freeze the migration baseline.** Generate a reproducible API manifest
    from the final 1.x release, covering modules/exports/callbacks/types/structs,
@@ -123,20 +168,25 @@ extension keys, generated identifiers and Pi's persisted session-map path.
 2. **Complete the package cutover.** Refresh and qualify the extraction,
    establish one canonical ACP implementation, adapt shims if retained, and
    demonstrate MCP-only, ACP-only and combined consumers without cycles.
-3. **Make HTTP listeners optional.** Rework draft PR #21 against the current
+3. **Implement runtime and scheduling.** Complete per-server supervision and
+   scoped state, runtime-owned store lifecycle, common dispatch, bounded
+   supervised callbacks, cancellation/deadlines, queue policy and serialized
+   state-commit rules. Run cross-transport, isolation and pressure gates.
+   Consolidate configuration and result contracts before removing old APIs.
+4. **Make HTTP listeners optional.** Rework draft PR #21 against the current
    source on the v2 branch. It conflicts; despite its title/body, its current
    dependency diff keeps Cowboy required and only adds optional Bandit. It is
    useful groundwork, not the completed optional-server change. Provide Cowboy
    and Bandit adapters, missing-adapter diagnostics, listener ownership and
    shutdown behavior, retaining Cowboy `:ranch_ref` where selected.
-4. **Remove accepted deprecated APIs.** Verify replacements before removing
+5. **Remove accepted deprecated APIs.** Verify replacements before removing
    `Server.Tools` and companions, `HTTPServer` / `HTTPServerWithVersion`,
    content transformation stubs and agreed aliases. Every removal needs an
    API-diff entry and a before/after migration example.
-5. **Update artifacts and guides.** Package names/dependencies, docs URLs,
+6. **Update artifacts and guides.** Package names/dependencies, docs URLs,
    examples, CI/release credentials, telemetry/config migration, and any
    transitional `ex_mcp` package must agree with the accepted topology.
-6. **Qualify and soak.** Run the applicable gates below against packaged
+7. **Qualify and soak.** Run the applicable gates below against packaged
    artifacts, publish at least one RC, and record durable release evidence.
 
 ## Full-roadmap work still outstanding
@@ -150,12 +200,12 @@ extension keys, generated identifiers and Pi's persisted session-map path.
 | 5: public API | Unified `Server.Result`, selected DSL constraints/composition, and bracketed client connection ownership. No `with_connection` helper or unified result facade exists. |
 | 6–7: migration/release | Accepted removals, final API diff/guide, cross-transport equivalence, runtime pressure/isolation/upgrade evidence and v2 RC/soak. |
 
-If focused v2 is accepted, later 2.x work must remain compatible or opt-in.
-Changing callback PID/links, state order, default cancellation, runtime ownership
-or restart behavior requires another major unless included in the accepted v2
-contract. Existing tests show a HandlerServer client timeout leaves its callback
-running, while HTTP `MessageProcessor` has temporary-handler timeout semantics;
-a common scheduler must resolve that difference explicitly.
+The accepted v2 contract must specify callback PID/links, state order,
+cancellation, runtime ownership and restart behavior. Existing tests show a
+HandlerServer client timeout leaves its callback running, while HTTP
+`MessageProcessor` has temporary-handler timeout semantics; the v2 scheduler
+must resolve that difference explicitly. Later 2.x changes preserve the
+qualified v2 contract or introduce compatible opt-in behavior.
 
 ## Release evidence required
 
@@ -172,6 +222,25 @@ a common scheduler must resolve that difference explicitly.
 - RC artifact, soak duration, release owner and durable evidence for each gate.
 
 ## Proposed GitHub and Hex migration
+
+**Recommended sequence:** move GitHub ownership early, finish the architecture
+in the destination, and migrate consumers through the qualified v2 packages.
+The transfer itself does not require a completed runtime redesign. It also
+does not make the stale extraction ready for implementation cutover.
+
+1. Settle destination repositories, package/module/app identity and shared
+   mechanics ownership. Capture the 1.x API and behavior baseline.
+2. Transfer/rename the existing repository, update remotes, and verify CI,
+   branch rules, repository permissions and release integrations at the new
+   location. Keep the supported 1.x line and tags available.
+3. Reconcile the ACP extraction and establish its canonical repository with
+   CI once shared boundaries are settled. Preserve the dirty spike as input;
+   stop regenerating ACP from MCP when ACP becomes canonical.
+4. Finish runtime/scheduler, stores, dispatch, HTTP and public API work in the
+   final repositories; qualify independent and combined consumers.
+5. Publish the v2 migration guide, RC artifacts and eventual stable packages
+   after the release gates and soak. Consumer dependency/namespace changes
+   happen through this release rather than through the GitHub transfer.
 
 If separate Arbor repositories are accepted, transfer the existing repository
 to `trust-arbor/arbor_mcp` so its history, issues, pull requests and stars remain

@@ -1,6 +1,6 @@
 # ExMCP 2.0 Roadmap
 
-- **Status:** Living roadmap — Phase 0 complete; Phase 1 partially prepared; package split prototyped, release scope open
+- **Status:** Full v2 scope accepted, including runtime/scheduler redesign; Phase 1 partially prepared; package split prototyped
 - **Target:** ExMCP `2.0.0`, after stable `1.0.0` and the supported 1.x line
 - **Last updated:** 2026-10-03
 - **Related release work:** [`RELEASE_1_0_0.md`](./RELEASE_1_0_0.md),
@@ -54,6 +54,24 @@ Neither external project defines ExMCP's compatibility contract. Ideas are
 accepted only when they solve an observed ExMCP problem and fit OTP, MCP wire
 compatibility, and the maintenance cost of a multi-transport library. ExMCP
 will not copy another library's public API merely to look familiar.
+
+### Accepted release scope (2026-10-03)
+
+The v2 release includes the per-server runtime, unified dispatch and bounded
+handler scheduler alongside the package split, optional HTTP dependencies,
+public API cleanup and migration qualification. Runtime ownership, callback
+execution, cancellation and state-ordering changes must be designed and
+qualified before the first v2 RC; they are not deferred to v3 or treated as
+future 2.x minor work. Supporting configuration, store and result contracts
+remain prerequisites in the delivery phases below.
+
+Repository ownership/rename is independent of those implementation gates.
+The recommended sequence is to settle the destination and identity plan,
+transfer the existing repository early, and finish v2 in the destination.
+The ACP implementation cutover still waits for shared-mechanics ownership and
+the extraction drift to be resolved. New Hex packages and consumer migration
+wait for qualified v2 artifacts. This recommendation does not authorize a
+repository transfer or settle the open namespace/topology choices.
 
 ## 3. Guiding constraints
 
@@ -175,8 +193,9 @@ size of the compatibility surface.
 | Central additive telemetry | Grok review | Adopt | 1.x-compatible subset, complete in 2.0 | Instrument the shared dispatch boundary; payload capture stays opt-in and bounded. |
 | Public middleware/pipeline API | Grok review | Defer | Reconsider after internal pipeline lands | First prove stable phases and use cases internally; a premature public pipeline becomes another compatibility surface. |
 | General protocol-dialect framework | Grok review | Defer | Only with two concrete consumers | Keep existing era/version modules unless a second protocol family demonstrates that a general dialect abstraction removes real duplication. |
-| Optional HTTP server dependency (Cowboy optional, Bandit supported) | Cowlib advisory tracking (#18); PR #21 | Adopt | 2.0; candidate for pulling 2.0 forward | `EEF-CVE-2026-43966` and `EEF-CVE-2026-43969` are "won't fix" upstream, so every consumer carries audit exceptions for encoders ExMCP never calls. Standalone `transport: :http` would require the host to add Bandit or Cowboy, which breaks 1.x consumers; Phoenix mounts of `ExMCP.HttpPlug` are unaffected. Listener lifecycle goes behind per-adapter modules; `:ranch_ref`, the named listener, and shutdown semantics are preserved where Cowboy is chosen. |
+| Optional HTTP server dependency (Cowboy optional, Bandit supported) | Cowlib advisory tracking (#18); PR #21 | Adopt | 2.0, alongside runtime/scheduler redesign | `EEF-CVE-2026-43966` and `EEF-CVE-2026-43969` are "won't fix" upstream, so every consumer carries audit exceptions for encoders ExMCP never calls. Standalone `transport: :http` would require the host to add Bandit or Cowboy, which breaks 1.x consumers; Phoenix mounts of `ExMCP.HttpPlug` are unaffected. Listener lifecycle goes behind per-adapter modules; `:ranch_ref`, the named listener, and shutdown semantics are preserved where Cowboy is chosen. |
 | Separate MCP and ACP Hex packages | Package-footprint review | Prototyped; contract open | Phase 1 decision | Split-preparation tooling is merged and a local extraction exists; shared runtime ownership, package identity, compatibility, and qualification remain unresolved. |
+| Optional ACP vendor-adapter package | 2026-10-03 package review | Proposed; boundary open | Phase 1 decision | Vendor implementations make up 63.8% of the current ACP source. Keep the generic adapter contract/bridge in ACP and evaluate one optional adapter bundle with a separate release cadence. |
 | Third shared runtime package | Package-footprint review | Defer pending split design | 2.0 only if justified | Centralize security-sensitive JSON-RPC/framing/process code only if both packages need a stable neutral contract; do not publish a grab-bag of tiny helpers. |
 | Built-in distributed database/event sourcing | External review extrapolation | Reject for core | External adapters | ExMCP should define contracts, not require a database or event-source all runtime state. |
 | Copy Anubis APIs or rewrite ExMCP around them | Comparison exercise | Reject | — | ExMCP has broader protocol, transport, authorization, ACP, and compatibility requirements. |
@@ -498,7 +517,7 @@ fixes have already diverged. This does not satisfy the no-duplication policy
 below. The shim generator also omits legacy structs and assumes `ExACP` /
 `:ex_acp`; an Arbor naming decision must address these contracts explicitly.
 See [`V2_RELEASE_ASSESSMENT.md`](./V2_RELEASE_ASSESSMENT.md) for the concrete
-blockers and the proposed focused-release scope. Repository transfer, Hex
+blockers and the accepted full-release scope. Repository transfer, Hex
 package identity, OTP application/config identity, Elixir namespaces, and
 wire/storage names are separate decisions. No rename or transfer has been
 accepted by this roadmap.
@@ -622,15 +641,17 @@ These need focused design records during Phase 1:
 7. **Package topology:** whether measured compile/dependency/release benefits
    justify separate MCP and ACP packages and, if so, the shared-runtime and
    namespace strategy described above.
-8. **2.0 timing:** whether the optional HTTP server dependency ships as an
-   early, narrow 2.0 alongside the package split and migration cleanup, ahead
-   of the runtime and dispatch phases, or waits for the full scope. Later 2.x
-   work must satisfy the compatibility conditions in §8.1: runtime/scheduler
-   changes that alter callback process identity, ownership, ordering,
-   cancellation, or restart defaults require opt-in additive APIs or another
-   major release. A focused 2.0 does not authorize those changes in a minor.
-   The pressure is external: the remaining Cowlib advisories will not be
-   fixed upstream, and a 1.x release cannot drop the Cowboy requirement.
+8. **ACP vendor adapters:** whether to move built-in adapters to one optional
+   package, retain generic adapter execution in ACP, and publish the narrow
+   helper/bridge contract needed by independently released adapters. Separate
+   Hex packages do not require separate GitHub repositories for each vendor.
+
+**Resolved on 2026-10-03 — release timing:** v2 includes the runtime and
+scheduler redesign. The earlier option of a narrow release ahead of those
+phases is closed. Optional HTTP dependencies remain part of v2; their external
+pressure does not remove the runtime/dispatch qualification gates. Repository
+transfer can happen before implementation is complete, while package cutover
+and publication follow their own contract and release gates.
 
 An open decision is not permission to let an implementation choose the public
 contract accidentally.
