@@ -3,7 +3,8 @@
 - **Reviewed:** 2026-10-03
 - **Released baseline:** `v1.5.0`
 - **Integrated source baseline:** `e4d2fc3`
-- **Status:** Full v2 scope accepted, including runtime/scheduler redesign; package and namespace decisions remain open
+- **Status:** Full v2 scope, adapter split and Arbor namespaces accepted; GitHub MCP transfer complete; implementation and qualification in progress
+- **Release target:** Friday 2026-10-09, subject to release gates and RC soak
 - **Canonical plan:** [V2_ROADMAP.md](./V2_ROADMAP.md)
 
 ## Release conclusion
@@ -101,21 +102,21 @@ line counts alone do not establish the value of the split.
 
 | Decision | Required record |
 |---|---|
-| Identity | Accept or reject `arbor_mcp` / `arbor_acp`; separately choose GitHub paths, Hex names, modules, OTP apps, configuration and telemetry namespaces. A GitHub redirect does not migrate the other identities. |
-| Repository topology | Choose one multi-package repository or separate repositories, release owners/order and compatibility ranges. The roadmap initially preferred one repository; the local spike uses two and this decision remains open. |
+| Identity | Accepted: `arbor_mcp` / `ArborMCP.*`, `arbor_acp` / `ArborACP.*`, optional `arbor_acp_adapters`. App/config/telemetry migration is specified in the package contract; GitHub redirects do not migrate these identities. |
+| Repository topology | MCP repository transferred to `trust-arbor/arbor_mcp`; separate ACP repository with independently published core and adapter packages. Release order/ranges are recorded in the package contract. |
 | Shared mechanics | Decide whether a small neutral framing/subprocess contract merits a shared package; avoid making ACP depend on the full MCP package. Trivial helpers alone do not justify a third package. |
 | MCP integration | Keep ACP `mcpServers` descriptors as ACP-owned data; place MCP runtime integration and BEAM-specific extensions in an optional bridge. |
-| Vendor adapters | Proposed: generic adapter execution remains in ACP; Claude/Codex/Pi/ZCode implementations move to one optional adapter bundle, with explicit core compatibility ranges. |
+| Vendor adapters | Accepted on 2026-10-03: generic adapter execution remains in ACP; Claude/Codex/Pi/ZCode implementations move to one optional `arbor_acp_adapters` bundle, with explicit core compatibility ranges. |
 | Migration | Decide whether a final 1.x release supplies forwarding modules, their support period, and which compatibility names disappear in v2. |
 | v2 size | Resolved: retain the full architectural release, including runtime and scheduler. These are v2 release gates. |
 
 The current shim generator hardcodes `ExACP`, `:ex_acp` and corresponding
-telemetry prefixes. Adapt it after naming is decided. It forwards functions,
+telemetry prefixes. Adapt it to the accepted names. It forwards functions,
 types and callbacks, but cannot preserve `%ExMCP.ACP.*{}` struct identity.
 Document affected patterns and runtime state inspection; also review wire
 extension keys, generated identifiers and Pi's persisted session-map path.
 
-## Proposed optional ACP adapter package
+## Accepted optional ACP adapter package
 
 At source baseline `ed2409c`, `lib/ex_mcp/acp/adapters/` holds 33 files and
 17,201 of the ACP tree's 26,948 lines (63.8%, including the ACP facade in the
@@ -123,7 +124,7 @@ denominator). The generic bridge and adapter transport accept an explicit
 adapter module; the vendor-module references outside the vendor tree are
 documentation examples. That provides a natural package boundary.
 
-The recommendation is one optional `arbor_acp_adapters` package initially:
+The accepted topology is one optional `arbor_acp_adapters` package initially:
 
 | Package | Ownership |
 |---|---|
@@ -157,8 +158,9 @@ modules.
 
 Individual vendor packages can follow if dependency requirements, maintainers
 or release needs diverge. Stable vendor module names allow that packaging
-change without another namespace migration. The adapter split and its package
-name remain proposals pending acceptance.
+change without another namespace migration. The adapter split and package name
+are accepted, as are `ArborMCP.*` / `ArborACP.*`. The shared-runtime boundary
+is specified in [V2_PACKAGE_CONTRACT.md](./V2_PACKAGE_CONTRACT.md).
 
 ## V2 implementation checklist
 
@@ -223,6 +225,15 @@ qualified v2 contract or introduce compatible opt-in behavior.
 
 ## Proposed GitHub and Hex migration
 
+**Completed 2026-10-03:** after explicit approval, transferred the public
+repository to `trust-arbor/arbor_mcp` and updated `origin`. The repository ID
+remains `989917799`; master (`1808c56`), the `v1.5.0` tag/release, draft PR #21
+and Actions enablement were verified at the new URL. The old API path resolves
+to the same repository. A pre-transfer Git bundle is saved locally at
+`tmp/v2-migration-2026-10-03/ex_mcp-before-transfer.bundle`. Branch-protection,
+third-party integrations and new package credentials still require release
+qualification. The ACP remote and Hex packages have not been created/published.
+
 **Recommended sequence:** move GitHub ownership early, finish the architecture
 in the destination, and migrate consumers through the qualified v2 packages.
 The transfer itself does not require a completed runtime redesign. It also
@@ -276,5 +287,5 @@ documents the `:hex` override. Hex ownership is also separate from GitHub;
 Preserve wire/storage identifiers such as `_meta.ex_mcp`, the BEAM capability
 extension and Pi's persisted session-map path unless a separate migration is
 accepted. Renaming a library does not justify silently changing those contracts.
-No repository transfer, package publication or namespace rename was performed
-as part of this assessment.
+The MCP repository transfer is complete. Package publication and canonical
+ACP cutover remain gated on implementation and qualification.

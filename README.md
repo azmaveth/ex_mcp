@@ -4,15 +4,23 @@
 
 [![Hex.pm](https://img.shields.io/hexpm/v/ex_mcp.svg)](https://hex.pm/packages/ex_mcp)
 [![Documentation](https://img.shields.io/badge/docs-hexdocs-blue.svg)](https://hexdocs.pm/ex_mcp)
-[![CI](https://github.com/azmaveth/ex_mcp/workflows/CI/badge.svg)](https://github.com/azmaveth/ex_mcp/actions)
+[![CI](https://github.com/trust-arbor/arbor_mcp/workflows/CI/badge.svg)](https://github.com/trust-arbor/arbor_mcp/actions)
 [![Coverage](https://coveralls.io/repos/github/azmaveth/ex_mcp/badge.svg?branch=master)](https://coveralls.io/github/azmaveth/ex_mcp?branch=master)
-[![License](https://img.shields.io/hexpm/l/ex_mcp.svg)](https://github.com/azmaveth/ex_mcp/blob/master/LICENSE)
+[![License](https://img.shields.io/hexpm/l/ex_mcp.svg)](https://github.com/trust-arbor/arbor_mcp/blob/master/LICENSE)
 
 **A complete Elixir implementation of the Model Context Protocol (MCP) and Agent Client Protocol (ACP)**
 
-[Getting Started](https://github.com/azmaveth/ex_mcp/tree/master/docs/getting-started) | [User Guide](docs/guides/USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [Examples](https://github.com/azmaveth/ex_mcp/tree/master/examples) | [2.0 Roadmap](https://github.com/azmaveth/ex_mcp/blob/master/docs/V2_ROADMAP.md) | [Changelog](CHANGELOG.md)
+[Getting Started](https://github.com/trust-arbor/arbor_mcp/tree/master/docs/getting-started) | [User Guide](docs/guides/USER_GUIDE.md) | [API Docs](https://hexdocs.pm/ex_mcp) | [Examples](https://github.com/trust-arbor/arbor_mcp/tree/master/examples) | [2.0 Roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md) | [Changelog](CHANGELOG.md)
 
 </div>
+
+The repository has moved to [trust-arbor/arbor_mcp](https://github.com/trust-arbor/arbor_mcp).
+The supported 1.x package remains `ex_mcp`. Version 2 is being prepared as
+`arbor_mcp` (`ArborMCP.*`) and `arbor_acp` (`ArborACP.*`), with vendor adapters
+in the optional `arbor_acp_adapters` package. The target is October 9, 2026,
+subject to the [release gates](docs/V2_RELEASE_PLAN.md). GitHub redirects
+preserve existing repository links; consumers change dependencies through
+the v2 migration guide.
 
 ---
 
@@ -82,9 +90,9 @@ config :ex_mcp, protocol_mode: :legacy_only
 | `ExMCP.HttpPlug`, `Authorization`, ACP adapters | ACP `session/fork` (unstable upstream) | MCP HTTP+SSE, Roots, Sampling, and protocol Logging |
 | `ExMCP.Content` builders (`text`/`image`/`audio`) | — | — |
 
-Runnable examples live in the GitHub repo under [`examples/`](https://github.com/azmaveth/ex_mcp/tree/master/examples) (not shipped in the Hex package).
+Runnable examples live in the GitHub repo under [`examples/`](https://github.com/trust-arbor/arbor_mcp/tree/master/examples) (not shipped in the Hex package).
 
-The [ExMCP 2.0 roadmap](https://github.com/azmaveth/ex_mcp/blob/master/docs/V2_ROADMAP.md) records planned runtime and API
+The [ExMCP 2.0 roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md) records planned runtime and API
 changes, deprecated-surface removals, and the policy for safely backporting
 selected improvements to 1.x.
 
@@ -196,7 +204,7 @@ defmodule MyServer do
 end
 ```
 
-See the [DSL Guide](docs/DSL_GUIDE.md) and [examples](https://github.com/azmaveth/ex_mcp/tree/master/examples) for more patterns.
+See the [DSL Guide](docs/DSL_GUIDE.md) and [examples](https://github.com/trust-arbor/arbor_mcp/tree/master/examples) for more patterns.
 Elicitation, sampling, roots, ping, progress, and cancellation are in the
 [Protocol Guide](docs/PROTOCOL_GUIDE.md).
 
@@ -317,8 +325,8 @@ See the [ACP Guide](docs/ACP_GUIDE.md) for full details.
 ## Documentation
 
 ### Getting Started
-- **[Quick Start Guide](https://github.com/azmaveth/ex_mcp/blob/master/docs/getting-started/QUICKSTART.md)** -- Get running in 5 minutes
-- **[Migration Guide](https://github.com/azmaveth/ex_mcp/blob/master/docs/getting-started/MIGRATION.md)** -- Version upgrade instructions
+- **[Quick Start Guide](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/getting-started/QUICKSTART.md)** -- Get running in 5 minutes
+- **[Migration Guide](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/getting-started/MIGRATION.md)** -- Version upgrade instructions
 
 ### Guides
 - **[User Guide](docs/guides/USER_GUIDE.md)** -- Complete feature walkthrough
@@ -334,10 +342,10 @@ See the [ACP Guide](docs/ACP_GUIDE.md) for full details.
 - **[Development Guide](docs/DEVELOPMENT.md)** -- Setup, testing, and contributing
 - **[API Documentation](https://hexdocs.pm/ex_mcp)** -- Complete API reference
 - **[Architecture](docs/ARCHITECTURE.md)** -- Internal design decisions
-- **[MCP 2026-07-28 Migration Plan](https://github.com/azmaveth/ex_mcp/blob/master/docs/MCP_2026_07_28_MIGRATION_PLAN.md)** -- Implementation record and remaining release gates
-- **[MCP Coverage Matrix](https://github.com/azmaveth/ex_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md)** -- Local and official conformance evidence
-- **[rc.5 to 1.0 API Diff](https://github.com/azmaveth/ex_mcp/blob/master/docs/API_DIFF_RC5_TO_1_0.md)** -- Public compatibility audit
-- **[Examples](https://github.com/azmaveth/ex_mcp/tree/master/examples)** -- Real-world patterns
+- **[MCP 2026-07-28 Migration Plan](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_2026_07_28_MIGRATION_PLAN.md)** -- Implementation record and remaining release gates
+- **[MCP Coverage Matrix](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/MCP_COVERAGE_MATRIX.md)** -- Local and official conformance evidence
+- **[rc.5 to 1.0 API Diff](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/API_DIFF_RC5_TO_1_0.md)** -- Public compatibility audit
+- **[Examples](https://github.com/trust-arbor/arbor_mcp/tree/master/examples)** -- Real-world patterns
 
 ## Contributing
 
@@ -350,7 +358,7 @@ Contributions welcome! See the [Development Guide](docs/DEVELOPMENT.md) for setu
 
 ## License
 
-MIT -- see [LICENSE](https://github.com/azmaveth/ex_mcp/blob/master/LICENSE).
+MIT -- see [LICENSE](https://github.com/trust-arbor/arbor_mcp/blob/master/LICENSE).
 
 ## Acknowledgments
 

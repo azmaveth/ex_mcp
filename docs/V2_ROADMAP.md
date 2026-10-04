@@ -1,14 +1,18 @@
 # ExMCP 2.0 Roadmap
 
 - **Status:** Full v2 scope accepted, including runtime/scheduler redesign; Phase 1 partially prepared; package split prototyped
-- **Target:** ExMCP `2.0.0`, after stable `1.0.0` and the supported 1.x line
+- **Target:** Arbor package v2 release, Friday 2026-10-09, after qualification and RC soak
 - **Last updated:** 2026-10-03
 - **Related release work:** [`RELEASE_1_0_0.md`](./RELEASE_1_0_0.md),
   [`API_DIFF_RC5_TO_1_0.md`](./API_DIFF_RC5_TO_1_0.md),
   [`POST_1_0_MAINTENANCE_PLAN.md`](./POST_1_0_MAINTENANCE_PLAN.md),
   [`ACP_V2_TRACKING.md`](./ACP_V2_TRACKING.md),
   [`MCP_2026_07_28_MIGRATION_PLAN.md`](./MCP_2026_07_28_MIGRATION_PLAN.md),
-  [`V2_RELEASE_ASSESSMENT.md`](./V2_RELEASE_ASSESSMENT.md)
+  [`V2_RELEASE_ASSESSMENT.md`](./V2_RELEASE_ASSESSMENT.md),
+  [`V2_API_BASELINE.md`](./V2_API_BASELINE.md),
+  [`V2_PACKAGE_CONTRACT.md`](./V2_PACKAGE_CONTRACT.md),
+  [`V2_RUNTIME_CONTRACT.md`](./V2_RUNTIME_CONTRACT.md),
+  [`V2_RELEASE_PLAN.md`](./V2_RELEASE_PLAN.md)
 
 ---
 
@@ -65,13 +69,19 @@ qualified before the first v2 RC; they are not deferred to v3 or treated as
 future 2.x minor work. Supporting configuration, store and result contracts
 remain prerequisites in the delivery phases below.
 
-Repository ownership/rename is independent of those implementation gates.
-The recommended sequence is to settle the destination and identity plan,
-transfer the existing repository early, and finish v2 in the destination.
-The ACP implementation cutover still waits for shared-mechanics ownership and
-the extraction drift to be resolved. New Hex packages and consumer migration
-wait for qualified v2 artifacts. This recommendation does not authorize a
-repository transfer or settle the open namespace/topology choices.
+The optional ACP vendor-adapter split was accepted on 2026-10-03: keep one
+generic adapter framework in ACP and package the Claude, Codex, Pi and ZCode
+implementations together in `arbor_acp_adapters`, alongside `arbor_acp` in the
+ACP repository. Adapter support and lowest/newest core compatibility contracts
+are prerequisites for independent releases.
+
+Public namespaces `ArborMCP.*` and `ArborACP.*` and the October 9 target were
+accepted on 2026-10-03. With explicit approval, the existing repository was
+transferred to `trust-arbor/arbor_mcp`; its identity, history, releases and old
+URL redirect were verified. MCP development continues there. The ACP
+repository will hold the core and optional adapter package. New Hex packages
+and consumer migration wait for qualified artifacts. Package ownership and
+shared mechanics are specified in [V2_PACKAGE_CONTRACT.md](./V2_PACKAGE_CONTRACT.md).
 
 ## 3. Guiding constraints
 
@@ -195,7 +205,7 @@ size of the compatibility surface.
 | General protocol-dialect framework | Grok review | Defer | Only with two concrete consumers | Keep existing era/version modules unless a second protocol family demonstrates that a general dialect abstraction removes real duplication. |
 | Optional HTTP server dependency (Cowboy optional, Bandit supported) | Cowlib advisory tracking (#18); PR #21 | Adopt | 2.0, alongside runtime/scheduler redesign | `EEF-CVE-2026-43966` and `EEF-CVE-2026-43969` are "won't fix" upstream, so every consumer carries audit exceptions for encoders ExMCP never calls. Standalone `transport: :http` would require the host to add Bandit or Cowboy, which breaks 1.x consumers; Phoenix mounts of `ExMCP.HttpPlug` are unaffected. Listener lifecycle goes behind per-adapter modules; `:ranch_ref`, the named listener, and shutdown semantics are preserved where Cowboy is chosen. |
 | Separate MCP and ACP Hex packages | Package-footprint review | Prototyped; contract open | Phase 1 decision | Split-preparation tooling is merged and a local extraction exists; shared runtime ownership, package identity, compatibility, and qualification remain unresolved. |
-| Optional ACP vendor-adapter package | 2026-10-03 package review | Proposed; boundary open | Phase 1 decision | Vendor implementations make up 63.8% of the current ACP source. Keep the generic adapter contract/bridge in ACP and evaluate one optional adapter bundle with a separate release cadence. |
+| Optional ACP vendor-adapter package | 2026-10-03 package review | Adopt; extension contract in progress | 2.0 | Keep the generic adapter framework in ACP; move vendor implementations to one optional bundle in the ACP repository with a separate release cadence and explicit core compatibility ranges. |
 | Third shared runtime package | Package-footprint review | Defer pending split design | 2.0 only if justified | Centralize security-sensitive JSON-RPC/framing/process code only if both packages need a stable neutral contract; do not publish a grab-bag of tiny helpers. |
 | Built-in distributed database/event sourcing | External review extrapolation | Reject for core | External adapters | ExMCP should define contracts, not require a database or event-source all runtime state. |
 | Copy Anubis APIs or rewrite ExMCP around them | Comparison exercise | Reject | — | ExMCP has broader protocol, transport, authorization, ACP, and compatibility requirements. |
