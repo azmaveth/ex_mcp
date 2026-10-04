@@ -370,7 +370,7 @@ defmodule ArborV2.ExtractACP do
 
     write(
       Path.join(destination, ".gitignore"),
-      "**/_build/\n**/deps/\n**/doc/\n**/cover/\n**/node_modules/\n_verification/\n*.tar\nerl_crash.dump\n"
+      "**/_build/\n**/deps/\n**/doc/\n**/cover/\n**/node_modules/\n**/tmp/\n_verification/\n*.tar\nerl_crash.dump\n"
     )
 
     write(
