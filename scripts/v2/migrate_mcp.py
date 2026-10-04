@@ -64,11 +64,11 @@ def migrate(root: Path) -> None:
         rpc = [name for name in names if name in shared and name != "LineBuffer"]
         lines = []
         if own:
-            lines.append("alias ArborMCP.Internal.{" + ", ".join(own) + "}")
+            lines.append("alias Arbor.MCP.Internal.{" + ", ".join(own) + "}")
         if rpc:
-            lines.append("alias ArborRPC.{" + ", ".join(rpc) + "}")
+            lines.append("alias Arbor.RPC.{" + ", ".join(rpc) + "}")
         if "LineBuffer" in names:
-            lines.append("alias ArborRPC.Internal.LineBuffer")
+            lines.append("alias Arbor.RPC.Internal.LineBuffer")
         return "\n  ".join(lines)
 
     # Rewrite code and current examples/guides; historical API inventories and
@@ -82,13 +82,13 @@ def migrate(root: Path) -> None:
         if path.name == "CHANGELOG.md" or str(relative).startswith("docs/V2_"):
             continue
         text = path.read_text()
-        text = re.sub(r"\bExMCP\b", "ArborMCP", text)
+        text = re.sub(r"\bExMCP\b", "Arbor.MCP", text)
         text = re.sub(r":ex_mcp\b", ":arbor_mcp", text)
         text = text.replace("lib/ex_mcp", "lib/arbor_mcp").replace("test/ex_mcp", "test/arbor_mcp").replace("dev/ex_mcp", "dev/arbor_mcp")
-        text = re.sub(r"alias ArborMCP\.Internal\.\{([^}]+)\}", rpc_alias, text)
+        text = re.sub(r"alias Arbor\.MCP\.Internal\.\{([^}]+)\}", rpc_alias, text)
         for name in shared:
-            replacement = f"ArborRPC.Internal.{name}" if name == "LineBuffer" else f"ArborRPC.{name}"
-            text = text.replace(f"ArborMCP.Internal.{name}", replacement)
+            replacement = f"Arbor.RPC.Internal.{name}" if name == "LineBuffer" else f"Arbor.RPC.{name}"
+            text = text.replace(f"Arbor.MCP.Internal.{name}", replacement)
         text = text.replace("https://github.com/azmaveth/ex_mcp", "https://github.com/trust-arbor/arbor_mcp")
         path.write_text(text)
 

@@ -102,7 +102,7 @@ line counts alone do not establish the value of the split.
 
 | Decision | Required record |
 |---|---|
-| Identity | Accepted: `arbor_mcp` / `ArborMCP.*`, `arbor_acp` / `ArborACP.*`, optional `arbor_acp_adapters`. App/config/telemetry migration is specified in the package contract; GitHub redirects do not migrate these identities. |
+| Identity | Accepted: `arbor_mcp` / `Arbor.MCP.*`, `arbor_acp` / `Arbor.ACP.*`, optional `arbor_acp_adapters`. App/config/telemetry migration is specified in the package contract; GitHub redirects do not migrate these identities. |
 | Repository topology | MCP repository transferred to `trust-arbor/arbor_mcp`; separate ACP repository with independently published core and adapter packages. Release order/ranges are recorded in the package contract. |
 | Shared mechanics | Decide whether a small neutral framing/subprocess contract merits a shared package; avoid making ACP depend on the full MCP package. Trivial helpers alone do not justify a third package. |
 | MCP integration | Keep ACP `mcpServers` descriptors as ACP-owned data; place MCP runtime integration and BEAM-specific extensions in an optional bridge. |
@@ -159,7 +159,7 @@ modules.
 Individual vendor packages can follow if dependency requirements, maintainers
 or release needs diverge. Stable vendor module names allow that packaging
 change without another namespace migration. The adapter split and package name
-are accepted, as are `ArborMCP.*` / `ArborACP.*`. The shared-runtime boundary
+are accepted, as are `Arbor.MCP.*` / `Arbor.ACP.*`. The shared-runtime boundary
 is specified in [V2_PACKAGE_CONTRACT.md](./V2_PACKAGE_CONTRACT.md).
 
 ## V2 implementation checklist

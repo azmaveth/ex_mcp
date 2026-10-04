@@ -3,7 +3,7 @@
 - **Target:** Friday, October 9, 2026, in `America/Chicago`
 - **Status:** Foundation work underway; implementation and release qualification outstanding
 - **Scope:** Full accepted v2, including runtime/scheduler and transport integration
-- **Names:** `ArborMCP.*`, `ArborACP.*`; optional `arbor_acp_adapters` bundle accepted
+- **Names:** `Arbor.MCP.*`, `Arbor.ACP.*`; optional `arbor_acp_adapters` bundle accepted
 - **Repository:** `trust-arbor/arbor_mcp`, transferred with repository ID `989917799` preserved
 - **Contracts:** [package/adapter contract](./V2_PACKAGE_CONTRACT.md), [runtime contract](./V2_RUNTIME_CONTRACT.md)
 - **Baseline:** [API baseline](./V2_API_BASELINE.md); [canonical roadmap](./V2_ROADMAP.md)

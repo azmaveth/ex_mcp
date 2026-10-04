@@ -4,7 +4,7 @@
 - **Reviewed:** 2026-10-03.
 - **Source:** Current MCP implementation following the integrated `v1.5.0` maintenance work.
 - **Scope:** MCP server ownership, dispatch, callback execution, stores, and migration.
-- **Names:** Public v2 APIs use the accepted `ArborMCP` namespace. `ExMCP` identifies current source modules and the 1.x migration baseline; ACP APIs move to `ArborACP` separately.
+- **Names:** Public v2 APIs use the accepted `Arbor.MCP` namespace. `ExMCP` identifies current source modules and the 1.x migration baseline; ACP APIs move to `Arbor.ACP` separately.
 - **Release target:** Friday, 2026-10-09; qualify a midweek RC before the remaining soak. The full redesign must pass its gates before the RC.
 - **Related:** [V2_ROADMAP.md](./V2_ROADMAP.md), [V2_RELEASE_ASSESSMENT.md](./V2_RELEASE_ASSESSMENT.md), [STORE_ADAPTER.md](./STORE_ADAPTER.md).
 
@@ -53,7 +53,7 @@ The stable initial surface is deliberately small:
 
 ```elixir
 children = [
-  {ArborMCP.Server.Runtime,
+  {Arbor.MCP.Server.Runtime,
    id: :public_mcp,
    name: MyApp.PublicMCP,
    handler: MyApp.Tools,
@@ -63,16 +63,16 @@ children = [
 ]
 
 # Mounted HTTP uses a supervised runtime without owning the host's listener.
-{ArborMCP.Server.Runtime,
+{Arbor.MCP.Server.Runtime,
  id: :mounted_mcp,
  name: MyApp.MountedMCP,
  handler: MyApp.Tools,
  transport: :mounted_http}
 
-forward "/mcp", ArborMCP.HttpPlug, runtime: MyApp.MountedMCP
+forward "/mcp", Arbor.MCP.HttpPlug, runtime: MyApp.MountedMCP
 
-{:ok, supervisor_pid} = ArborMCP.Server.Runtime.start_link(handler: MyApp.Tools, transport: :test)
-{:ok, runtime_ref} = ArborMCP.Server.Runtime.ref(supervisor_pid)
+{:ok, supervisor_pid} = Arbor.MCP.Server.Runtime.start_link(handler: MyApp.Tools, transport: :test)
+{:ok, runtime_ref} = Arbor.MCP.Server.Runtime.ref(supervisor_pid)
 ```
 
 - `child_spec/1` accepts `:id` so two servers using the same handler coexist

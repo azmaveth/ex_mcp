@@ -75,7 +75,7 @@ implementations together in `arbor_acp_adapters`, alongside `arbor_acp` in the
 ACP repository. Adapter support and lowest/newest core compatibility contracts
 are prerequisites for independent releases.
 
-Public namespaces `ArborMCP.*` and `ArborACP.*` and the October 9 target were
+Public namespaces `Arbor.MCP.*` and `Arbor.ACP.*` and the October 9 target were
 accepted on 2026-10-03. With explicit approval, the existing repository was
 transferred to `trust-arbor/arbor_mcp`; its identity, history, releases and old
 URL redirect were verified. MCP development continues there. The ACP

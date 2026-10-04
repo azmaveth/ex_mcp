@@ -1,7 +1,7 @@
 # V2 package and adapter contract
 
-- **Status:** Package split, optional adapter bundle, and `ArborMCP.*` /
-  `ArborACP.*` namespaces accepted; shared-package qualification and subprocess
+- **Status:** Package split, optional adapter bundle, and `Arbor.MCP.*` /
+  `Arbor.ACP.*` namespaces accepted; shared-package qualification and subprocess
   event/ownership design remain open.
 - **Release target:** Friday, 2026-10-09, subject to the full v2 release gates.
 - **Reviewed:** 2026-10-03, current ExMCP main at `1808c56`; sibling ExACP
@@ -13,15 +13,15 @@
   [release assessment](V2_RELEASE_ASSESSMENT.md),
   [ACP wire v2 tracking](ACP_V2_TRACKING.md).
 
-`ArborMCP` and `ArborACP` are the confirmed public namespaces. `ArborRPC` remains
+`Arbor.MCP` and `Arbor.ACP` are the confirmed public namespaces. `Arbor.RPC` remains
 the proposed name for the qualified shared mechanics package. ACP wire protocol
 versions remain independent of the library's major release.
 
-The public module spelling is being reconsidered following the proposed broader
-Arbor library family: `Arbor.MCP.*` / `Arbor.ACP.*` would match existing
-`Arbor.Trust` and `Arbor.Historian` modules. Package/app names and repository
-paths are independent of this choice. Current extraction snapshots use the
-previously accepted spelling until that follow-up decision is recorded.
+The dotted public module spelling was accepted on 2026-10-03 for the wider
+Arbor library family, matching `Arbor.Trust` and `Arbor.Historian`. Sharing the
+`Arbor` prefix does not add a dependency on the Arbor application: each package
+owns its distinct complete module names. Package/app names and repository
+paths remain independent of the Elixir namespace.
 
 ## Package and repository layout
 
@@ -34,7 +34,7 @@ previously accepted spelling until that follow-up decision is recorded.
 
 Each package is a standalone Mix project with its own package metadata, source
 files, tests, documentation and release tag. Vendor modules remain under
-`ArborACP.Adapters.*` even though their files ship in the optional bundle; no
+`Arbor.ACP.Adapters.*` even though their files ship in the optional bundle; no
 second adapter namespace is needed. The ACP repository can have workspace
 scripts for coordinated checks; its root must not become an extra published
 application merely to hold those scripts. Use package-qualified release tags such
@@ -81,7 +81,7 @@ unsupported session-MCP handling, release PATH cleanup, and current stdio
 process-group lifecycle mechanics.
 
 The following map uses existing main paths. Rewrite `ExMCP.*` MCP modules to
-`ArborMCP.*`, and `ExMCP.ACP.*` core/vendor modules to `ArborACP.*`; route shared
+`Arbor.MCP.*`, and `ExMCP.ACP.*` core/vendor modules to `Arbor.ACP.*`; route shared
 mechanics explicitly according to the map rather than applying a blanket prefix
 replacement to every existing internal module.
 
@@ -226,7 +226,7 @@ These existing public ACP APIs are the adapter bundle's stable dependencies:
 public surface. Chunk options retain keyword/map handling where currently
 supported; explicit message IDs and metadata shape stay pinned.
 
-The bundle must not depend on `ArborACP.Internal.*`. Resolve the remaining
+The bundle must not depend on `Arbor.ACP.Internal.*`. Resolve the remaining
 current internal calls as follows:
 
 | Existing internal use | Resolution |
@@ -234,14 +234,14 @@ current internal calls as follows:
 | `PromptQueue.new/0`, `from_list/1`, `empty?/1`, `len/1`, `enqueue/2`, `pop/1`, `split/2`, `drain/1`, `to_list/1`; opaque `t(item)` | Move into bundle-owned internals; no cross-package API |
 | `PendingRequests.put/3`, `pop/2` | Use standard `Map` operations; ACP retains its own internal lifecycle bookkeeping |
 | `Maps.put_present/3`, `put_non_empty/3`, `put_present_non_empty_list/3`, `stringify_keys/1` | Bundle-owned small data construction helpers, or documented ACP configuration normalization when consuming ACP descriptors; no RPC utility facade |
-| `NameValue.map/1` | Document ACP-owned `ArborACP.AdapterSupport.NameValue.map/1` descriptor normalization consumed by Codex |
+| `NameValue.map/1` | Document ACP-owned `Arbor.ACP.AdapterSupport.NameValue.map/1` descriptor normalization consumed by Codex |
 | `WorkspacePath.within?/2`, `canonical/1` | Document ACP-owned `AdapterSupport.WorkspacePath` functions used by ACP client and vendor authorization; qualify symlink/canonical-root handling, without claiming race-free filesystem authorization |
 | `LogSummary.describe/1` | Use documented shared diagnostics |
 | `AdapterBridge.PortRunner.open/4`, `command/2`, `close/1` | Document ACP `AdapterSupport.Subprocess` launch/write/close interface backed by the shared mechanical implementation; adapter module/environment shaping stays in ACP support, not RPC |
 
-The concrete support ABI is `ArborACP.AdapterSupport.NameValue.map/1`;
-`ArborACP.AdapterSupport.WorkspacePath.within?/2` and `canonical/1`; and
-`ArborACP.AdapterSupport.Subprocess.open/4`, `command/2`, and `close/1`.
+The concrete support ABI is `Arbor.ACP.AdapterSupport.NameValue.map/1`;
+`Arbor.ACP.AdapterSupport.WorkspacePath.within?/2` and `canonical/1`; and
+`Arbor.ACP.AdapterSupport.Subprocess.open/4`, `command/2`, and `close/1`.
 Descriptor normalization retains existing name/value map/list conversion.
 Workspace path functions retain canonical-root/symlink semantics. The subprocess
 functions retain the arguments already used by the bridge and Pi:

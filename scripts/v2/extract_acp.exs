@@ -21,13 +21,13 @@ defmodule ArborV2.ExtractACP do
     end
 
     for {dir, app, title, description, deps} <- [
-          {rpc, :arbor_rpc, "ArborRPC",
+          {rpc, :arbor_rpc, "Arbor.RPC",
            "Shared JSON-RPC, framing and environment mechanics for Arbor protocols.", []},
-          {core, :arbor_acp, "ArborACP",
+          {core, :arbor_acp, "Arbor.ACP",
            "Agent Client Protocol client, native agent and generic adapter runtime.",
            [:arbor_rpc]},
-          {adapters, :arbor_acp_adapters, "ArborACP.Adapters",
-           "Optional Claude, Codex, Pi and ZCode adapters for ArborACP.",
+          {adapters, :arbor_acp_adapters, "Arbor.ACP.Adapters",
+           "Optional Claude, Codex, Pi and ZCode adapters for Arbor.ACP.",
            [:arbor_acp, :arbor_rpc]}
         ] do
       write(Path.join(dir, "mix.exs"), project(app, title, description, deps))
@@ -168,8 +168,10 @@ defmodule ArborV2.ExtractACP do
     # The current main transport supplies fresh lifecycle/PATH fixes. ACP owns
     # its temporary mechanical wrapper; remove MCP-only validation/policy.
     stdio = File.read!(Path.join(source, "lib/ex_mcp/transport/stdio.ex")) |> rewrite(:core)
-    stdio = String.replace(stdio, ~r/\s*alias ArborACP.Internal.SecurityConfig\n/, "\n")
-    stdio = String.replace(stdio, ~r/\s*alias ArborACP.Transport.(?:Error|SecurityGuard)\n/, "\n")
+    stdio = String.replace(stdio, ~r/\s*alias Arbor\.ACP\.Internal\.SecurityConfig\n/, "\n")
+
+    stdio =
+      String.replace(stdio, ~r/\s*alias Arbor\.ACP\.Transport\.(?:Error|SecurityGuard)\n/, "\n")
 
     stdio =
       String.replace(
@@ -238,7 +240,7 @@ defmodule ArborV2.ExtractACP do
 
     write(
       Path.join(adapters, "test/arbor_acp/adapters/codex_translation_integration_test.exs"),
-      "defmodule ArborACP.Adapters.CodexTranslationIntegrationTest do\n  use ExUnit.Case, async: true\n  describe \"Codex adapter translate chain\" do" <>
+      "defmodule Arbor.ACP.Adapters.CodexTranslationIntegrationTest do\n  use ExUnit.Case, async: true\n  describe \"Codex adapter translate chain\" do" <>
         vendor
     )
 
@@ -329,7 +331,7 @@ defmodule ArborV2.ExtractACP do
     rpc_corpus =
       File.read!(Path.join(source, "test/support/i18n_corpus.ex"))
       |> rewrite(:core)
-      |> String.replace("ArborACP.Test.I18nCorpus", "ArborRPC.Test.I18nCorpus")
+      |> String.replace("Arbor.ACP.Test.I18nCorpus", "Arbor.RPC.Test.I18nCorpus")
 
     write(Path.join(rpc, "test/support/i18n_corpus.ex"), rpc_corpus)
     rpc_test = Path.join(rpc, "test/arbor_rpc/stdio_framing_test.exs")
@@ -337,7 +339,7 @@ defmodule ArborV2.ExtractACP do
     write(
       rpc_test,
       File.read!(rpc_test)
-      |> String.replace("ArborACP.Test.I18nCorpus", "ArborRPC.Test.I18nCorpus")
+      |> String.replace("Arbor.ACP.Test.I18nCorpus", "Arbor.RPC.Test.I18nCorpus")
     )
 
     helper_source = File.read!(Path.join(source, "test/support/test_helpers.ex"))
@@ -346,7 +348,7 @@ defmodule ArborV2.ExtractACP do
 
     write(
       Path.join(adapters, "test/support/test_helpers.ex"),
-      "defmodule ArborACP.TestHelpers do\n  @moduledoc false\n  @spec wait_until" <>
+      "defmodule Arbor.ACP.TestHelpers do\n  @moduledoc false\n  @spec wait_until" <>
         wait_until <> "\nend\n"
     )
 
@@ -401,28 +403,28 @@ defmodule ArborV2.ExtractACP do
     text =
       Enum.reduce(@shared, text, fn name, acc ->
         target =
-          if name == "LineBuffer", do: "ArborRPC.Internal.LineBuffer", else: "ArborRPC.#{name}"
+          if name == "LineBuffer", do: "Arbor.RPC.Internal.LineBuffer", else: "Arbor.RPC.#{name}"
 
         String.replace(acc, "ExMCP.Internal.#{name}", target)
       end)
 
     text =
       Enum.reduce(@support, text, fn {name, _}, acc ->
-        String.replace(acc, "ExMCP.Internal.#{name}", "ArborACP.AdapterSupport.#{name}")
+        String.replace(acc, "ExMCP.Internal.#{name}", "Arbor.ACP.AdapterSupport.#{name}")
       end)
 
     text =
       text
       |> String.replace(
         "ExMCP.ACP.AdapterBridge.PortRunner",
-        "ArborACP.AdapterSupport.Subprocess"
+        "Arbor.ACP.AdapterSupport.Subprocess"
       )
-      |> String.replace("ExMCP.ACPCompat", "ArborACP.Compat")
-      |> String.replace("ExMCP.ACP", "ArborACP")
-      |> String.replace("ExMCP.Internal.", "ArborACP.Internal.")
-      |> String.replace("ExMCP.Transport", "ArborACP.Transport")
-      |> String.replace("ExMCP.Test.", "ArborACP.Test.")
-      |> String.replace("ExMCP.Integration.", "ArborACP.Integration.")
+      |> String.replace("ExMCP.ACPCompat", "Arbor.ACP.Compat")
+      |> String.replace("ExMCP.ACP", "Arbor.ACP")
+      |> String.replace("ExMCP.Internal.", "Arbor.ACP.Internal.")
+      |> String.replace("ExMCP.Transport", "Arbor.ACP.Transport")
+      |> String.replace("ExMCP.Test.", "Arbor.ACP.Test.")
+      |> String.replace("ExMCP.Integration.", "Arbor.ACP.Integration.")
       |> String.replace("[:ex_mcp, :acp, ", "[:arbor_acp, ")
       |> String.replace("[:ex_mcp, :transport, ", "[:arbor_acp, :transport, ")
       |> String.replace("Application.spec(:ex_mcp,", "Application.spec(:arbor_acp,")
@@ -434,22 +436,22 @@ defmodule ArborV2.ExtractACP do
       |> String.replace("Application.get_env(:ex_mcp,", "Application.get_env(:arbor_acp,")
       |> String.replace("Application.delete_env(:ex_mcp,", "Application.delete_env(:arbor_acp,")
       |> String.replace("Application.fetch_env(:ex_mcp,", "Application.fetch_env(:arbor_acp,")
-      |> String.replace("ExMCP.start_acp_client", "ArborACP.start_client")
+      |> String.replace("ExMCP.start_acp_client", "Arbor.ACP.start_client")
       |> String.replace(
-        "alias ArborACP.AdapterSupport.Subprocess\n",
-        "alias ArborACP.AdapterSupport.Subprocess, as: PortRunner\n"
+        "alias Arbor.ACP.AdapterSupport.Subprocess\n",
+        "alias Arbor.ACP.AdapterSupport.Subprocess, as: PortRunner\n"
       )
-      |> String.replace("alias ArborACP.Compat\n", "alias ArborACP.Compat, as: ACPCompat\n")
-      |> String.replace("ExMCP.TestHelpers", "ArborACP.TestHelpers")
+      |> String.replace("alias Arbor.ACP.Compat\n", "alias Arbor.ACP.Compat, as: ACPCompat\n")
+      |> String.replace("ExMCP.TestHelpers", "Arbor.ACP.TestHelpers")
 
     if owner == :adapters do
       text
-      |> String.replace("ArborACP.Envelope", "ArborRPC.JSONRPC")
-      |> String.replace("alias ArborRPC.JSONRPC\n", "alias ArborRPC.JSONRPC, as: Envelope\n")
-      |> String.replace("ArborACP.PromptQueue", "ArborACP.Adapters.Internal.PromptQueue")
-      |> String.replace("ArborACP.Internal.Maps", "ArborACP.Adapters.Internal.Maps")
-      |> String.replace("ArborACP.Maps", "ArborACP.Adapters.Internal.Maps")
-      |> String.replace(~r/alias ArborACP.PendingRequests\s*\n/, "")
+      |> String.replace("Arbor.ACP.Envelope", "Arbor.RPC.JSONRPC")
+      |> String.replace("alias Arbor.RPC.JSONRPC\n", "alias Arbor.RPC.JSONRPC, as: Envelope\n")
+      |> String.replace("Arbor.ACP.PromptQueue", "Arbor.ACP.Adapters.Internal.PromptQueue")
+      |> String.replace("Arbor.ACP.Internal.Maps", "Arbor.ACP.Adapters.Internal.Maps")
+      |> String.replace("Arbor.ACP.Maps", "Arbor.ACP.Adapters.Internal.Maps")
+      |> String.replace(~r/alias Arbor\.ACP\.PendingRequests\s*\n/, "")
       |> String.replace("PendingRequests.put(", "Map.put(")
       |> String.replace("PendingRequests.pop(", "Map.pop(")
     else
@@ -508,9 +510,9 @@ defmodule ArborV2.ExtractACP do
     write(behaviour, text)
 
     environment = """
-    defmodule ArborACP.Adapters.Internal.Environment do
+    defmodule Arbor.ACP.Adapters.Internal.Environment do
       @moduledoc false
-      alias ArborRPC.PortEnvironment
+      alias Arbor.RPC.PortEnvironment
       @session_vars_to_clear ~w(
         CLAUDE_CODE_ENTRYPOINT CLAUDE_SESSION_ID CLAUDE_CONFIG_DIR CLAUDECODE
         CODEX_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY GOOGLE_API_KEY PI_API_KEY
@@ -535,7 +537,7 @@ defmodule ArborV2.ExtractACP do
       function = if name == "pi", do: "pi(opts)", else: "defaults()"
 
       callback =
-        "  @impl true\n  def environment_defaults(#{argument}), do: ArborACP.Adapters.Internal.Environment.#{function}\n\n"
+        "  @impl true\n  def environment_defaults(#{argument}), do: Arbor.ACP.Adapters.Internal.Environment.#{function}\n\n"
 
       write(
         path,
@@ -590,7 +592,7 @@ defmodule ArborV2.ExtractACP do
       end
 
     """
-    defmodule #{Macro.camelize(to_string(app))}.MixProject do
+    defmodule #{title}.MixProject do
       use Mix.Project
       @version "2.0.0-dev"
       def project do
@@ -656,4 +658,3 @@ case System.argv() do
   [source, destination] -> ArborV2.ExtractACP.run(source, destination)
   _ -> raise "usage: elixir scripts/v2/extract_acp.exs SOURCE DESTINATION"
 end
-
