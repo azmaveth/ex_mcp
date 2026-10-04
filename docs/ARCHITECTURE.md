@@ -1,34 +1,35 @@
-# ExMCP Architecture Guide
+# Arbor.MCP Architecture Guide
 
-ExMCP is organized around protocol boundaries: clients, servers, transports,
-HTTP Plug integration, ACP, authorization, and internal protocol helpers. Public
+Arbor.MCP is organized around protocol boundaries: clients, servers, transports,
+HTTP Plug integration, authorization, and internal protocol helpers. Public
 APIs stay small; cross-cutting work is kept at transport or Plug boundaries.
 
-This guide describes the 1.x architecture. The accepted direction for
+This guide describes the MCP architecture carried forward from 1.x into the
+version 2 development split. The accepted direction for
 per-server runtime ownership, bounded handler scheduling, and replaceable
 state stores is tracked separately in the
-[ExMCP 2.0 roadmap](https://github.com/azmaveth/ex_mcp/blob/master/docs/V2_ROADMAP.md).
+[Arbor.MCP 2.0 roadmap](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_ROADMAP.md).
 
 ## Public Layers
 
 ### MCP Client
 
-`ExMCP.Client` owns the client process, protocol-era establishment, request
+`Arbor.MCP.Client` owns the client process, protocol-era establishment, request
 IDs, server capability state, retries, and request/response formatting.
 
-Client operation modules under `lib/ex_mcp/client/operations/` keep tool,
-resource, and prompt calls focused while `ExMCP.Client.ConnectionManager`
+Client operation modules under `lib/arbor_mcp/client/operations/` keep tool,
+resource, and prompt calls focused while `Arbor.MCP.Client.ConnectionManager`
 normalizes transport startup.
 
 ### MCP Server
 
-Server implementations use `ExMCP.Server.Handler`. Most applications should add
-`ExMCP.Server.DSL` for declarative tools, resources, and prompts:
+Server implementations use `Arbor.MCP.Server.Handler`. Most applications should add
+`Arbor.MCP.Server.DSL` for declarative tools, resources, and prompts:
 
 ```elixir
 defmodule MyServer do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL
 
   tool "echo", "Echo input" do
     param :message, :string, required: true
@@ -40,26 +41,26 @@ defmodule MyServer do
 end
 ```
 
-`ExMCP.Server.HandlerServer` is the transport-aware process for in-memory and
+`Arbor.MCP.Server.HandlerServer` is the transport-aware process for in-memory and
 BEAM-local handler execution. HTTP and stdio servers are started through
-`ExMCP.Server.Transport` or the DSL-generated `start_link/1`.
+`Arbor.MCP.Server.Transport` or the DSL-generated `start_link/1`.
 
 ### Transports
 
-Transport modules implement `ExMCP.Transport`:
+Transport modules implement `Arbor.MCP.Transport`:
 
-- `ExMCP.Transport.Stdio` for newline-delimited JSON-RPC over subprocess stdio.
-- `ExMCP.Transport.HTTP` for legacy and modern Streamable HTTP. Legacy
+- `Arbor.MCP.Transport.Stdio` for newline-delimited JSON-RPC over subprocess stdio.
+- `Arbor.MCP.Transport.HTTP` for legacy and modern Streamable HTTP. Legacy
   revisions may use a standalone GET SSE stream; modern SSE belongs to its
   originating POST.
-- `ExMCP.Transport.Local` for BEAM-local MCP maps/lists passed as Elixir terms.
-- `ExMCP.Transport.Test` for in-memory tests.
+- `Arbor.MCP.Transport.Local` for BEAM-local MCP maps/lists passed as Elixir terms.
+- `Arbor.MCP.Transport.Test` for in-memory tests.
 
 BEAM-local MCP is selected with `transport: :beam` and requires a server PID:
 
 ```elixir
 {:ok, server} = MyServer.start_link(transport: :beam)  # or HandlerServer.start_link(handler: MyHandler, ...)
-{:ok, client} = ExMCP.Client.start_link(transport: :beam, server: server)
+{:ok, client} = Arbor.MCP.Client.start_link(transport: :beam, server: server)
 ```
 
 The removed `:native` alias and direct dispatcher API are not part of the 1.0
@@ -67,39 +68,40 @@ public architecture.
 
 ### HTTP Plug
 
-`ExMCP.HttpPlug` is the HTTP server boundary. Request parsing, session
+`Arbor.MCP.HttpPlug` is the HTTP server boundary. Request parsing, session
 resolution, CORS/origin handling, response shaping, and SSE handling are split
-under `lib/ex_mcp/http_plug/`.
+under `lib/arbor_mcp/http_plug/`.
 
 Use normal Phoenix/Plug composition for HTTP edge concerns:
 
 ```elixir
 pipeline :mcp do
-  plug ExMCP.Plugs.DnsRebinding
+  plug Arbor.MCP.Plugs.DnsRebinding
   plug MyApp.AuthenticateMCP
 end
 
 scope "/mcp" do
   pipe_through :mcp
 
-  forward "/", ExMCP.HttpPlug,
+  forward "/", Arbor.MCP.HttpPlug,
     handler: MyApp.MCPServer,
     server_info: %{name: "my-app", version: "1.0.0"}
 end
 ```
 
-### ACP
+### Package boundaries
 
-ACP modules live under `lib/ex_mcp/acp/`. `ExMCP.ACP.Client` controls ACP
-agents, `ExMCP.ACP.Agent` exposes native Elixir ACP agents, and adapter modules
-bridge external CLIs such as Claude Code, Codex, and Pi.
+This package contains MCP clients, servers and transports. ACP clients, native
+agents and optional vendor adapters live in
+[ArborACP](https://github.com/trust-arbor/arbor_acp).
 
-ACP pooling is intentionally left to consumers. ExMCP provides the protocol,
-transport, adapter, and native-agent building blocks.
+The `arbor_rpc` dependency owns shared JSON-RPC decoding, framing and subprocess
+environment helpers. MCP era negotiation, resource validation and protocol
+semantics remain in this package.
 
 ## Protocol Era Model
 
-ExMCP treats MCP 2025-11-25 and earlier as the **legacy era** and MCP
+Arbor.MCP treats MCP 2025-11-25 and earlier as the **legacy era** and MCP
 2026-07-28 as the **modern era**. This is an architectural boundary, not just a
 version comparison: handshake, metadata, result envelopes, notifications, and
 HTTP state all change together. A connection is established in one era and is
@@ -133,24 +135,24 @@ The four modes are intentionally policies rather than protocol versions:
 On the server, both `:prefer_legacy` and `:prefer_modern` accept either era;
 the preference controls advertised version ordering. HandlerServer and stdio
 connections pin on a valid modern request or legacy `initialize`. HTTP remains
-stateless in the modern era, so `ExMCP.Server.RequestContext` derives and
+stateless in the modern era, so `Arbor.MCP.Server.RequestContext` derives and
 validates the era on each request instead.
 
 ### Era responsibilities
 
-- ExMCP.Internal.VersionRegistry is the source of truth for known revisions,
+- Arbor.MCP.Internal.VersionRegistry is the source of truth for known revisions,
   their era, enabled versions, and preference order. The zero-arity legacy
   helpers deliberately retain rc.5 behavior during the RC soak.
-- `ExMCP.Client.ConnectionManager` applies the selected policy.
-  `ExMCP.Client.EraProbe` owns the bounded, side-effect-free
+- `Arbor.MCP.Client.ConnectionManager` applies the selected policy.
+  `Arbor.MCP.Client.EraProbe` owns the bounded, side-effect-free
   `server/discover` probe.
-- `ExMCP.Client.EraCache` keys observations by transport identity. Modern
+- `Arbor.MCP.Client.EraCache` keys observations by transport identity. Modern
   observations do not expire and cannot be replaced by automatic downgrade;
   legacy observations expire so an upgraded peer is eventually probed again.
-- `ExMCP.Server.RequestContext` separates modern `_meta` from application
+- `Arbor.MCP.Server.RequestContext` separates modern `_meta` from application
   parameters, validates the configured mode and method availability, and
   exposes a single context to dispatch.
-- `ExMCP.Protocol.ResultEnvelope` enforces modern `resultType` while preserving
+- `Arbor.MCP.Protocol.ResultEnvelope` enforces modern `resultType` while preserving
   the legacy result shape. MRTR continuation state, cache hints, subscriptions,
   and modern Tasks remain protocol-layer concerns rather than transport state.
 - Transports implement era-specific framing only. When HTTP settles modern it
@@ -170,34 +172,33 @@ boundaries:
   and version rules.
 - The message processor modules provide a Plug-like processing pipeline for
   server request dispatch.
-- `ExMCP.Content.*` modules normalize content, sanitize inputs, and validate
+- `Arbor.MCP.Content.*` modules normalize content, sanitize inputs, and validate
   schema-related data.
-- ACP mapper/protocol/session modules keep adapter-specific decoding separate
-  from subprocess ports.
+- Shared RPC framing and environment helpers keep byte handling separate from
+  MCP protocol semantics.
 
 This structure keeps side effects at the edges: GenServers, Ports, HTTP
 requests, Plug connections, filesystem-backed session stores, and telemetry.
 
 ## Resilience And Pipelines
 
-ExMCP currently has three pipeline-style boundaries:
+Arbor.MCP currently has three pipeline-style boundaries:
 
-- HTTP server requests: normal Plug/Phoenix pipelines around `ExMCP.HttpPlug`.
-- Server message processing: `ExMCP.MessageProcessor.run/2` for internal
+- HTTP server requests: normal Plug/Phoenix pipelines around `Arbor.MCP.HttpPlug`.
+- Server message processing: `Arbor.MCP.MessageProcessor.run/2` for internal
   Plug-like request processing.
-- Transport reliability: `ExMCP.Transport.ReliabilityWrapper`, client
-  `retry_policy`, and `ExMCP.Reliability.*` components.
+- Transport reliability: `Arbor.MCP.Transport.ReliabilityWrapper`, client
+  `retry_policy`, and `Arbor.MCP.Reliability.*` components.
 
-HTTP client connection handling is transport-owned today. If ExMCP later adds a
+HTTP client connection handling is transport-owned today. If Arbor.MCP later adds a
 public client middleware API, it should wrap request construction and transport
-send/receive at the `ExMCP.Client` boundary rather than inside HTTP-specific
+send/receive at the `Arbor.MCP.Client` boundary rather than inside HTTP-specific
 code, so stdio, HTTP, and BEAM-local can share the same cross-cutting behavior.
 
 ## Module Map
 
 ```text
-lib/ex_mcp/
-  acp/                 ACP protocol, client, native agent, adapters
+lib/arbor_mcp/
   authorization/       OAuth 2.1 and auth provider flows
   client/              Client operations, handlers, state, connection setup
   content/             Content builders, validation, sanitization
@@ -214,7 +215,7 @@ lib/ex_mcp/
 ## Testing Architecture
 
 The test suite covers unit, integration, interop, conformance, security, and
-transport behavior. `ExMCP.Transport.Test` and `transport: :beam` keep local
+transport behavior. `Arbor.MCP.Transport.Test` and `transport: :beam` keep local
 server/client tests fast without starting subprocesses or network listeners.
 
 External conformance scripts live in `scripts/` and should be run for each
@@ -230,19 +231,18 @@ mix mcp.sync_spec --version 2026-07-28 --force  # refresh local docs/mcp-specs
 
 ### Protocol version alignment
 
-| Protocol era | Revisions | ExMCP 1.0 RC support |
+| Protocol era | Revisions | Current MCP implementation |
 |---|---|---|
 | MCP legacy | `2024-11-05`, `2025-03-26`, `2025-06-18`, `2025-11-25` | Enabled by `:legacy_only` and both preference modes |
 | MCP modern | `2026-07-28` (latest stable) | Implemented; enabled by `:modern_only` and both preference modes |
-| ACP | major `1` | `protocolVersion: 1` |
 
 ## Design Rules
 
-- Prefer `ExMCP.Server.Handler` plus `ExMCP.Server.DSL` for servers.
+- Prefer `Arbor.MCP.Server.Handler` plus `Arbor.MCP.Server.DSL` for servers.
 - Select an explicit protocol mode in deployments and tests; never infer an
   era solely from a method name after a connection has pinned.
-- Keep compatibility fallback in `ExMCP.Client.ConnectionManager` and
-  `ExMCP.Client.EraProbe`; application operations must not implement their own
+- Keep compatibility fallback in `Arbor.MCP.Client.ConnectionManager` and
+  `Arbor.MCP.Client.EraProbe`; application operations must not implement their own
   modern-to-legacy retry.
 - Use `transport: :beam` for local BEAM MCP, not a separate service dispatcher.
 - Put HTTP authorization, origin, and request-signing checks in Plug pipelines.

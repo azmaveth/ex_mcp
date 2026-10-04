@@ -1,6 +1,6 @@
-# ExMCP Utility Examples
+# Arbor.MCP Utility Examples
 
-This directory contains utility examples that demonstrate focused ExMCP features in isolation.
+This directory contains utility examples that demonstrate focused Arbor.MCP features in isolation.
 
 ## Examples
 

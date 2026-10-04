@@ -1,29 +1,32 @@
-# ExMCP Configuration Guide
+# Arbor.MCP Configuration Guide
 
-This guide covers the supported configuration surfaces for ExMCP 1.0.
+This guide covers MCP configuration in the v2 development checkout. Runtime
+integration and package qualification are still in progress.
 
 ## Dependency
 
-Use stable ExMCP 1.0:
+Version 2 is not yet published. Develop against a local MCP checkout:
 
 ```elixir
 def deps do
   [
-    {:ex_mcp, "~> 1.0"}
+    {:arbor_mcp, path: "../arbor_mcp"}
   ]
 end
 ```
 
-The earlier `1.0.0-rc.5` package is the legacy-only characterization baseline.
+Set `ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc` while the shared dependency is
+unpublished. The released 1.x package remains `ex_mcp`; its earlier
+`1.0.0-rc.5` release is the legacy-only characterization baseline.
 To preserve its connection policy after upgrading, set:
 
 ```elixir
-config :ex_mcp, protocol_mode: :legacy_only
+config :arbor_mcp, protocol_mode: :legacy_only
 ```
 
 ## Protocol Eras and Modes
 
-ExMCP 1.0 implements two wire-incompatible MCP eras:
+The MCP implementation supports two wire-incompatible eras:
 
 - **Legacy:** `2024-11-05`, `2025-03-26`, `2025-06-18`, and `2025-11-25`
   (the newest legacy revision).
@@ -34,12 +37,12 @@ ExMCP 1.0 implements two wire-incompatible MCP eras:
 configuration for a deployment default:
 
 ```elixir
-config :ex_mcp,
+config :arbor_mcp,
   protocol_mode: :prefer_modern,
   protocol_version: "2025-11-25"
 ```
 
-`1.0.0` defaults to `:prefer_modern`, matching the final rc.8 candidate.
+The client defaults to `:prefer_modern`.
 Production deployments should still set the mode explicitly when rollout
 policy must not change with a dependency upgrade.
 
@@ -59,7 +62,7 @@ Configure one client or server independently when canarying:
 
 ```elixir
 {:ok, client} =
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :http,
     url: "https://mcp.example.com/mcp",
     protocol_mode: :prefer_modern,
@@ -74,7 +77,7 @@ Configure one client or server independently when canarying:
   )
 
 # Phoenix/Plug servers accept the same option.
-forward "/mcp", ExMCP.HttpPlug,
+forward "/mcp", Arbor.MCP.HttpPlug,
   handler: MyApp.MCPServer,
   protocol_mode: :prefer_legacy
 ```
@@ -98,7 +101,7 @@ Client mode options:
   automatic retry strategy.
 - `:era_cache_key` supplies a stable identity for a custom transport that
   cannot be identified from its connected state. Never include raw secrets;
-  ExMCP hashes the configured identity.
+  Arbor.MCP hashes the configured identity.
 
 Fallback is deliberately narrow. A modern timeout, transport failure,
 recognized modern error, authentication error, or cached-modern probe failure
@@ -109,7 +112,7 @@ Strict modes never fall back.
 `protocol_version` is a legacy revision preference, not an era switch or a
 statement of the latest upstream MCP revision. The
 application-level value and the compatibility helper
-`ExMCP.protocol_version/0` retain their rc.5 legacy semantics during the soak;
+`Arbor.MCP.protocol_version/0` retain their rc.5 legacy semantics during the soak;
 use `protocol_mode` to enable modern negotiation. A per-client modern
 `protocol_version` is honored only when its mode enables the modern era.
 
@@ -117,7 +120,7 @@ For legacy Streamable HTTP, `initialize` negotiates the version from
 `params.protocolVersion`; it does not require an `MCP-Protocol-Version` HTTP
 header. When `protocol_version_required: true`, every subsequent request must
 carry exactly one header matching the version stored for that server-issued
-session. ExMCP always rejects an explicit malformed, unsupported, duplicate, or
+session. Arbor.MCP always rejects an explicit malformed, unsupported, duplicate, or
 session-mismatched header, even when missing-header enforcement is disabled.
 Modern requests always carry matching HTTP and `_meta` protocol versions.
 
@@ -131,7 +134,7 @@ uses its separate endpoint-event handshake and is unaffected by this rule.
 Use the public negotiator for legacy compatibility checks:
 
 ```elixir
-ExMCP.Protocol.VersionNegotiator.supported?("2025-11-25")
+Arbor.MCP.Protocol.VersionNegotiator.supported?("2025-11-25")
 ```
 
 See the [migration rollout](getting-started/MIGRATION.md#recommended-rollout)
@@ -180,14 +183,14 @@ metadata URL. Existing `client_id` / `client_secret` keys remain accepted as
 A CIMD client ID must be an exact HTTPS URL with a non-root path. The JSON
 document at that URL must repeat the same `client_id` byte-for-byte and include
 non-empty `client_name` and `redirect_uris`. Use
-`ExMCP.Authorization.ClientIdMetadata.build_metadata/1` and `validate/2` before
+`Arbor.MCP.Authorization.ClientIdMetadata.build_metadata/1` and `validate/2` before
 publishing it. For `private_key_jwt`, publish `jwks_uri` or inline `jwks` and
-configure the matching private key locally; ExMCP will not downgrade to a
+configure the matching private key locally; Arbor.MCP will not downgrade to a
 weaker token authentication method if assertion construction fails.
 
 DCR requires an explicit `application_type: :native | :web` and stable local
 `redirect_port`. Registration rejections retain the authorization server's
-error response so redirect-policy failures are actionable. ExMCP does not
+error response so redirect-policy failures are actionable. Arbor.MCP does not
 silently change the application type or redirect URI.
 
 ### OAuth metadata network policy
@@ -203,7 +206,7 @@ hostname remains the TLS SNI and certificate-validation name.
 Defaults can be tightened globally:
 
 ```elixir
-config :ex_mcp, :oauth_metadata_fetch,
+config :arbor_mcp, :oauth_metadata_fetch,
   max_redirects: 3,
   max_response_bytes: 262_144,
   max_aggregate_bytes: 524_288,
@@ -242,7 +245,7 @@ provider redirect.
 ### Issuer-bound credential persistence
 
 For MCP `2026-07-28`, pre-registered credentials require
-`credential_issuer`. ExMCP compares this value byte-for-byte with the issuer in
+`credential_issuer`. Arbor.MCP compares this value byte-for-byte with the issuer in
 the discovered authorization-server metadata before resolving or using the
 secret. A trailing slash, path change, or any other textual difference is a
 mismatch; issuer identifiers are not URL-normalized. During 1.x, only the
@@ -252,7 +255,7 @@ always issuer-bound.
 
 Applications that persist DCR registrations or tokens can provide an encrypted
 store or OS-keychain adapter implementing
-`ExMCP.Authorization.CredentialStore`:
+`Arbor.MCP.Authorization.CredentialStore`:
 
 ```elixir
 auth: %{
@@ -267,13 +270,13 @@ auth: %{
 `credential_context` is a stable, non-secret local index (the resource URL is
 the default). The adapter still stores each registration under the exact
 versioned issuer + client-ID key supplied to it. On an authorization-server
-change, the new issuer partition misses and ExMCP performs registration again;
+change, the new issuer partition misses and Arbor.MCP performs registration again;
 an adapter returning a credential from another issuer is rejected.
 
 Tokens are partitioned by issuer, client ID, resource and/or audience,
 subject or client identity, and normalized granted scopes. Access and refresh
 tokens never appear in a storage key, and the credential structs redact secret
-fields from `Inspect`. ExMCP intentionally provides no plaintext file adapter.
+fields from `Inspect`. Arbor.MCP intentionally provides no plaintext file adapter.
 
 Old records without an issuer fail with
 `{:credential_migration_required, :registration | :token}`. After verifying
@@ -284,7 +287,7 @@ issuer as an implicit migration value.
 
 ### OAuth transaction retention
 
-Every authorization-code flow started by ExMCP uses a random 256-bit `state`
+Every authorization-code flow started by Arbor.MCP uses a random 256-bit `state`
 and PKCE verifier. The returned transaction is registered in a supervised,
 node-local single-use store before the authorization URL is returned. Callback
 validation consumes state atomically, and code exchange atomically binds the
@@ -295,7 +298,7 @@ The default store retains up to 10,000 transaction records for 10 minutes. Both
 limits can be adjusted:
 
 ```elixir
-config :ex_mcp, ExMCP.Authorization.OAuthTransactionStore,
+config :arbor_mcp, Arbor.MCP.Authorization.OAuthTransactionStore,
   ttl_ms: 600_000,
   max_entries: 10_000
 ```
@@ -305,17 +308,17 @@ browser. Capacity exhaustion fails new flows closed. The built-in loopback flow
 is intentionally node-local; a distributed web callback must route back to the
 originating node or implement its own strongly consistent end-to-end flow.
 
-For direct use of `ExMCP.Authorization`, preserve the returned transaction and
+For direct use of `Arbor.MCP.Authorization`, preserve the returned transaction and
 pass it through validation and redemption:
 
 ```elixir
 {:ok, authorization_url, transaction} =
-  ExMCP.Authorization.start_authorization_flow(config)
+  Arbor.MCP.Authorization.start_authorization_flow(config)
 
 {:ok, code} =
-  ExMCP.Authorization.validate_authorization_response(callback, transaction)
+  Arbor.MCP.Authorization.validate_authorization_response(callback, transaction)
 
-ExMCP.Authorization.exchange_code_for_token(%{
+Arbor.MCP.Authorization.exchange_code_for_token(%{
   code: code,
   code_verifier: transaction.code_verifier,
   client_id: config.client_id,
@@ -325,7 +328,7 @@ ExMCP.Authorization.exchange_code_for_token(%{
 })
 ```
 
-ExMCP does not accept caller-supplied state or reserved OAuth fields in
+Arbor.MCP does not accept caller-supplied state or reserved OAuth fields in
 `additional_params`. If a token request has an ambiguous outcome, its code
 remains redeemed; restart authorization instead of retrying the code.
 
@@ -336,7 +339,7 @@ and elicitation `requestedSchema` use the **JSON Schema 2020-12** dialect
 (`https://json-schema.org/draft/2020-12/schema`). `$schema` draft identifiers
 are metadata; bundled 2020-12 meta-schemas do not require a network request.
 
-Every JSON Schema compiled or validated by ExMCP passes through one bounded,
+Every JSON Schema compiled or validated by Arbor.MCP passes through one bounded,
 fail-closed policy. By default, only local fragment references (`#` and
 `#/...`) are accepted. HTTP(S), file, and relative cross-document `$ref` values
 are rejected before ExJsonSchema can resolve them, even if the host application
@@ -346,7 +349,7 @@ The defaults are suitable for protocol schemas and can be tightened or raised
 for a trusted application workload:
 
 ```elixir
-config :ex_mcp, :json_schema,
+config :arbor_mcp, :json_schema,
   max_schema_bytes: 262_144,
   max_schema_depth: 64,
   max_subschemas: 1_000,
@@ -373,7 +376,7 @@ increase the outer resolution deadline enough to cover the bounded network
 work:
 
 ```elixir
-config :ex_mcp, :json_schema,
+config :arbor_mcp, :json_schema,
   resolve_timeout_ms: 10_000,
   network_refs: [
     enabled: true,
@@ -406,7 +409,7 @@ containing even one loopback, link-local, private, reserved, or documentation
 address is rejected. URI userinfo, compressed responses, and proxies are
 rejected. No cookies, authorization headers, or other credentials are sent.
 
-Fetched documents exist only inside one compilation; ExMCP does not persist or
+Fetched documents exist only inside one compilation; Arbor.MCP does not persist or
 globally share a remote-schema cache. This is stronger than partitioning a
 persistent cache and prevents one tenant or principal from warming another's
 schema state. `trust_partition` is hashed in audit logs and establishes the
@@ -419,7 +422,7 @@ the boundary safe.
 
 ## OpenTelemetry Metadata Policy
 
-ExMCP can carry W3C trace-context values in the MCP `_meta` object without
+Arbor.MCP can carry W3C trace-context values in the MCP `_meta` object without
 taking a dependency on an OpenTelemetry SDK or mutating process-global tracing
 state. `traceparent` and `tracestate` are validated at every client and server
 metadata boundary. Baggage is validated and bounded before filtering, then only
@@ -427,7 +430,7 @@ explicitly allowlisted members are retained. The default baggage allowlist is
 empty, so baggage is dropped unless the application opts in.
 
 ```elixir
-config :ex_mcp, :otel_meta,
+config :arbor_mcp, :otel_meta,
   baggage_allowlist: ["tenant.id", "request-id"],
   max_total_bytes: 9_216,
   max_baggage_bytes: 8_192,
@@ -437,13 +440,13 @@ config :ex_mcp, :otel_meta,
 The fixed `tracestate` limits are 512 bytes and 32 unique members. Configured
 byte limits cannot exceed 65,536 bytes, and baggage member/allowlist counts
 cannot exceed 64. Invalid configuration or malformed metadata fails closed.
-ExMCP currently accepts the W3C version `00` `traceparent` wire format; values
+Arbor.MCP currently accepts the W3C version `00` `traceparent` wire format; values
 must use lowercase hexadecimal and non-zero trace and parent identifiers.
 
 Attach a connection-level context to all modern client requests:
 
 ```elixir
-ExMCP.Client.start_link(
+Arbor.MCP.Client.start_link(
   transport: :http,
   url: "https://api.example.com/mcp",
   trace_context: %{
@@ -457,7 +460,7 @@ ExMCP.Client.start_link(
 Per-request values may also be supplied in the request's `_meta`; the explicit
 client `:trace_context` wins when both sources contain the same field. On the
 server, handlers receive the sanitized map as
-`ExMCP.Server.RequestContext.trace_context`. Notification and result metadata
+`Arbor.MCP.Server.RequestContext.trace_context`. Notification and result metadata
 go through the same policy.
 
 Allowlist only low-cardinality routing or correlation fields. Do not propagate
@@ -471,11 +474,11 @@ from MCP 2025-11-25. A modern client opts in on every request by adding
 
 ```elixir
 task_capabilities =
-  ExMCP.Tasks.Extension.put_capability(%{
+  Arbor.MCP.Tasks.Extension.put_capability(%{
     "elicitation" => %{"form" => %{}}
   })
 
-ExMCP.Client.start_link(
+Arbor.MCP.Client.start_link(
   transport: :http,
   url: "https://api.example.com/mcp",
   capabilities: task_capabilities
@@ -483,22 +486,22 @@ ExMCP.Client.start_link(
 ```
 
 After a `tools/call` returns `resultType: "task"`, use
-`ExMCP.Client.get_task/3`, `update_task/4`, and `cancel_task/3`. The client
+`Arbor.MCP.Client.get_task/3`, `update_task/4`, and `cancel_task/3`. The client
 rejects task results unless the extension was configured, and validates the
 task handle before returning it to application code.
 
 A server must advertise the same extension from `server/discover` only when it
 has configured an appropriate task store. The bundled node-local store is
-enabled in a Handler with `tasks: :store`; ExMCP then adds the extension to
+enabled in a Handler with `tasks: :store`; Arbor.MCP then adds the extension to
 discovery automatically:
 
 ```elixir
 defmodule MyServer do
-  use ExMCP.Server.Handler, tasks: :store
+  use Arbor.MCP.Server.Handler, tasks: :store
 
-  @impl ExMCP.Server.Handler
+  @impl Arbor.MCP.Server.Handler
   def handle_call_tool("long_deploy", arguments, state) do
-    ExMCP.Tasks.Server.create(
+    Arbor.MCP.Tasks.Server.create(
       "long_deploy",
       arguments,
       state,
@@ -514,28 +517,28 @@ explicitly through `:server_capabilities` or `__server_capabilities__/0` after
 it has implemented equivalent durability and ownership checks.
 
 The injected modern `handle_task_get/2`, `handle_task_update/3`, and
-`handle_task_cancel/2` callbacks use `ExMCP.Tasks`. Existing callbacks remain
+`handle_task_cancel/2` callbacks use `Arbor.MCP.Tasks`. Existing callbacks remain
 overridable, and legacy task methods are unchanged unless the application
-implements them explicitly. `ExMCP.Tasks.Server.create/4` inserts the task
+implements them explicitly. `Arbor.MCP.Tasks.Server.create/4` inserts the task
 synchronously and returns a handle only after `tasks/get` can read it.
 
-`ExMCP.Tasks.Store.ETS` is bounded and atomic on one node. It keeps tasks
+`Arbor.MCP.Tasks.Store.ETS` is bounded and atomic on one node. It keeps tasks
 through client reconnects, client restarts, request-process failures, and
-worker failures, but not an ExMCP application or node restart. Production
+worker failures, but not an Arbor.MCP application or node restart. Production
 deployments that need that stronger guarantee should implement the
-`ExMCP.Tasks.Store` behaviour, supervise the backend in their application, and
+`Arbor.MCP.Tasks.Store` behaviour, supervise the backend in their application, and
 configure it globally or on the Handler:
 
 ```elixir
 # Optional limits for the bundled reference store:
-config :ex_mcp, ExMCP.Tasks.Store.ETS,
+config :arbor_mcp, Arbor.MCP.Tasks.Store.ETS,
   max_tasks: 10_000,
   max_ttl_ms: 2_592_000_000
 
-config :ex_mcp, task_store: MyApp.Tasks.PostgresStore
+config :arbor_mcp, task_store: MyApp.Tasks.PostgresStore
 
 # Or for one server module:
-use ExMCP.Server.Handler,
+use Arbor.MCP.Server.Handler,
   tasks: :store,
   task_store: MyApp.Tasks.PostgresStore,
   task_store_opts: [repo: MyApp.Repo]
@@ -546,14 +549,14 @@ endpoint. Workers running outside a request callback must retain that owner
 without credentials and pass it back explicitly:
 
 ```elixir
-owner = ExMCP.Tasks.owner()
-{:ok, task} = ExMCP.Tasks.complete(task_id, result, owner: owner)
+owner = Arbor.MCP.Tasks.owner()
+{:ok, task} = Arbor.MCP.Tasks.complete(task_id, result, owner: owner)
 ```
 
 Successful creates and wire-visible transitions publish full
 `notifications/tasks` state to matching `subscriptions/listen` streams. A
 deployment using a non-default subscription registry should pass
-`subscription_registry: registry` when a worker calls `ExMCP.Tasks.complete/3`,
+`subscription_registry: registry` when a worker calls `Arbor.MCP.Tasks.complete/3`,
 `fail/3`, `require_input/3`, `mark_cancelled/2`, or `put_status_message/3`.
 Set `notify: false` only when the host application deliberately owns
 publication itself.
@@ -563,7 +566,7 @@ own persistence, atomicity across serving nodes, authorization binding, and
 expiry. Do not advertise the extension when the configured store cannot meet
 the deployment's durability requirements.
 
-`ExMCP.Tasks.Task.to_map/1` retains the legacy 2025-11-25 keys.
+`Arbor.MCP.Tasks.Task.to_map/1` retains the legacy 2025-11-25 keys.
 `to_map/2` with `:modern` or `"2026-07-28"` emits `ttlMs`,
 `pollIntervalMs`, `inputRequests`, and `error` without removing the public 1.x
 struct aliases. `tasks/list`, `tasks/result`, and
@@ -571,11 +574,11 @@ struct aliases. `tasks/list`, `tasks/result`, and
 
 ## Client Configuration
 
-You can pass options directly to `ExMCP.Client.start_link/1`:
+You can pass options directly to `Arbor.MCP.Client.start_link/1`:
 
 ```elixir
 {:ok, client} =
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :http,
     url: "https://api.example.com/mcp",
     protocol_mode: :prefer_modern,
@@ -584,19 +587,19 @@ You can pass options directly to `ExMCP.Client.start_link/1`:
   )
 ```
 
-Or build a reusable config with `ExMCP.ClientConfig`:
+Or build a reusable config with `Arbor.MCP.ClientConfig`:
 
 ```elixir
 config =
-  ExMCP.ClientConfig.new(:production)
-  |> ExMCP.ClientConfig.put_transport(:http, url: "https://api.example.com/mcp")
-  |> ExMCP.ClientConfig.put_auth(:bearer, token: System.fetch_env!("MCP_TOKEN"))
-  |> ExMCP.ClientConfig.put_retry_policy(max_attempts: 3, base_interval: 500)
+  Arbor.MCP.ClientConfig.new(:production)
+  |> Arbor.MCP.ClientConfig.put_transport(:http, url: "https://api.example.com/mcp")
+  |> Arbor.MCP.ClientConfig.put_auth(:bearer, token: System.fetch_env!("MCP_TOKEN"))
+  |> Arbor.MCP.ClientConfig.put_retry_policy(max_attempts: 3, base_interval: 500)
 
-{:ok, client} = ExMCP.connect(config)
+{:ok, client} = Arbor.MCP.connect(config)
 ```
 
-`ExMCP.connect/2` also accepts a URL string, a `{transport, opts}` tuple, or
+`Arbor.MCP.connect/2` also accepts a URL string, a `{transport, opts}` tuple, or
 a list of those specs. Throughout 1.x a list is still accepted, but only the
 first spec is used. Remaining specs are ignored. This is not a failover.
 
@@ -604,7 +607,7 @@ first spec is used. Remaining specs are ignored. This is not a failover.
 
 ```elixir
 {:ok, client} =
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :stdio,
     command: ["node", "server.js"],
     protocol_mode: :prefer_modern,
@@ -627,7 +630,7 @@ Supported options:
 
 The isolated policy passes a small runtime baseline and the explicitly supplied
 `:env` entries. It prevents unrelated API, cloud, and session credentials from
-being inherited by a third-party MCP or ACP subprocess; it does not provide a
+being inherited by a third-party MCP subprocess; it does not provide a
 filesystem or network sandbox.
 
 The command is resolved against the `PATH` the child sees. When the VM runs as
@@ -644,7 +647,7 @@ started in its process group, instead of the one process the port started.
 
 ```elixir
 {:ok, client} =
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :http,
     url: "https://api.example.com/mcp",
     protocol_mode: :prefer_modern,
@@ -694,7 +697,7 @@ Internal destinations require an exact `:allowed_private_hosts` entry;
 link-local, reserved, and mixed public/private answers remain forbidden.
 
 `use_sse` controls the legacy standalone GET stream. It may remain `true` on a
-dual-era client: once `server/discover` succeeds, ExMCP disables that stream,
+dual-era client: once `server/discover` succeeds, Arbor.MCP disables that stream,
 clears legacy session state, and uses JSON or POST-owned SSE for each modern
 request. `subscriptions/listen` opens its own POST response stream.
 
@@ -706,17 +709,17 @@ yourself, so CAs installed on the host, such as a private or corporate CA,
 are trusted automatically.
 
 Loading that store can stall: on macOS it runs `/usr/bin/security`, which can
-hang on the keychain, for example while the session is locked. ExMCP loads it
-with a deadline. If the load stalls, fails, or finds no certificates, ExMCP
+hang on the keychain, for example while the session is locked. Arbor.MCP loads it
+with a deadline. If the load stalls, fails, or finds no certificates, Arbor.MCP
 **fails closed** by default: HTTPS requests return
 `{:error, {:trust_store_unavailable, reason}}` (OAuth requests return their
 usual request error), an error is logged, and a
-`[:ex_mcp, :cacerts, :os_load, :failed]` telemetry event is emitted. The
+`[:arbor_mcp, :cacerts, :os_load, :failed]` telemetry event is emitted. The
 failure is cached briefly so requests fail immediately instead of each waiting
 out the deadline, and the load is retried after that.
 
 ```elixir
-config :ex_mcp, :cacerts,
+config :arbor_mcp, :cacerts,
   # Deadline for loading the OS trust store (default 5_000 ms). Once loaded,
   # the store is cached for the life of the VM.
   os_timeout_ms: 5_000,
@@ -726,7 +729,7 @@ config :ex_mcp, :cacerts,
   # see below before enabling it.
   fallback: :none,
   # With fallback: :castore, how often to retry the OS store in the background
-  # (default 5 min). ExMCP switches back as soon as it loads.
+  # (default 5 min). Arbor.MCP switches back as soon as it loads.
   refresh_interval_ms: 300_000
 ```
 
@@ -755,14 +758,14 @@ castore_certs =
       do: der
 
 # The HTTP transport:
-ExMCP.Client.start_link(
+Arbor.MCP.Client.start_link(
   transport: :http,
   url: "https://api.example.com/mcp",
   security: %{tls: %{cacerts: castore_certs}}
 )
 
 # The OAuth HTTP boundary (metadata, token, and registration requests):
-config :ex_mcp, :oauth_http, cacerts: castore_certs
+config :arbor_mcp, :oauth_http, cacerts: castore_certs
 ```
 
 A fixed bundle does not change when the OS store is updated, so a distrusted
@@ -775,7 +778,7 @@ same trust set on every host.
 {:ok, server} = MyServer.start_link(transport: :beam)  # works when using DSL; otherwise use HandlerServer.start_link(handler: MyServer, ...)
 
 {:ok, client} =
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :beam,
     server: server,
     timeout: 5_000
@@ -795,9 +798,9 @@ MyServer.start_link(transport: :stdio, protocol_mode: :prefer_legacy)
 MyServer.start_link(transport: :http, port: 4000, protocol_mode: :prefer_legacy)
 
 # For a raw handler module (no DSL):
-ExMCP.Server.HandlerServer.start_link(handler: MyHandler, transport: :beam)
+Arbor.MCP.Server.HandlerServer.start_link(handler: MyHandler, transport: :beam)
 # or the convenience:
-ExMCP.start_server(handler: MyHandler, transport: :stdio)
+Arbor.MCP.start_server(handler: MyHandler, transport: :stdio)
 ```
 
 `HandlerServer`-based BEAM/test servers and stdio servers retain request IDs for
@@ -806,10 +809,10 @@ JSON-RPC request ID twice. The retained set is bounded to 10,000 IDs by
 default; set `max_request_ids: positive_integer` on server startup to choose a
 deployment-specific fail-closed bound.
 
-Phoenix/Plug applications usually mount `ExMCP.HttpPlug`:
+Phoenix/Plug applications usually mount `Arbor.MCP.HttpPlug`:
 
 ```elixir
-forward "/mcp", ExMCP.HttpPlug,
+forward "/mcp", Arbor.MCP.HttpPlug,
   handler: MyApp.MCPServer,
   server_info: %{name: "my-app", version: "1.0.0"},
   protocol_mode: :prefer_legacy,
@@ -818,26 +821,26 @@ forward "/mcp", ExMCP.HttpPlug,
 ```
 
 `:handler_call_timeout` is the server-side deadline for each call from
-`ExMCP.HttpPlug` into the Handler process (default `10_000` milliseconds).
+`Arbor.MCP.HttpPlug` into the Handler process (default `10_000` milliseconds).
 It is separate from client-side `:timeout`, `:request_timeout`,
 `:stream_handshake_timeout`, and `:stream_idle_timeout` settings.
 
 The MCP 2024-11-05 HTTP+SSE transport is deprecated and disabled by default.
-Existing servers may retain it during ExMCP 1.x with
+Existing servers may retain it during Arbor.MCP 1.x with
 `legacy_http_sse: true`. `sse_enabled: true` remains an rc.5-compatible alias
-until ExMCP 2.0. Optional `legacy_http_sse_path` and
+until Arbor.MCP 2.0. Optional `legacy_http_sse_path` and
 `legacy_http_sse_post_path` settings default to `/sse` and `/message`.
 Neither dual-era preference mode enables this transport. `:modern_only`
 disables it even when the compatibility option or its rc.5 alias is present.
 
 ### OAuth protected-resource metadata
 
-When `oauth_enabled: true`, `ExMCP.HttpPlug` requires the canonical HTTPS
+When `oauth_enabled: true`, `Arbor.MCP.HttpPlug` requires the canonical HTTPS
 resource identifier and at least one HTTPS authorization-server issuer. Mount
 the plug so the RFC 9728 path-specific metadata URL is reachable:
 
 ```elixir
-forward "/", ExMCP.HttpPlug,
+forward "/", Arbor.MCP.HttpPlug,
   endpoint: "/mcp",
   handler: MyApp.MCPServer,
   oauth_enabled: true,
@@ -860,10 +863,10 @@ invalid policies are denied rather than sharing a catch-all scope.
 Legacy session storage is bounded to 10,000 active sessions by default. Each
 session also retains at most 10,000 distinct request IDs, preventing duplicate
 execution without allowing unbounded replay state. Set deployment-specific
-limits when supervising `ExMCP.SessionManager` directly:
+limits when supervising `Arbor.MCP.SessionManager` directly:
 
 ```elixir
-{ExMCP.SessionManager,
+{Arbor.MCP.SessionManager,
  max_sessions: 2_000,
  max_request_ids: 5_000,
  max_events_per_session: 500,
@@ -901,7 +904,7 @@ declare `mrtr: true` so server startup validates it:
 # runtime.exs — load the secret from your runtime secret manager/environment.
 key = System.fetch_env!("MCP_REQUEST_STATE_KEY") |> Base.decode64!()
 
-config :ex_mcp, :request_state,
+config :arbor_mcp, :request_state,
   active_key_id: "2026-08",
   keys: %{"2026-08" => key},
   ttl_seconds: 300,
@@ -934,8 +937,8 @@ ToolResult.input_required(input_requests, %{"workflowStep" => 1})
 ```
 
 On the retry, unchanged callback arities read verified data from
-`ExMCP.Server.Context.input_responses/0` and
-`ExMCP.Server.Context.request_state/0`. Application request state must be JSON
+`Arbor.MCP.Server.Context.input_responses/0` and
+`Arbor.MCP.Server.Context.request_state/0`. Application request state must be JSON
 encodable and is size-bounded before encryption.
 
 Client operation options default to 8 rounds, 16 input requests per round, and
@@ -947,7 +950,7 @@ Input callbacks run sequentially in deterministic request-ID order by default.
 A stateless client handler can explicitly opt into bounded parallel dispatch by
 implementing `mrtr_input_concurrency/0` and returning an integer from 2 through
 16. Every parallel callback receives the same handler state and must return it
-unchanged; ExMCP rejects a parallel callback that attempts to update the state.
+unchanged; Arbor.MCP rejects a parallel callback that attempts to update the state.
 
 For resumptions that may cause side effects, enable atomic single-use
 enforcement:
@@ -955,13 +958,13 @@ enforcement:
 ```elixir
 MyServer.start_link(
   mrtr: true,
-  replay_cache: ExMCP.Server.ReplayCache.ETS,
+  replay_cache: Arbor.MCP.Server.ReplayCache.ETS,
   require_replay_protection: true
 )
 ```
 
 The bundled cache is node-local. Clustered deployments must implement
-`ExMCP.Server.ReplayCache` over a shared, strongly consistent store. Without a
+`Arbor.MCP.Server.ReplayCache` over a shared, strongly consistent store. Without a
 replay cache, verified retry context explicitly reports
 `delivery_semantics: :at_least_once`.
 
@@ -972,13 +975,13 @@ state without embedding bearer tokens.
 
 ## Modern subscriptions (MCP 2026-07-28)
 
-Open an immutable notification stream with `ExMCP.Client.listen/3`. The call
+Open an immutable notification stream with `Arbor.MCP.Client.listen/3`. The call
 returns only after `notifications/subscriptions/acknowledged`; events are sent
 to the subscribing process with the acknowledged subscription reference:
 
 ```elixir
 {:ok, subscription} =
-  ExMCP.Client.listen(client, %{
+  Arbor.MCP.Client.listen(client, %{
     "toolsListChanged" => true,
     "resourceSubscriptions" => ["file:///project/config.json"],
     "taskIds" => [task_id]
@@ -989,7 +992,7 @@ receive do
     handle_notification(method, params)
 end
 
-:ok = ExMCP.Client.Subscription.cancel(subscription)
+:ok = Arbor.MCP.Client.Subscription.cancel(subscription)
 ```
 
 `taskIds` is defined by the `io.modelcontextprotocol/tasks` extension. The
@@ -1008,27 +1011,27 @@ replacement stream before cancelling the old stream; only the committed
 subscription ID delivers compatibility events:
 
 ```elixir
-{:ok, _subscription} = ExMCP.Client.subscribe_resource(client, uri)
+{:ok, _subscription} = Arbor.MCP.Client.subscribe_resource(client, uri)
 
 receive do
   {:ex_mcp_resource_updated, ^uri, params} -> handle_update(params)
 end
 
-{:ok, _result} = ExMCP.Client.unsubscribe_resource(client, uri)
+{:ok, _result} = Arbor.MCP.Client.unsubscribe_resource(client, uri)
 ```
 
 `unsubscribe_resource/3` sends `resources/unsubscribe` (legacy) or drops the
 URI from the ref-counted modern set. Implement
-`c:ExMCP.Server.Handler.handle_unsubscribe_resource/2` on a raw handler.
+`c:Arbor.MCP.Server.Handler.handle_unsubscribe_resource/2` on a raw handler.
 
 ### List-changed notifications
 
 Listen for catalog changes, then refetch. The server publishes with the
-matching `ExMCP.Server.notify_tools_changed/1`, `ExMCP.Server.notify_resources_changed/1`, or `ExMCP.Server.notify_prompts_changed/1` helper:
+matching `Arbor.MCP.Server.notify_tools_changed/1`, `Arbor.MCP.Server.notify_resources_changed/1`, or `Arbor.MCP.Server.notify_prompts_changed/1` helper:
 
 ```elixir
 {:ok, subscription} =
-  ExMCP.Client.listen(client, %{
+  Arbor.MCP.Client.listen(client, %{
     "resourcesListChanged" => true,
     "promptsListChanged" => true,
     "toolsListChanged" => true
@@ -1036,21 +1039,21 @@ matching `ExMCP.Server.notify_tools_changed/1`, `ExMCP.Server.notify_resources_c
 
 receive do
   {:ex_mcp_subscription, ^subscription, "notifications/resources/list_changed", _params} ->
-    {:ok, resources} = ExMCP.Client.list_resources(client)
+    {:ok, resources} = Arbor.MCP.Client.list_resources(client)
 
   {:ex_mcp_subscription, ^subscription, "notifications/prompts/list_changed", _params} ->
-    {:ok, prompts} = ExMCP.Client.list_prompts(client)
+    {:ok, prompts} = Arbor.MCP.Client.list_prompts(client)
 
   {:ex_mcp_subscription, ^subscription, "notifications/tools/list_changed", _params} ->
-    {:ok, tools} = ExMCP.Client.list_tools(client)
+    {:ok, tools} = Arbor.MCP.Client.list_tools(client)
 end
 
-:ok = ExMCP.Server.notify_resources_changed(server)
-:ok = ExMCP.Server.notify_prompts_changed(server)
-:ok = ExMCP.Server.notify_tools_changed(server)
+:ok = Arbor.MCP.Server.notify_resources_changed(server)
+:ok = Arbor.MCP.Server.notify_prompts_changed(server)
+:ok = Arbor.MCP.Server.notify_tools_changed(server)
 ```
 
-After reconnect, subscriptions are opened with fresh JSON-RPC IDs. ExMCP
+After reconnect, subscriptions are opened with fresh JSON-RPC IDs. Arbor.MCP
 refetches each affected list, resource, and task, then emits
 `{:ex_mcp_subscription_resync, subscription, {:complete, snapshot}}` for a
 generic subscription or `{:ex_mcp_resource_resync, subscription, snapshot}`
@@ -1075,10 +1078,10 @@ application's PubSub process and route every MCP server on that node to it:
 ```elixir
 children = [
   {Phoenix.PubSub, name: MyApp.PubSub},
-  {ExMCP.Server.Subscriptions,
+  {Arbor.MCP.Server.Subscriptions,
    name: MyApp.MCPSubscriptions,
    adapter:
-     {ExMCP.Server.Subscriptions.PubSub,
+     {Arbor.MCP.Server.Subscriptions.PubSub,
       pubsub_server: MyApp.PubSub,
       topic: "my_app:mcp:subscriptions:v1"}},
   {MyApp.MCPServer,
@@ -1086,7 +1089,7 @@ children = [
 ]
 ```
 
-`ExMCP.Server.Subscriptions.PubSub` has no hard Phoenix dependency. Its
+`Arbor.MCP.Server.Subscriptions.PubSub` has no hard Phoenix dependency. Its
 `:pubsub_module` defaults to `Phoenix.PubSub` and may be replaced by any module
 implementing `subscribe/2` and `broadcast_from/4`. Registrations and listener
 processes stay node-local; untargeted publications fan out and each receiving
@@ -1102,7 +1105,7 @@ the current registry; use the shared store for reservation/accounting rather
 than attempting to call remote listener PIDs as local registrations.
 
 Over modern Streamable HTTP, each `subscriptions/listen` call is a dedicated
-POST response stream. Cancelling `ExMCP.Client.Subscription` closes that HTTP
+POST response stream. Cancelling `Arbor.MCP.Client.Subscription` closes that HTTP
 response; it does not POST `notifications/cancelled`. An unexpected response
 close opens a new listen request with a fresh JSON-RPC ID and runs the resync
 flow described above. The server sends an SSE comment keepalive every 15
@@ -1110,7 +1113,7 @@ seconds by default so quiet disconnects are detected and intermediaries do not
 expire an otherwise healthy stream:
 
 ```elixir
-forward "/mcp", ExMCP.HttpPlug,
+forward "/mcp", Arbor.MCP.HttpPlug,
   handler: MyApp.MCPServer,
   protocol_mode: :modern_only,
   subscription_keepalive_interval_ms: 15_000,
@@ -1126,27 +1129,27 @@ until the next notification or server-initiated closure.
 Legacy peers deliver `notifications/tools/list_changed`,
 `notifications/prompts/list_changed`, `notifications/resources/list_changed`,
 and `notifications/resources/updated` on the connection itself, with nothing
-that correlates them to a request. `ExMCP.Client.subscribe_notifications/3`
+that correlates them to a request. `Arbor.MCP.Client.subscribe_notifications/3`
 registers a local filter for those notifications and delivers each match to
 the subscriber process. It accepts the same filter keys as `listen/3`, minus
 `taskIds`:
 
 ```elixir
 {:ok, listener} =
-  ExMCP.Client.subscribe_notifications(client, %{
+  Arbor.MCP.Client.subscribe_notifications(client, %{
     "toolsListChanged" => true,
     "resourceSubscriptions" => ["file:///project/config.json"]
   })
 
 receive do
   {:ex_mcp_notification, ^listener, "notifications/tools/list_changed", _params} ->
-    {:ok, tools} = ExMCP.Client.list_tools(client)
+    {:ok, tools} = Arbor.MCP.Client.list_tools(client)
 
   {:ex_mcp_notification, ^listener, "notifications/resources/updated", %{"uri" => uri}} ->
-    {:ok, content} = ExMCP.Client.read_resource(client, uri)
+    {:ok, content} = Arbor.MCP.Client.read_resource(client, uri)
 end
 
-:ok = ExMCP.Client.unsubscribe_notifications(listener)
+:ok = Arbor.MCP.Client.unsubscribe_notifications(listener)
 ```
 
 This is a local listener, not a server-acknowledged subscription. The client
@@ -1163,7 +1166,7 @@ re-sends `resources/subscribe` for every listened URI and sends
 `{:ex_mcp_notification_reconnected, listener, %{resubscribed: uris, failed: [{uri, reason}]}}`.
 When the client gives up reconnecting, disconnects, or stops, each subscriber
 receives `{:ex_mcp_notification_closed, listener, reason}`. The full message
-and lifecycle contract is in `ExMCP.Client.NotificationListener`.
+and lifecycle contract is in `Arbor.MCP.Client.NotificationListener`.
 
 ## Completions
 
@@ -1174,7 +1177,7 @@ that same map as its first argument.
 ```elixir
 # Prompt argument
 {:ok, result} =
-  ExMCP.Client.complete(
+  Arbor.MCP.Client.complete(
     client,
     %{"type" => "ref/prompt", "name" => "code_review"},
     %{"name" => "language", "value" => "el"}
@@ -1182,7 +1185,7 @@ that same map as its first argument.
 
 # Resource template argument
 {:ok, result} =
-  ExMCP.Client.complete(
+  Arbor.MCP.Client.complete(
     client,
     %{"type" => "ref/resource", "uri" => "file:///"},
     %{"name" => "path", "value" => "/src"}
@@ -1239,7 +1242,7 @@ or unsupported annotations cause the server to omit that tool from a modern
 list response. On a `-32020` header mismatch the client refreshes `tools/list`
 and retries the tool call exactly once inside the original timeout.
 
-The ExMCP DSL returns its complete tool set and therefore needs no cursor
+The Arbor.MCP DSL returns its complete tool set and therefore needs no cursor
 coordination. A raw handler that paginates a dynamic tool set must filter and
 sort the full source collection before it slices the requested page:
 
@@ -1247,7 +1250,7 @@ sort the full source collection before it slices the requested page:
 def handle_list_tools(cursor, state) do
   tools =
     state.dynamic_tools
-    |> ExMCP.Server.ResultNormalizer.prepare_tools_list()
+    |> Arbor.MCP.Server.ResultNormalizer.prepare_tools_list()
 
   {page, next_cursor} = MyApp.Cursor.page(tools, cursor)
   {:ok, page, next_cursor, state}
@@ -1263,11 +1266,11 @@ tool dispatch. Custom raw `Mcp-Method`, `Mcp-Name`, `Mcp-Session-Id`,
 `:headers` option are removed and replaced by protocol-derived values on
 modern requests.
 
-Treat all `Mcp-Param-*` values as sensitive routing data. ExMCP does not attach
+Treat all `Mcp-Param-*` values as sensitive routing data. Arbor.MCP does not attach
 raw request headers to its Plug/client debug logs or telemetry. Configure
 reverse proxies, load balancers, APM agents, and access-log middleware to
 redact `Mcp-Param-*` just as they redact `Authorization` and cookies; those
-systems observe headers before ExMCP can sanitize their logs.
+systems observe headers before Arbor.MCP can sanitize their logs.
 
 At a reverse proxy or load balancer, preserve individual request-header field
 instances through the upstream hop or reject duplicates at the edge. Do not
@@ -1289,7 +1292,7 @@ Envoy, ingress, or managed load-balancer configuration used in production.
 
 MCP 2026-07-28 requires `ttlMs` and `cacheScope` on complete results from
 `server/discover`, `tools/list`, `prompts/list`, `resources/list`,
-`resources/templates/list`, and `resources/read`. ExMCP supplies conservative
+`resources/templates/list`, and `resources/read`. Arbor.MCP supplies conservative
 defaults when a handler omits them:
 
 ```elixir
@@ -1305,11 +1308,11 @@ wire keys `ttlMs` / `cacheScope` to override those defaults. TTL must be a
 non-negative integer and scope must be `:public`, `:private`, `"public"`, or
 `"private"`. Only use `public` when the result is safe to share across users,
 including on authenticated endpoints. Each paginated response page carries
-its own hints, and ExMCP removes cache hints from `input_required` results.
+its own hints, and Arbor.MCP removes cache hints from `input_required` results.
 
 Modern clients reject missing or invalid required hints. With the default
 `:struct` response format they are available as `response.ttlMs` and
-`response.cacheScope`; `format: :map` preserves the wire keys. ExMCP currently
+`response.cacheScope`; `format: :map` preserves the wire keys. Arbor.MCP currently
 parses and validates these hints but does not store or reuse responses. This
 is the deliberate 1.0 scope: a client cache would add authorization
 partitioning, invalidation races, memory bounds, and MRTR exclusion to the
@@ -1323,7 +1326,7 @@ function called with the `Plug.Conn` and decoded JSON-RPC request, or an MFA
 tuple called as `apply(module, function, [conn, request | extra_args])`.
 
 ```elixir
-forward "/mcp", ExMCP.HttpPlug,
+forward "/mcp", Arbor.MCP.HttpPlug,
   handler: MyApp.MCPServer,
   handler_opts: fn conn ->
     [current_user: conn.assigns[:current_user]]
@@ -1336,7 +1339,7 @@ forward "/mcp", ExMCP.HttpPlug,
 Retries:
 
 ```elixir
-  ExMCP.Client.start_link(
+  Arbor.MCP.Client.start_link(
     transport: :http,
     url: "https://api.example.com/mcp",
   retry_policy: [max_attempts: 3, initial_delay: 100, max_delay: 2_000]
@@ -1346,7 +1349,7 @@ Retries:
 Circuit breaker and health checks:
 
 ```elixir
-ExMCP.Client.start_link(
+Arbor.MCP.Client.start_link(
   transport: :http,
   url: "https://api.example.com/mcp",
   reliability: [
@@ -1363,7 +1366,7 @@ ExMCP.Client.start_link(
 The MCP 2026-07-28 migration emits bounded operational events for era
 selection, fallback and downgrade observations; unsupported-version retries;
 MRTR rounds, failures and replay rejection; subscription reconnect and queue
-pressure; and ambiguous HTTP reissue. See `ExMCP.Telemetry` for the event list
+pressure; and ambiguous HTTP reissue. See `Arbor.MCP.Telemetry` for the event list
 and exact metadata shapes. Client response-cache hit/miss events are absent in
 1.0 because response storage/reuse is deliberately deferred.
 
@@ -1390,12 +1393,12 @@ custom telemetry handlers and exporters.
 This section configures application/runtime logging. The MCP wire-level Logging
 feature (`logging/setLevel`, per-request log levels, and
 `notifications/message`) is deprecated as of MCP 2026-07-28 but remains
-available throughout ExMCP 1.x. New observability integrations should use
+available throughout Arbor.MCP 1.x. New observability integrations should use
 stderr for stdio diagnostics or OpenTelemetry for structured telemetry.
 
 For stdio servers, stdout must contain only JSON-RPC messages. When stdio
-mode starts, ExMCP mutates VM-global Logger, Application, and OTP logger
-behavior (sets the primary level to `:emergency` and `:ex_mcp`
+mode starts, Arbor.MCP mutates VM-global Logger, Application, and OTP logger
+behavior (sets the primary level to `:emergency` and `:arbor_mcp`
 `:stdio_mode`). This is process-wide
 for the BEAM VM, not scoped to the stdio connection: other applications
 and OTP processes in the same VM lose normal logging. 1.x keeps this
@@ -1404,18 +1407,18 @@ global behavior; 2.0 may replace it.
 That suppression starts when the stdio transport starts, which in a release
 is after every application has already booted. The default Elixir logger
 writes to stdout, so anything logged at `info` or above during boot lands
-in the protocol stream before the first frame. ExMCP's own boot logs are at
+in the protocol stream before the first frame. Arbor.MCP's own boot logs are at
 `debug` for this reason. For a stdio deployment, configure both of the
 following at compile time so the window is closed before boot:
 
 ```elixir
 # config/runtime.exs or config/config.exs
-config :ex_mcp, stdio_mode: true
+config :arbor_mcp, stdio_mode: true
 
 config :logger, :default_handler, config: [type: :standard_error]
 ```
 
-The first suppresses logging from the moment the `:ex_mcp` application
+The first suppresses logging from the moment the `:arbor_mcp` application
 starts. The second moves the default handler to stderr, where MCP hosts
 expect server diagnostics, so anything that still logs, from any
 application in the VM, cannot reach stdout. Together they make the boot
@@ -1444,7 +1447,7 @@ Logger.configure(level: :debug)
 HTTP clients can use headers:
 
 ```elixir
-ExMCP.Client.start_link(
+Arbor.MCP.Client.start_link(
   transport: :http,
   url: "https://api.example.com/mcp",
   headers: [{"Authorization", "Bearer #{token}"}]
@@ -1452,4 +1455,4 @@ ExMCP.Client.start_link(
 ```
 
 For server-side HTTP concerns, compose Plug/Phoenix pipelines before
-`ExMCP.HttpPlug`.
+`Arbor.MCP.HttpPlug`.

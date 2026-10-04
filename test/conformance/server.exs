@@ -1,4 +1,4 @@
-# ExMCP Conformance Test Server
+# Arbor.MCP Conformance Test Server
 #
 # Implements the "everything server" for MCP conformance testing.
 # Uses library infrastructure (HttpPlug, SSESession, DnsRebinding).
@@ -7,7 +7,7 @@
 # Start with: elixir test/conformance/server.exs [port]
 # Then run:   npx @modelcontextprotocol/conformance server --url http://localhost:PORT/mcp
 
-Mix.install([{:ex_mcp, path: "."}, {:plug_cowboy, "~> 2.7"}, {:jason, "~> 1.4"}])
+Mix.install([{:arbor_mcp, path: "."}, {:plug_cowboy, "~> 2.7"}, {:jason, "~> 1.4"}])
 
 # ── Test Data ────────────────────────────────────────────────────
 
@@ -25,9 +25,9 @@ Application.put_env(:conformance, :test_audio, test_audio)
 # ── Handler (tools, resources, prompts) ──────────────────────────
 
 defmodule ConformanceHandler do
-  use ExMCP.Server.Handler
+  use Arbor.MCP.Server.Handler
 
-  alias ExMCP.Server.Context
+  alias Arbor.MCP.Server.Context
 
   @json_schema_uri "https://json-schema.org/draft/2020-12/schema"
 
@@ -279,7 +279,7 @@ defmodule ConformanceHandler do
     do: {:ok, [%{type: "text", text: value}], state}
 
   def handle_call_tool("test_missing_capability", _args, state) do
-    {:error, ExMCP.Error.missing_required_client_capability(%{"sampling" => %{}}), state}
+    {:error, Arbor.MCP.Error.missing_required_client_capability(%{"sampling" => %{}}), state}
   end
 
   def handle_call_tool("test_input_required_result_elicitation", _args, state) do
@@ -508,8 +508,8 @@ defmodule ConformanceHandler do
 
   def handle_read_resource(uri, state) do
     error =
-      ExMCP.Error.protocol_error(
-        ExMCP.Protocol.ErrorCodes.resource_not_found("2026-07-28"),
+      Arbor.MCP.Error.protocol_error(
+        Arbor.MCP.Protocol.ErrorCodes.resource_not_found("2026-07-28"),
         "Resource not found",
         %{"uri" => uri}
       )
@@ -728,15 +728,15 @@ defmodule ConformanceRouter do
   import Plug.Conn
   require Logger
 
-  alias ExMCP.Plugs.DnsRebinding
-  alias ExMCP.Server.SSESession
+  alias Arbor.MCP.Plugs.DnsRebinding
+  alias Arbor.MCP.Server.SSESession
 
   @sse_tools ~w(test_tool_with_logging test_tool_with_progress test_sampling test_elicitation test_elicitation_sep1034_defaults test_elicitation_sep1330_enums)
 
   # allowed_origins :any — this is a localhost-only conformance fixture; the
   # DnsRebinding plug above already pins the Host header to localhost names,
   # and HttpPlug no longer has a same-origin Origin fallback.
-  @mcp_opts ExMCP.HttpPlug.init(
+  @mcp_opts Arbor.MCP.HttpPlug.init(
               handler: ConformanceHandler,
               server_info: %{name: "mcp-conformance-test-server", version: "1.0.0"},
               protocol_mode: :prefer_modern,
@@ -763,7 +763,7 @@ defmodule ConformanceRouter do
 
   defp route(%{method: "POST"} = conn) do
     if modern_request?(conn) do
-      ExMCP.HttpPlug.call(conn, @mcp_opts)
+      Arbor.MCP.HttpPlug.call(conn, @mcp_opts)
     else
       route_legacy_post(conn)
     end
@@ -792,7 +792,7 @@ defmodule ConformanceRouter do
 
   defp modern_request?(conn) do
     case get_req_header(conn, "mcp-protocol-version") do
-      [version] -> version == "2026-07-28" or version not in ExMCP.supported_versions()
+      [version] -> version == "2026-07-28" or version not in Arbor.MCP.supported_versions()
       _other -> false
     end
   end
@@ -810,20 +810,20 @@ defmodule ConformanceRouter do
       |> send_chunked(200)
       |> then(&SSESession.run_sse_loop(&1, sid))
     else
-      ExMCP.HttpPlug.call(conn, @mcp_opts)
+      Arbor.MCP.HttpPlug.call(conn, @mcp_opts)
     end
   end
 
-  defp route(conn), do: ExMCP.HttpPlug.call(conn, @mcp_opts)
+  defp route(conn), do: Arbor.MCP.HttpPlug.call(conn, @mcp_opts)
 
   defp handle_normal_post(conn, body) do
     case Jason.decode(body) do
       {:ok, request} ->
         sid = session_id(conn)
-        mcp_conn = ExMCP.MessageProcessor.new(request, transport: :http)
+        mcp_conn = Arbor.MCP.MessageProcessor.new(request, transport: :http)
 
         processed =
-          ExMCP.MessageProcessor.process(mcp_conn, %{
+          Arbor.MCP.MessageProcessor.process(mcp_conn, %{
             handler: ConformanceHandler,
             server_info: %{name: "mcp-conformance-test-server", version: "1.0.0"}
           })
@@ -1180,12 +1180,12 @@ end
 # ── Start Server ─────────────────────────────────────────────────
 
 port = String.to_integer(List.first(System.argv(), "3001"))
-IO.puts("Starting ExMCP conformance server on port #{port}...")
+IO.puts("Starting Arbor.MCP conformance server on port #{port}...")
 
 # Create the SSE session table once, owned by this long-lived script process.
 # Creating it lazily from request processes raced concurrent first requests
 # (server-sse-multiple-streams) and tied the table's life to a single request.
-ExMCP.Server.SSESession.init()
+Arbor.MCP.Server.SSESession.init()
 
 children = [{Plug.Cowboy, scheme: :http, plug: ConformanceRouter, options: [port: port]}]
 {:ok, _} = Supervisor.start_link(children, strategy: :one_for_one)

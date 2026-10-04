@@ -1,4 +1,4 @@
-# Getting Started With ExMCP
+# Getting Started With Arbor.MCP
 
 Start with:
 
@@ -6,24 +6,26 @@ Start with:
 - [MIGRATION.md](MIGRATION.md) for breaking changes between versions
 - [USER_GUIDE.md](../guides/USER_GUIDE.md) for the full MCP API
 
-ExMCP supports MCP clients and servers over stdio, Streamable HTTP, and BEAM-local
-transports, plus ACP controllers and agents.
+Arbor.MCP supports MCP clients and servers over stdio, Streamable HTTP, and BEAM-local
+transports. ACP controllers, agents and optional vendor adapters live in
+[ArborACP](https://github.com/trust-arbor/arbor_acp).
 
 MCP `2026-07-28` is the latest stable revision and is available through
-`:prefer_modern` and `:modern_only` in `1.0.0`. Stable 1.0 defaults to
-`:prefer_modern`; set `:legacy_only` to preserve the
+`:prefer_modern` and `:modern_only`. The version 2 split is under development;
+these examples are being qualified with the new server runtime. New connections
+default to `:prefer_modern`; set `:legacy_only` to preserve the
 legacy protocol era (not an exact rc.5 package rollback). See the
 [Configuration Guide](../CONFIGURATION.md#protocol-eras-and-modes) before
 deploying.
 
 ## Current Server Shape
 
-Use `ExMCP.Server.Handler` directly, optionally with the server DSL:
+Use `Arbor.MCP.Server.Handler` directly, optionally with the server DSL:
 
 ```elixir
 defmodule MyServer do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL, name: "my-server", version: "1.0.0"
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, name: "my-server", version: "1.0.0"
 
   tool "echo", "Echoes text" do
     param :message, :string, required: true
@@ -39,6 +41,6 @@ end
 - `:beam` for local client/server processes in the same BEAM VM
 - `:test` for in-memory tests
 
-The old `ExMCP.Native` direct dispatcher and public `:native` transport alias
+The old `Arbor.MCP.Native` direct dispatcher and public `:native` transport alias
 were removed before 1.0. Use `transport: :beam` with a server pid for BEAM-local
 MCP.

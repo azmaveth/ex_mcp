@@ -1,8 +1,10 @@
-# ExMCP Examples
+# Arbor.MCP Examples
 
-This directory contains runnable examples for the current ExMCP API.
+This directory contains MCP examples being migrated for version 2. Runtime and HTTP listener integration must pass the release checks before these examples are qualified for 2.0.
 
-**Note on first runs:** The self-contained `.exs` files (e.g. `elixir examples/basic_dsl_server.exs`) perform a `Mix.install/1` of the local `ex_mcp` on every invocation. This can take 30s–3+ minutes on a cold cache (subsequent runs are much faster). For the quickest "brand new user" experience, start with the utilities or the `demo_client.exs` (which orchestrates the getting-started servers).
+Set `ARBOR_RPC_PATH` to your shared RPC checkout while developing the unpublished split; the examples use the local MCP project through `Mix.install/1`.
+
+**Note on first runs:** The self-contained `.exs` files (e.g. `elixir examples/basic_dsl_server.exs`) perform a `Mix.install/1` of the local `arbor_mcp` on every invocation. This can take 30s–3+ minutes on a cold cache (subsequent runs are much faster). For the quickest "brand new user" experience, start with the utilities or the `demo_client.exs` (which orchestrates the getting-started servers).
 
 Fast alias (recommended for repo developers after `mix compile`):
 
@@ -30,8 +32,8 @@ cd examples/getting_started
 All server examples use:
 
 ```elixir
-use ExMCP.Server.Handler
-use ExMCP.Server.DSL, name: "my-server", version: "1.0.0"
+use Arbor.MCP.Server.Handler
+use Arbor.MCP.Server.DSL, name: "my-server", version: "1.0.0"
 ```
 
 - `basic_dsl_server.exs` - minimal tool, resource, and prompt
@@ -61,14 +63,7 @@ elixir examples/basic_client.exs
 
 ## ACP Examples
 
-- `acp/echo_agent.exs` - native Elixir ACP agent over stdio
-- `acp/controller.exs` - ACP controller that starts the agent and streams a prompt result
-
-```bash
-mix run examples/acp/controller.exs
-```
-
-(This one often runs well under `mix run` because the agent script handles its own setup.)
+ACP examples live in [ArborACP](https://github.com/trust-arbor/arbor_acp). This checkout contains only MCP examples.
 
 ## OAuth And Utility Examples
 

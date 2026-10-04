@@ -1,16 +1,21 @@
 # Phoenix Integration Guide
 
-ExMCP provides seamless integration with Phoenix applications through the `ExMCP.HttpPlug` module, which implements the standard Plug behavior. This allows you to easily add MCP (Model Context Protocol) server capabilities to your existing Phoenix applications.
+Arbor.MCP provides seamless integration with Phoenix applications through the `Arbor.MCP.HttpPlug` module, which implements the standard Plug behavior. This allows you to easily add MCP (Model Context Protocol) server capabilities to your existing Phoenix applications.
 
 ## Quick Setup
 
-### 1. Add ExMCP to Your Phoenix Project
+### 1. Add Arbor.MCP to Your Phoenix Project
+
+Version 2 is under development. Use a local checkout until the package is
+published, and set `ARBOR_RPC_PATH=/absolute/path/to/arbor_rpc` when fetching its
+unpublished shared dependency. The released 1.x package remains `ex_mcp`.
+Runtime mounting examples are being qualified alongside v2 transport integration.
 
 ```elixir
 # In mix.exs
 defp deps do
   [
-    {:ex_mcp, "~> 1.0"},
+    {:arbor_mcp, path: "../arbor_mcp"},
     # ... your other dependencies
   ]
 end
@@ -27,8 +32,8 @@ Raw callbacks are also supported when you need fully dynamic behavior.
 ```elixir
 # lib/my_app/mcp_handler.ex
 defmodule MyApp.MCPHandler do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL, name: "my-phoenix-app", version: "1.0.0"
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, name: "my-phoenix-app", version: "1.0.0"
 
   tool "get_user_count", "Get the total number of registered users" do
     run fn _args, state ->
@@ -62,7 +67,7 @@ Use this style only when you need completely dynamic tool/resource lists.
 ```elixir
 # lib/my_app/mcp_handler.ex
 defmodule MyApp.MCPHandler do
-  use ExMCP.Server.Handler
+  use Arbor.MCP.Server.Handler
 
   @impl true
   def init(_args), do: {:ok, %{}}
@@ -71,7 +76,7 @@ defmodule MyApp.MCPHandler do
   def handle_initialize(_params, state) do
     {:ok,
      %{
-       protocolVersion: ExMCP.protocol_version(),
+       protocolVersion: Arbor.MCP.protocol_version(),
        serverInfo: %{
          name: Application.get_env(:my_app, :app_name, "my-phoenix-app"),
          version: Application.spec(:my_app, :vsn) |> to_string()
@@ -185,7 +190,7 @@ defmodule MyAppWeb.Router do
     pipe_through :mcp
     
     # Mount MCP server at /api/mcp
-    forward "/mcp", ExMCP.HttpPlug,
+    forward "/mcp", Arbor.MCP.HttpPlug,
       handler: MyApp.MCPHandler,
       protocol_mode: :prefer_modern,
       server_info: %{
@@ -197,17 +202,17 @@ defmodule MyAppWeb.Router do
 end
 ```
 
-`ExMCP.HttpPlug` routes relative to its mount point and halts the conn after
+`Arbor.MCP.HttpPlug` routes relative to its mount point and halts the conn after
 responding, so `forward` is the right way to mount it. Bodies already consumed
 by the endpoint's `Plug.Parsers` are picked up from `conn.body_params`. One
 thing a forward cannot provide is the host-root RFC 9728 metadata path,
 `/.well-known/oauth-protected-resource/api/mcp`: when you enable OAuth, mount
-`ExMCP.Plugs.ProtectedResourceMetadata` at the host root for it.
+`Arbor.MCP.Plugs.ProtectedResourceMetadata` at the host root for it.
 
 `:prefer_modern` accepts both MCP eras and advertises `2026-07-28`, the latest
 stable revision, first. Use `:modern_only` only when every client is modern;
 use `:legacy_only` as a rollback switch. The curl request below deliberately
-uses the legacy compatibility shape. ExMCP clients in a modern-enabled mode
+uses the legacy compatibility shape. Arbor.MCP clients in a modern-enabled mode
 send the required 2026-07-28 metadata and routing headers automatically.
 
 ### 4. Test Your Integration
@@ -301,7 +306,7 @@ end
 scope "/api" do
   pipe_through :mcp_authenticated
   
-  forward "/mcp", ExMCP.HttpPlug,
+  forward "/mcp", Arbor.MCP.HttpPlug,
     handler: MyApp.AuthenticatedMCPHandler,
     handler_opts: fn conn ->
       [current_user: conn.assigns[:current_user]]
@@ -316,7 +321,7 @@ Access the current user and other Phoenix context in your MCP handler:
 
 ```elixir
 defmodule MyApp.AuthenticatedMCPHandler do
-  use ExMCP.Server.Handler
+  use Arbor.MCP.Server.Handler
 
   @impl true
   def init(opts) do
@@ -340,7 +345,7 @@ end
 
 ### Server-Sent Events (SSE)
 
-ExMCP supports real-time communication via SSE. Clients can connect to the SSE endpoint for live updates:
+Arbor.MCP supports real-time communication via SSE. Clients can connect to the SSE endpoint for live updates:
 
 ```javascript
 // JavaScript client example
@@ -592,8 +597,8 @@ end
 
 ## Next Steps
 
-1. **Read the [ExMCP Documentation](https://hexdocs.pm/ex_mcp)** for complete API reference
-2. **Check out [Examples](https://github.com/azmaveth/ex_mcp/tree/master/examples)** for more implementation patterns
+1. **Generate the v2 API documentation with `mix docs`** during development. [Published 1.x documentation](https://hexdocs.pm/ex_mcp) describes the previous package
+2. **Check out [Examples](https://github.com/trust-arbor/arbor_mcp/tree/master/examples)** for more implementation patterns
 3. **Review the [Security Guide](../SECURITY.md)** for production deployment best practices
 4. **Join the Community** - contribute to the project or ask questions in Issues
 

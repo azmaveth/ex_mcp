@@ -1,12 +1,12 @@
-# ExMCP Server DSL Guide
+# Arbor.MCP Server DSL Guide
 
-ExMCP's server DSL defines MCP tools, resources, resource templates, and prompts
-next to the functions that handle them. Use it with `ExMCP.Server.Handler`:
+Arbor.MCP's server DSL defines MCP tools, resources, resource templates, and prompts
+next to the functions that handle them. Use it with `Arbor.MCP.Server.Handler`:
 
 ```elixir
 defmodule MyServer do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL, name: "my-server", version: "1.0.0"
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, name: "my-server", version: "1.0.0"
 
   tool "echo", "Echo back the input" do
     title "Echo"
@@ -19,12 +19,12 @@ defmodule MyServer do
 end
 ```
 
-This generates the standard `ExMCP.Server.Handler` callbacks for listing and
+This generates the standard `Arbor.MCP.Server.Handler` callbacks for listing and
 dispatching declared capabilities. The generated `start_link/1` supports
 `:beam`, `:test`, `:stdio`, and `:http` transports. Modern HTTP SSE streams are
 owned by the POST request and require no server transport flag. The deprecated
 2024-11-05 two-endpoint transport remains available with
-`legacy_http_sse: true` throughout ExMCP 1.x.
+`legacy_http_sse: true` throughout Arbor.MCP 1.x.
 
 ## Tools
 
@@ -78,12 +78,12 @@ Declared params are normalized so handlers can use atom keys and defaults.
 
 ### Response helpers and normalization
 
-`ToolResult` is an **alias** for `ExMCP.Server.DSL.Result`, injected only inside
-modules that `use ExMCP.Server.DSL`. Outside those modules, use the fully
+`ToolResult` is an **alias** for `Arbor.MCP.Server.DSL.Result`, injected only inside
+modules that `use Arbor.MCP.Server.DSL`. Outside those modules, use the fully
 qualified module:
 
 ```elixir
-ExMCP.Server.DSL.Result.structured("done", %{count: 1})
+Arbor.MCP.Server.DSL.Result.structured("done", %{count: 1})
 ```
 
 `ToolResult` provides `text/1`, `error/1`, and `structured/2`. The DSL also
@@ -101,7 +101,7 @@ normalizes several plain return shapes from `run` / `read` / `render`:
 ### Image, audio, and embedded resource results
 
 A `run` handler may return several content blocks. Build image, audio, and
-embedded-resource items with `ExMCP.Content` (base64 payload plus MIME type):
+embedded-resource items with `Arbor.MCP.Content` (base64 payload plus MIME type):
 
 ```elixir
 tool "preview", "Return a thumbnail, clip, and attached spec" do
@@ -112,9 +112,9 @@ tool "preview", "Return a thumbnail, clip, and attached spec" do
     {:ok,
      %{
        content: [
-         ExMCP.Content.image(image, "image/png"),
-         ExMCP.Content.audio(audio, "audio/mp3"),
-         ExMCP.Content.resource(%{
+         Arbor.MCP.Content.image(image, "image/png"),
+         Arbor.MCP.Content.audio(audio, "audio/mp3"),
+         Arbor.MCP.Content.resource(%{
            uri: "file:///spec.pdf",
            name: "Spec",
            mimeType: "application/pdf"
@@ -124,10 +124,10 @@ tool "preview", "Return a thumbnail, clip, and attached spec" do
   end
 end
 
-{:ok, result} = ExMCP.Client.call_tool(client, "preview", %{})
+{:ok, result} = Arbor.MCP.Client.call_tool(client, "preview", %{})
 ```
 
-`ExMCP.Content.image/2`, `ExMCP.Content.audio/2`, and `ExMCP.Content.resource/1` are protocol content
+`Arbor.MCP.Content.image/2`, `Arbor.MCP.Content.audio/2`, and `Arbor.MCP.Content.resource/1` are protocol content
 builders, not image-processing APIs.
 
 ## Compile-time checks
@@ -191,7 +191,7 @@ resource "asset://logo.png", "Product logo" do
   end
 end
 
-{:ok, contents} = ExMCP.Client.read_resource(client, "asset://logo.png")
+{:ok, contents} = Arbor.MCP.Client.read_resource(client, "asset://logo.png")
 ```
 
 Resource templates use URI variables and optional typed params:
@@ -245,11 +245,11 @@ prompt "review_screenshot", "Review a screenshot" do
     {:ok,
      %{
        messages: [
-         %{role: "user", content: ExMCP.Content.image(image, "image/png")},
+         %{role: "user", content: Arbor.MCP.Content.image(image, "image/png")},
          %{
            role: "user",
            content:
-             ExMCP.Content.resource(%{
+             Arbor.MCP.Content.resource(%{
                uri: "file:///notes.md",
                name: "Notes",
                mimeType: "text/markdown"
@@ -263,11 +263,11 @@ end
 
 ### Getting a prompt with no arguments
 
-`ExMCP.Client.get_prompt/2` defaults arguments to `%{}`:
+`Arbor.MCP.Client.get_prompt/2` defaults arguments to `%{}`:
 
 ```elixir
-{:ok, prompt} = ExMCP.Client.get_prompt(client, "review_screenshot")
-{:ok, prompt} = ExMCP.Client.get_prompt(client, "code_review", %{"code" => "def add(a, b), do: a + b"})
+{:ok, prompt} = Arbor.MCP.Client.get_prompt(client, "review_screenshot")
+{:ok, prompt} = Arbor.MCP.Client.get_prompt(client, "code_review", %{"code" => "def add(a, b), do: a + b"})
 ```
 
 ## Metadata
@@ -303,26 +303,26 @@ For a hand-written handler without the DSL:
 
 ```elixir
 {:ok, pid} =
-  ExMCP.Server.HandlerServer.start_link(
+  Arbor.MCP.Server.HandlerServer.start_link(
     transport: :test,
     handler: MyHandler
   )
 ```
 
-`ExMCP.start_server/1` is also available as a top-level convenience wrapper for
-`ExMCP.Server.HandlerServer.start_link/1`.
+`Arbor.MCP.start_server/1` is also available as a top-level convenience wrapper for
+`Arbor.MCP.Server.HandlerServer.start_link/1`.
 
 **Fast verification tip:** After `mix compile`, `mix examples.getting_started` runs a quick in-process demo of the DSL + client patterns shown throughout this guide (and in QUICKSTART.md).
 
-## Deprecated: `ExMCP.Server.Tools`
+## Deprecated: `Arbor.MCP.Server.Tools`
 
-`ExMCP.Server.Tools` and `ExMCP.Server.Tools.Simplified` are **deprecated** and
+`Arbor.MCP.Server.Tools` and `Arbor.MCP.Server.Tools.Simplified` are **deprecated** and
 will be retained throughout 1.x, with removal planned for **2.0.0**. They only covered tools (not resources/prompts)
 and overlapped with this DSL.
 
 | Old (`Server.Tools`) | New (`Server.DSL`) |
 |----------------------|--------------------|
-| `use ExMCP.Server.Tools` | `use ExMCP.Server.DSL, name: "...", version: "..."` |
+| `use Arbor.MCP.Server.Tools` | `use Arbor.MCP.Server.DSL, name: "...", version: "..."` |
 | `tool "name" do ... handle fn ... end end` | `tool "name" do ... run fn ... end end` |
 | `handle fn args, state -> ... end` | `run fn args, state -> ... end` |
 | (tools only) | also `resource`, `resource_template`, `prompt` |
@@ -331,18 +331,18 @@ Using the old modules prints a compile-time deprecation warning.
 
 ## Migration From The Removed Legacy DSL
 
-The former `use ExMCP.Server` macro and `deftool`, `defresource`, and
+The former `use Arbor.MCP.Server` macro and `deftool`, `defresource`, and
 `defprompt` declarations have been removed. Migrate by:
 
-1. Replacing `use ExMCP.Server` with `use ExMCP.Server.Handler` and
-   `use ExMCP.Server.DSL`.
+1. Replacing `use Arbor.MCP.Server` with `use Arbor.MCP.Server.Handler` and
+   `use Arbor.MCP.Server.DSL`.
 2. Replacing `deftool` blocks with `tool` blocks and colocated `run` handlers.
 3. Replacing `defresource` blocks with `resource` or `resource_template` blocks
    and colocated `read` handlers.
 4. Replacing `defprompt` blocks with `prompt` blocks and colocated `render`
    handlers.
-5. Replacing the removed `ExMCP.Server.start_link` helper with `MyServer.start_link/1`,
-   `ExMCP.Server.HandlerServer.start_link/1`, or `ExMCP.start_server/1`.
+5. Replacing the removed `Arbor.MCP.Server.start_link` helper with `MyServer.start_link/1`,
+   `Arbor.MCP.Server.HandlerServer.start_link/1`, or `Arbor.MCP.start_server/1`.
 
 Old generated getters such as `get_tools/0`, `get_resources/0`, and
 `get_prompts/0` are no longer part of the server API. Use the standard handler

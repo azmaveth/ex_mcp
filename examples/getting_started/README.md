@@ -1,7 +1,7 @@
 # Getting Started Examples
 
-These examples show the supported ExMCP transports with the current
-`ExMCP.Server.Handler` + `ExMCP.Server.DSL` server API.
+These examples show the supported Arbor.MCP transports with the current
+`Arbor.MCP.Server.Handler` + `Arbor.MCP.Server.DSL` server API.
 
 ## Files
 
@@ -49,8 +49,8 @@ to the client:
 
 ```elixir
 {:ok, server} = MyServer.start_link(transport: :beam)
-{:ok, client} = ExMCP.Client.start_link(transport: :beam, server: server)
+{:ok, client} = Arbor.MCP.Client.start_link(transport: :beam, server: server)
 ```
 
-It does not use the removed `ExMCP.Native` dispatcher and it does not discover
+It does not use the removed `Arbor.MCP.Native` dispatcher and it does not discover
 services through a registry.

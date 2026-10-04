@@ -18,15 +18,15 @@ defmodule Mix.Tasks.StdioServer do
     Mix.Task.run("app.start")
 
     # Configure for STDIO mode
-    Application.put_env(:ex_mcp, :stdio_mode, true)
-    Application.put_env(:ex_mcp, :stdio_startup_delay, 10)
+    Application.put_env(:arbor_mcp, :stdio_mode, true)
+    Application.put_env(:arbor_mcp, :stdio_startup_delay, 10)
     Logger.configure(level: :emergency)
 
     # Define the server inline to avoid compilation issues
     Code.eval_string("""
     defmodule ExampleStdioServer do
-      use ExMCP.Server.Handler
-      use ExMCP.Server.DSL, name: "ExampleStdioServer", version: "1.0.0"
+      use Arbor.MCP.Server.Handler
+      use Arbor.MCP.Server.DSL, name: "ExampleStdioServer", version: "1.0.0"
 
       tool "say_hello", "Say hello to someone via stdio" do
         input_schema(%{
@@ -38,7 +38,7 @@ defmodule Mix.Tasks.StdioServer do
         })
 
         run fn %{"name" => name}, state ->
-          content = [%{type: "text", text: "Hello, \#{name}! Welcome to ExMCP via stdio! 📝✨"}]
+          content = [%{type: "text", text: "Hello, \#{name}! Welcome to Arbor.MCP via stdio! 📝✨"}]
           {:ok, %{content: content}, state}
         end
       end
@@ -116,12 +116,12 @@ defmodule Mix.Tasks.StdioServer do
     """)
 
     # Get the configured protocol version
-    protocol_version = Application.get_env(:ex_mcp, :protocol_version, "2025-03-26")
+    protocol_version = Application.get_env(:arbor_mcp, :protocol_version, "2025-03-26")
 
     IO.puts(:stderr, """
-    📡 ExMCP stdio Server Ready!
+    📡 Arbor.MCP stdio Server Ready!
 
-    Example usage with ExMCP client:
+    Example usage with Arbor.MCP client:
     {"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"#{protocol_version}","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}},"id":1}
     {"jsonrpc":"2.0","method":"tools/list","params":{},"id":2}
     {"jsonrpc":"2.0","method":"tools/call","params":{"name":"say_hello","arguments":{"name":"World"}},"id":3}

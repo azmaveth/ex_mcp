@@ -8,7 +8,7 @@ Application.put_env(:logger, :level, :error)
 
 Mix.install(
   [
-    {:ex_mcp, path: Path.expand("../..", __DIR__)}
+    {:arbor_mcp, path: Path.expand("../..", __DIR__)}
   ],
   verbose: false
 )
@@ -16,8 +16,8 @@ Mix.install(
 Logger.configure(level: :error)
 
 defmodule DemoHttpServer do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL, name: "demo-http-server", version: "1.0.0"
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, name: "demo-http-server", version: "1.0.0"
 
   resource "hello://world", "HTTP demo greeting" do
     title("HTTP Greeting")
@@ -30,8 +30,8 @@ defmodule DemoHttpServer do
 end
 
 defmodule DemoSseServer do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL, name: "demo-sse-server", version: "1.0.0"
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, name: "demo-sse-server", version: "1.0.0"
 
   prompt "hello_generator", "Generates a greeting prompt" do
     title("Hello Generator")
@@ -44,8 +44,8 @@ defmodule DemoSseServer do
 end
 
 defmodule DemoBeamServer do
-  use ExMCP.Server.Handler
-  use ExMCP.Server.DSL, name: "demo-beam-server", version: "1.0.0"
+  use Arbor.MCP.Server.Handler
+  use Arbor.MCP.Server.DSL, name: "demo-beam-server", version: "1.0.0"
 
   tool "beam_hello", "Returns a greeting from the same BEAM VM" do
     title("BEAM Hello")
@@ -58,10 +58,10 @@ defmodule DemoBeamServer do
 end
 
 defmodule DemoClient do
-  alias ExMCP.Client
+  alias Arbor.MCP.Client
 
   def run do
-    IO.puts("ExMCP getting-started transport demo")
+    IO.puts("Arbor.MCP getting-started transport demo")
     IO.puts(String.duplicate("=", 40))
 
     demo_stdio()

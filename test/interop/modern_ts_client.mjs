@@ -1,4 +1,4 @@
-// MCP 2026-07-28 TypeScript SDK client used by ExMCP interop tests.
+// MCP 2026-07-28 TypeScript SDK client used by Arbor.MCP interop tests.
 // Connects with an exact version pin so the test cannot fall back to legacy.
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
