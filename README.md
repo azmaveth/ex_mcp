@@ -18,7 +18,7 @@ The repository has moved to [trust-arbor/arbor_mcp](https://github.com/trust-arb
 The supported 1.x package remains `ex_mcp`. Version 2 is being prepared as
 `arbor_mcp` (`Arbor.MCP.*`) and `arbor_acp` (`Arbor.ACP.*`), with vendor adapters
 in the optional `arbor_acp_adapters` package. The target is October 9, 2026,
-subject to the [release gates](docs/V2_RELEASE_PLAN.md). GitHub redirects
+subject to the [release gates](https://github.com/trust-arbor/arbor_mcp/blob/master/docs/V2_RELEASE_PLAN.md). GitHub redirects
 preserve existing repository links; consumers change dependencies through
 the v2 migration guide.
 
