@@ -76,7 +76,7 @@ it or overwrite its dependency/shim edits while evaluating the clean sibling.
 Neither prototype should be merged wholesale without reconciling it with the
 integrated MCP source and the final package identity.
 
-Known extraction work remains:
+The original prototype required the following work at audit time:
 
 - Refresh ACP sources, fixtures and tests through `e4d2fc3`; the clean sibling
   predates later fixes, including the private Claude MCP configuration work.
@@ -97,6 +97,29 @@ The source footprint measured at historical audit snapshot `fc61f84` was
 These figures exclude `e4d2fc3` and are not a current cutover measurement.
 Remeasure archive size, clean compile time and consumer dependency/app count;
 line counts alone do not establish the value of the split.
+
+## October 3 package implementation checkpoint
+
+The refreshed ACP implementation is now canonical for v2 development at
+[`trust-arbor/arbor_acp`](https://github.com/trust-arbor/arbor_acp), on `main`
+at `06d153f0bcb515f132b3ab7b439f9b21b503868c`. The untouched sibling and dirty
+cutover spike remain preserved. Core, adapter bundle and shared RPC are separate
+Mix projects; the dotted `Arbor.ACP.*` / `Arbor.RPC.*` namespaces are accepted.
+Vendor environment policy belongs to the bundle, and core has no vendor modules.
+
+Local namespace verification passed 34 RPC, 323 core and 1,436 adapter tests,
+six pinned ACP SDK interop tests, production compilation and all three real Hex
+archive builds. The [first GitHub package matrix](https://github.com/trust-arbor/arbor_acp/actions/runs/37174597068)
+also passed the advertised minimum/current toolchains and SDK lane. Fresh
+extraction tooling independently passed 29 primitive, 321 core and 1,434 bundle
+tests. These counts differ because the canonical workspace also contains new
+bounded-framing and extraction regressions added after the generated snapshot.
+
+No Hex package is published. Shared Port ownership, bounded delivery and cleanup
+remain implementation gates; the current subprocess wrappers are temporary.
+MCP v2 is being prepared in an isolated branch with `Arbor.MCP.*`. Its scheduler
+foundation still needs review and transport/store integration; main remains the
+supported `ExMCP` 1.x source and the frozen API inventory retains those identities.
 
 ## Decisions required before moving the public contract
 
@@ -233,7 +256,7 @@ to the same repository. A pre-transfer Git bundle is saved locally at
 `tmp/v2-migration-2026-10-03/ex_mcp-before-transfer.bundle`. Branch-protection,
 third-party integrations and new package credentials still require release
 qualification. The public `trust-arbor/arbor_acp` repository has also been created. Its
-qualified extraction is staged locally; Hex packages remain unpublished.
+tested v2 extraction is pushed to `main`; Hex packages remain unpublished.
 
 **Recommended sequence:** move GitHub ownership early, finish the architecture
 in the destination, and migrate consumers through the qualified v2 packages.
