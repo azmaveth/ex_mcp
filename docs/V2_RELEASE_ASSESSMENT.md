@@ -232,7 +232,8 @@ and Actions enablement were verified at the new URL. The old API path resolves
 to the same repository. A pre-transfer Git bundle is saved locally at
 `tmp/v2-migration-2026-10-03/ex_mcp-before-transfer.bundle`. Branch-protection,
 third-party integrations and new package credentials still require release
-qualification. The ACP remote and Hex packages have not been created/published.
+qualification. The public `trust-arbor/arbor_acp` repository has also been created. Its
+qualified extraction is staged locally; Hex packages remain unpublished.
 
 **Recommended sequence:** move GitHub ownership early, finish the architecture
 in the destination, and migrate consumers through the qualified v2 packages.

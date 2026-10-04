@@ -548,7 +548,19 @@ defmodule ArborV2.ExtractACP do
     end
   end
 
-  defp copy(source, target, owner), do: write(target, File.read!(source) |> rewrite(owner))
+  defp copy(source, target, owner) do
+    text = File.read!(source) |> rewrite(owner)
+
+    text =
+      if String.ends_with?(source, "session_safety_golden_test.exs") do
+        original = "defp load_steps(acp_id, session_id, file, opts " <> <<92, 92>> <> " []) do"
+        String.replace(text, original, "defp load_steps(acp_id, session_id, file, opts) do")
+      else
+        text
+      end
+
+    write(target, text)
+  end
 
   defp mkdir_parent(path) do
     File.mkdir_p!(Path.dirname(path))
