@@ -89,9 +89,11 @@ defmodule ExMCP.MixProject do
   defp deps do
     [
       {:jason, "~> 1.4"},
-      # Security floor: 1.10.1 fixes EEF-CVE-2026-82672 (HTTP/1 response
-      # smuggling through unvalidated chunk-size lines).
-      {:mint, "~> 1.10 and >= 1.10.1"},
+      # Security floor: 1.10.2 fixes EEF-CVE-2026-94194 (HTTP/1 transfer
+      # coding), EEF-CVE-2026-91043 (HTTP/2 header bounds), and
+      # EEF-CVE-2026-92103 (HTTP/2 frame bounds), and includes the earlier
+      # EEF-CVE-2026-82672 chunk-size fix from 1.10.1.
+      {:mint, "~> 1.10 and >= 1.10.2"},
       {:mint_web_socket, "~> 1.0"},
       {:castore, "~> 1.0"},
       {:telemetry, "~> 1.2"},

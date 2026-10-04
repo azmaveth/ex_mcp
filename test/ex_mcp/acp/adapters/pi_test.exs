@@ -677,14 +677,14 @@ defmodule ExMCP.ACP.Adapters.PiTest do
     end
 
     test "managed model confirmation does not repeat the full model catalog", %{state: state} do
-      # The adapter only needs a live port to write into. `cat` exits on stdin
-      # EOF, so closing the port (or the test VM dying) reaps it; a child that
-      # ignores EOF would be orphaned and keep the VM's stderr open. Discarding
-      # its output avoids an EPIPE complaint if it echoes after the port closes.
+      # Keep both stdio pipes attached: redirecting stdout to /dev/null lets
+      # the port observe EOF before the managed write on Linux. Read the echo
+      # before closing so the fixture also verifies the native RPC command.
       port =
-        Port.open({:spawn_executable, System.find_executable("sh")}, [
+        Port.open({:spawn_executable, System.find_executable("cat")}, [
           :binary,
-          args: ["-c", "exec cat >/dev/null"]
+          :exit_status,
+          :use_stdio
         ])
 
       on_exit(fn ->
@@ -717,6 +717,14 @@ defmodule ExMCP.ACP.Adapters.PiTest do
       assert {:messages_and_reply, [update], %{"configOptions" => confirmation}, new_state} =
                Pi.translate_outbound(msg, state)
 
+      assert_receive {^port, {:data, rpc_line}}, 1_000
+
+      assert Jason.decode!(rpc_line) == %{
+               "type" => "set_model",
+               "provider" => "test",
+               "modelId" => "model-300"
+             }
+
       confirmed_model = Enum.find(confirmation, &(&1["id"] == "model"))
       assert confirmed_model["currentValue"] == "test/model-300"
       refute Map.has_key?(confirmed_model, "options")
@@ -727,6 +735,27 @@ defmodule ExMCP.ACP.Adapters.PiTest do
 
       assert length(advertised_model["options"]) == 300
       assert new_state.current_model_id == "test/model-300"
+    end
+
+    test "managed model confirmation reports missing and closed ports", %{state: state} do
+      port =
+        Port.open({:spawn_executable, System.find_executable("cat")}, [
+          :binary,
+          :exit_status,
+          :use_stdio
+        ])
+
+      Port.close(port)
+
+      msg = %{
+        "method" => "session/set_config_option",
+        "params" => %{"configId" => "model", "value" => "test/model"}
+      }
+
+      for {port, reason} <- [{nil, ":no_active_pi_session"}, {port, ":badarg"}] do
+        state = %{state | managed?: true, port: port, session_id: "s1"}
+        assert {:error, ^reason, _next_state} = Pi.translate_outbound(msg, state)
+      end
     end
 
     test "thought_level config option routes to set_thinking_level and emits sync updates", %{
