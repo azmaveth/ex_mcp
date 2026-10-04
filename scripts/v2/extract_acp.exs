@@ -603,7 +603,11 @@ defmodule ArborV2.ExtractACP do
          source_url: "https://github.com/trust-arbor/arbor_acp",
          docs: [name: #{inspect(title)}, main: "readme", extras: ["README.md", "CHANGELOG.md"]]]
       end
-      def application, do: [extra_applications: #{inspect(if(app == :arbor_acp, do: [:logger, :crypto, :inets, :ssl], else: [:logger]))}]
+      def application, do: [extra_applications: #{inspect(case app do
+      :arbor_acp -> [:logger, :crypto, :inets, :ssl]
+      :arbor_rpc -> [:logger, :crypto]
+      _ -> [:logger]
+    end)}]
       defp paths(:test), do: ["lib", "dev", "test/support"]
       defp paths(:dev), do: ["lib", "dev"]
       defp paths(_), do: ["lib"]
